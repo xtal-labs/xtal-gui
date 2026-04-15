@@ -2,7 +2,7 @@
 
 ## Overview
 
-Crystal GUI is a desktop interface for running and interacting with the Crystal blockchain. It is built as a Tauri v2 application with a Rust backend and a React/TypeScript frontend, and it depends on the Crystal node/backend layer to function even though that layer is not contained in this repository.
+Crystal GUI is a desktop interface for running and interacting with the Crystal blockchain. It is built as a Tauri v2 application with a Rust backend and a React/TypeScript frontend. The GUI embeds the Crystal node for functionality and therefore must be present to compile the GUI.
 
 The UI is responsible for presenting blockchain data and collecting user input. The backend is responsible for desktop integration, startup, persistence, and communicating with the node through Tauri-based IPC.
 
