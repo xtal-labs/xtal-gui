@@ -1,0 +1,328 @@
+//! Mempool query commands
+//!
+//! Commands for querying mempool state and pending transactions.
+
+use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::Serialize;
+use tauri::State;
+
+use xtal::crypto::hash_public_key;
+use xtal::transaction::Transaction;
+
+use crate::commands::tx_detail_utils::{extract_inputs, extract_outputs};
+use crate::commands::wallet::{TransactionInput, TransactionOutput};
+use crate::state::AppState;
+
+/// Mempool overview information
+#[derive(Debug, Clone, Serialize)]
+pub struct MempoolInfo {
+    pub total_transactions: usize,
+    pub size_bytes: usize,
+    pub utxo_count: usize,
+    pub vm_count: usize,
+    pub oldest_age_secs: Option<u64>,
+    pub transaction_count_by_type: HashMap<String, usize>,
+}
+
+/// Mempool transaction summary for display
+#[derive(Debug, Clone, Serialize)]
+pub struct MempoolTransaction {
+    pub hash: String,
+    pub tx_type: String,
+    pub fee: u64,
+    pub size_bytes: usize,
+    pub age_secs: u64,
+}
+
+const UTXO_TYPES: &[&str] = &["Standard", "Stake", "Unstake"];
+const VM_TYPES: &[&str] = &["ContractCall", "ContractDeploy", "AccountTransfer"];
+
+/// Get transaction type name
+fn get_tx_type_name(tx: &Transaction) -> &'static str {
+    match tx {
+        Transaction::Standard(_) => "Standard",
+        Transaction::Coinbase(_) => "Coinbase",
+        Transaction::ContractCall(_) => "ContractCall",
+        Transaction::ContractDeploy(_) => "ContractDeploy",
+        Transaction::Stake(_) => "Stake",
+        Transaction::Unstake(_) => "Unstake",
+        Transaction::AccountTransfer(_) => "AccountTransfer",
+        Transaction::VmWithdrawal(_) => "VmWithdrawal",
+    }
+}
+
+/// Get mempool overview information
+#[tauri::command]
+pub async fn get_mempool_info(state: State<'_, AppState>) -> Result<MempoolInfo, String> {
+    let mempool = state.services.mempool();
+    let stats = mempool.get_stats();
+
+    // Count UTXO vs VM transactions
+    let utxo_count = UTXO_TYPES
+        .iter()
+        .filter_map(|t| stats.transaction_count_by_type.get(*t))
+        .sum();
+
+    let vm_count = VM_TYPES
+        .iter()
+        .filter_map(|t| stats.transaction_count_by_type.get(*t))
+        .sum();
+
+    Ok(MempoolInfo {
+        total_transactions: stats.total_transactions,
+        size_bytes: stats.size_bytes,
+        utxo_count,
+        vm_count,
+        oldest_age_secs: stats.oldest_transaction_age.map(|d| d.as_secs()),
+        transaction_count_by_type: stats.transaction_count_by_type,
+    })
+}
+
+/// Get all mempool transactions
+#[tauri::command]
+pub async fn get_mempool_transactions(
+    state: State<'_, AppState>,
+) -> Result<Vec<MempoolTransaction>, String> {
+    let mempool = state.services.mempool();
+
+    // Get transactions with fees and timestamps
+    let txs_with_fees = mempool.get_transactions_with_fees();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut results = Vec::with_capacity(txs_with_fees.len());
+
+    for (tx, fee, timestamp) in txs_with_fees {
+        // Get transaction hash
+        let hash = match tx.hash() {
+            Ok(h) => hex::encode(h),
+            Err(_) => continue,
+        };
+
+        // Get transaction type
+        let tx_type = get_tx_type_name(&tx).to_string();
+
+        // Estimate size (serialized length)
+        let size_bytes = tx.serialized_size().unwrap_or(0);
+
+        // Calculate age from timestamp
+        let age_secs = now.saturating_sub(timestamp);
+
+        results.push(MempoolTransaction {
+            hash,
+            tx_type,
+            fee,
+            size_bytes,
+            age_secs,
+        });
+    }
+
+    // Sort by fee (highest first) as a sensible default
+    results.sort_by(|a, b| b.fee.cmp(&a.fee));
+
+    Ok(results)
+}
+
+/// Get a single transaction from mempool by hash
+#[tauri::command]
+pub async fn get_mempool_transaction(
+    state: State<'_, AppState>,
+    hash: String,
+) -> Result<Option<MempoolTransaction>, String> {
+    let mempool = state.services.mempool();
+
+    // Parse hash
+    let hash_bytes: [u8; 32] = hex::decode(&hash)
+        .map_err(|e| format!("Invalid hash: {}", e))?
+        .try_into()
+        .map_err(|_| "Hash must be 32 bytes")?;
+
+    // Look up transaction with cached fee and timestamp
+    let (tx, fee, timestamp) = match mempool.get_transaction_with_fee(&hash_bytes) {
+        Some(data) => data,
+        None => return Ok(None),
+    };
+
+    let tx_type = get_tx_type_name(&tx).to_string();
+    let size_bytes = tx.serialized_size().unwrap_or(0);
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let age_secs = now.saturating_sub(timestamp);
+
+    Ok(Some(MempoolTransaction {
+        hash,
+        tx_type,
+        fee,
+        size_bytes,
+        age_secs,
+    }))
+}
+
+/// Detailed mempool transaction information for the detail panel
+#[derive(Debug, Clone, Serialize)]
+pub struct MempoolTransactionDetail {
+    // Common fields
+    pub hash: String,
+    pub tx_type: String,
+    pub fee: u64,
+    pub size_bytes: usize,
+    pub age_secs: u64,
+    pub is_sponsored: bool,
+
+    // UTXO-specific fields (populated for Standard/Stake/Unstake)
+    pub inputs: Option<Vec<TransactionInput>>,
+    pub outputs: Option<Vec<TransactionOutput>>,
+    pub total_input: Option<u64>,
+    pub total_output: Option<u64>,
+
+    // VM-specific fields (populated for ContractCall/ContractDeploy/AccountTransfer)
+    pub caller: Option<String>,
+    pub contract_address: Option<String>,
+    pub method: Option<String>,
+    pub gas_limit: Option<u64>,
+    pub gas_price: Option<u64>,
+    pub nonce: Option<u64>,
+    pub value: Option<u64>,
+    pub data_size: Option<usize>,
+
+    // ContractDeploy-specific
+    pub preferred_fruit_type: Option<String>,
+
+    // AccountTransfer-specific
+    pub recipient: Option<String>,
+    pub transfer_amount: Option<u64>,
+    pub currency: Option<String>,
+}
+
+/// Get detailed information about a mempool transaction
+#[tauri::command]
+pub async fn get_mempool_transaction_detail(
+    state: State<'_, AppState>,
+    hash: String,
+) -> Result<Option<MempoolTransactionDetail>, String> {
+    let mempool = state.services.mempool();
+
+    let hash_bytes: [u8; 32] = hex::decode(&hash)
+        .map_err(|e| format!("Invalid hash: {}", e))?
+        .try_into()
+        .map_err(|_| "Hash must be 32 bytes")?;
+
+    let (tx, fee, timestamp) = match mempool.get_transaction_with_fee(&hash_bytes) {
+        Some(data) => data,
+        None => return Ok(None),
+    };
+
+    let tx_type = get_tx_type_name(&tx).to_string();
+    let size_bytes = tx.serialized_size().unwrap_or(0);
+    let is_sponsored = tx.requests_free_execution();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let age_secs = now.saturating_sub(timestamp);
+
+    let mut detail = MempoolTransactionDetail {
+        hash,
+        tx_type,
+        fee,
+        size_bytes,
+        age_secs,
+        is_sponsored,
+        inputs: None,
+        outputs: None,
+        total_input: None,
+        total_output: None,
+        caller: None,
+        contract_address: None,
+        method: None,
+        gas_limit: None,
+        gas_price: None,
+        nonce: None,
+        value: None,
+        data_size: None,
+        preferred_fruit_type: None,
+        recipient: None,
+        transfer_amount: None,
+        currency: None,
+    };
+
+    match tx.as_ref() {
+        Transaction::Standard(std_tx) => {
+            let blockchain = state.services.blockchain();
+            let inputs = extract_inputs(&std_tx.inputs, &blockchain).unwrap_or_default();
+            let outputs = extract_outputs(&std_tx.outputs, "p2pkh");
+            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            detail.inputs = Some(inputs);
+            detail.outputs = Some(outputs);
+            detail.total_input = Some(total_input);
+            detail.total_output = Some(total_output);
+        }
+        Transaction::Stake(stake_tx) => {
+            let blockchain = state.services.blockchain();
+            let inputs = extract_inputs(&stake_tx.inputs, &blockchain).unwrap_or_default();
+            let outputs = extract_outputs(&stake_tx.outputs, "stake");
+            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            detail.inputs = Some(inputs);
+            detail.outputs = Some(outputs);
+            detail.total_input = Some(total_input);
+            detail.total_output = Some(total_output);
+        }
+        Transaction::Unstake(unstake_tx) => {
+            let blockchain = state.services.blockchain();
+            let inputs = extract_inputs(&unstake_tx.inputs, &blockchain).unwrap_or_default();
+            let outputs = extract_outputs(&unstake_tx.outputs, "unstake");
+            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            detail.inputs = Some(inputs);
+            detail.outputs = Some(outputs);
+            detail.total_input = Some(total_input);
+            detail.total_output = Some(total_output);
+        }
+        Transaction::ContractCall(cc_tx) => {
+            let pkh = hash_public_key(&cc_tx.caller);
+            detail.caller = Some(format!("0x{}", hex::encode(pkh)));
+            detail.contract_address = Some(format!("0x{}", hex::encode(cc_tx.contract_address)));
+            detail.method = Some(cc_tx.method.clone());
+            detail.gas_limit = Some(cc_tx.gas_limit);
+            detail.gas_price = cc_tx.gas_price;
+            detail.nonce = Some(cc_tx.nonce);
+            detail.value = Some(cc_tx.value);
+            detail.data_size = Some(cc_tx.data.len());
+        }
+        Transaction::ContractDeploy(cd_tx) => {
+            let pkh = hash_public_key(&cd_tx.sender);
+            detail.caller = Some(format!("0x{}", hex::encode(pkh)));
+            detail.gas_limit = Some(cd_tx.gas_limit);
+            detail.gas_price = cd_tx.gas_price;
+            detail.nonce = Some(cd_tx.nonce);
+            detail.data_size = Some(cd_tx.wasm.len());
+            detail.preferred_fruit_type = cd_tx.preferred_fruit_type.map(|ft| format!("{:?}", ft));
+        }
+        Transaction::AccountTransfer(at_tx) => {
+            let pkh = hash_public_key(&at_tx.sender);
+            detail.caller = Some(format!("0x{}", hex::encode(pkh)));
+            detail.recipient = Some(format!("0x{}", hex::encode(at_tx.recipient.as_bytes())));
+            detail.transfer_amount = Some(at_tx.amount);
+            detail.currency = Some(format!("{:?}", at_tx.currency));
+            detail.gas_limit = Some(at_tx.gas_limit);
+            detail.gas_price = at_tx.gas_price;
+            detail.nonce = Some(at_tx.nonce);
+            detail.data_size = Some(at_tx.data.len());
+        }
+        // Coinbase/VmWithdrawal don't normally appear in mempool
+        _ => {}
+    }
+
+    Ok(Some(detail))
+}

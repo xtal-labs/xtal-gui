@@ -1,0 +1,207 @@
+import { create } from "zustand";
+import type {
+  FruitSpec,
+  FruitProduction,
+  FruitProductionStats,
+  ProducedFruit,
+  ValidatorInfo,
+  ValidatorWalletSummary,
+  ValidatorWalletCreationResult,
+  NetworkValidatorStats,
+} from "@/types";
+
+interface ValidatorState {
+  // Status
+  isLoaded: boolean;
+  isRunning: boolean;
+  address: string | null;
+  walletName: string | null;
+  matureStake: number;
+  pendingStake: number;
+  effectiveStake: number;
+  availableBalance: number; // UTXO balance (unstaked)
+  pendingUnstake: number;   // Pending unstake (locked)
+  immatureBalance: number;  // Immature coinbase/withdrawal + unconfirmed incoming
+  totalFruitsProduced: number;
+
+  // Network-wide statistics (for dashboard)
+  networkStats: NetworkValidatorStats | null;
+
+  // Validator earnings (from coinbase rewards)
+  validatorEarnings: number | null; // In shards
+
+  // Fruit specifications (static, fetched once)
+  fruitSpecs: FruitSpec[];
+
+  // Production status per fruit
+  productions: Record<string, FruitProduction>;
+
+  // Session tracking
+  sessionStartTime: number | null;
+
+  // Available validator wallets (separate from normal wallets)
+  availableValidatorWallets: ValidatorWalletSummary[];
+
+  // Creation result (for mnemonic display after wallet creation)
+  creationResult: ValidatorWalletCreationResult | null;
+
+  // Production stats from WebSocket (global difficulty data)
+  productionStats: FruitProductionStats[];
+
+  // Recently produced fruits (session-only, newest first)
+  recentFruits: ProducedFruit[];
+
+  // Refresh trigger (incremented by WebSocket events to trigger re-fetch)
+  refreshTrigger: number;
+
+  // Actions
+  addProducedFruit: (fruit: ProducedFruit) => void;
+  setLoaded: (loaded: boolean, walletName: string | null, address: string | null) => void;
+  setRunning: (running: boolean) => void;
+  setBalanceInfo: (
+    available: number,
+    matureStake: number,
+    pendingStake: number,
+    pendingUnstake: number,
+    immature: number,
+  ) => void;
+  setNetworkStats: (stats: NetworkValidatorStats | null) => void;
+  setValidatorEarnings: (earnings: number | null) => void;
+  setFruitSpecs: (specs: FruitSpec[]) => void;
+  setProductions: (productions: FruitProduction[]) => void;
+  setProductionActive: (fruitType: string, active: boolean) => void;
+  setValidatorInfo: (info: ValidatorInfo) => void;
+  setTotalFruitsProduced: (count: number) => void;
+  startSession: () => void;
+  setProductionStats: (stats: FruitProductionStats[]) => void;
+  triggerRefresh: () => void;
+  setAvailableValidatorWallets: (wallets: ValidatorWalletSummary[]) => void;
+  setCreationResult: (result: ValidatorWalletCreationResult | null) => void;
+  reset: () => void;
+}
+
+const initialState = {
+  isLoaded: false,
+  isRunning: false,
+  address: null as string | null,
+  walletName: null as string | null,
+  matureStake: 0,
+  pendingStake: 0,
+  effectiveStake: 0,
+  availableBalance: 0,
+  pendingUnstake: 0,
+  immatureBalance: 0,
+  totalFruitsProduced: 0,
+  networkStats: null as NetworkValidatorStats | null,
+  validatorEarnings: null as number | null,
+  fruitSpecs: [] as FruitSpec[],
+  productions: {} as Record<string, FruitProduction>,
+  sessionStartTime: null as number | null,
+  availableValidatorWallets: [] as ValidatorWalletSummary[],
+  creationResult: null as ValidatorWalletCreationResult | null,
+  recentFruits: [] as ProducedFruit[],
+  productionStats: [] as FruitProductionStats[],
+  refreshTrigger: 0,
+};
+
+export const useValidatorStore = create<ValidatorState>((set) => ({
+  ...initialState,
+
+  setLoaded: (loaded, walletName, address) =>
+    set({
+      isLoaded: loaded,
+      walletName,
+      address,
+      // Reset other state when unloading
+      ...(loaded
+        ? {}
+        : {
+            isRunning: false,
+            matureStake: 0,
+            pendingStake: 0,
+            effectiveStake: 0,
+            availableBalance: 0,
+            pendingUnstake: 0,
+            immatureBalance: 0,
+            totalFruitsProduced: 0,
+            validatorEarnings: null,
+            productions: {},
+            sessionStartTime: null,
+            recentFruits: [],
+            refreshTrigger: 0,
+          }),
+    }),
+
+  setRunning: (running) =>
+    set((state) => ({
+      isRunning: running,
+      sessionStartTime: running && !state.sessionStartTime ? Date.now() : state.sessionStartTime,
+    })),
+
+  setBalanceInfo: (available, matureStake, pendingStake, pendingUnstake, immature) =>
+    set({
+      availableBalance: available,
+      matureStake,
+      pendingStake,
+      pendingUnstake,
+      immatureBalance: immature,
+    }),
+
+  setNetworkStats: (stats) => set({ networkStats: stats }),
+
+  setValidatorEarnings: (earnings) => set({ validatorEarnings: earnings }),
+
+  setFruitSpecs: (specs) => set({ fruitSpecs: specs }),
+
+  setProductions: (productions) =>
+    set({
+      productions: productions.reduce(
+        (acc, prod) => {
+          acc[prod.fruitType] = prod;
+          return acc;
+        },
+        {} as Record<string, FruitProduction>
+      ),
+    }),
+
+  setProductionActive: (fruitType, active) =>
+    set((state) => ({
+      productions: {
+        ...state.productions,
+        [fruitType]: {
+          ...state.productions[fruitType],
+          isActive: active,
+        },
+      },
+    })),
+
+  setValidatorInfo: (info) =>
+    set({
+      address: info.address,
+      effectiveStake: info.effectiveStake,
+      isRunning: info.isActive,
+      totalFruitsProduced: info.totalFruitsProduced,
+    }),
+
+  setTotalFruitsProduced: (count) => set({ totalFruitsProduced: count }),
+
+  startSession: () => set({ sessionStartTime: Date.now() }),
+
+  addProducedFruit: (fruit) =>
+    set((state) => ({
+      recentFruits: [fruit, ...state.recentFruits].slice(0, 50),
+    })),
+
+  setProductionStats: (stats) => set({ productionStats: stats }),
+
+  triggerRefresh: () =>
+    set((state) => ({
+      refreshTrigger: state.refreshTrigger + 1,
+    })),
+
+  setAvailableValidatorWallets: (wallets) => set({ availableValidatorWallets: wallets }),
+
+  setCreationResult: (result) => set({ creationResult: result }),
+
+  reset: () => set(initialState),
+}));

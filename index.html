@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/crystal.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Crystal</title>
+  </head>
+  <body>
+    <script>
+      (function() {
+        var theme = localStorage.getItem('crystal-theme');
+        var resolved = theme;
+        if (!theme || theme === 'system') {
+          resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'amethyst' : 'celestite';
+        }
+        var root = document.documentElement;
+        if (resolved === 'amethyst') {
+          root.classList.add('dark', 'amethyst');
+        } else {
+          root.classList.add('light', 'celestite');
+        }
+        root.setAttribute('data-theme', resolved);
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

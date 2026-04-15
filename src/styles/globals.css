@@ -1,0 +1,975 @@
+/* ============================================
+   CRYSTAL GUI - Facet Design System
+   Aesthetic: Geometric Precision
+   ============================================ */
+
+/* Font imports MUST come before @tailwind directives */
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+@font-face {
+  font-family: 'Geist';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-SemiBold.woff2') format('woff2');
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-sans/Geist-Bold.woff2') format('woff2');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('https://cdn.jsdelivr.net/npm/geist@1.2.0/dist/fonts/geist-mono/GeistMono-Medium.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Tailwind directives - AFTER font imports */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================
+   CSS Variables - Theme System
+   ============================================ */
+
+:root {
+  /* Base sizing */
+  --radius: 0.625rem;
+  --sidebar-width: 240px;
+  --sidebar-collapsed: 64px;
+
+  /* Crystal palette anchors (static) */
+  --celestite-blue: 217 91% 60%;
+  --celestite-blue-soft: 217 91% 70%;
+  --amethyst-purple: 276 68% 59%;
+  --amethyst-purple-soft: 280 80% 75%;
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Shadows */
+  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+}
+
+/* ============================================
+   AMETHYST THEME (Dark)
+   Deep purple-black with luminous accents
+   ============================================ */
+
+[data-theme="amethyst"], .dark {
+  color-scheme: dark;
+
+  /* Background layers - deep crystalline depths */
+  --background: 260 30% 5%;           /* #0d0d14 - near-black purple */
+  --background-secondary: 260 25% 8%; /* #151520 - elevated surface */
+  --card: 260 20% 12%;                /* #1a1a2e - card surface */
+  --card-elevated: 260 18% 16%;       /* #232338 - modals, dropdowns */
+
+  /* Text hierarchy */
+  --foreground: 210 40% 98%;          /* #f8fafc - primary text */
+  --foreground-secondary: 215 20% 65%; /* #94a3b8 - secondary text */
+  --foreground-muted: 215 16% 47%;    /* #64748b - muted text */
+  --heading: 210 40% 98%;             /* Same as foreground for dark mode */
+
+  /* Primary - Crystal Purple */
+  --primary: 276 68% 59%;             /* #9d4edd */
+  --primary-foreground: 210 40% 98%;
+  --primary-glow: 276 68% 59% / 0.15;
+  --primary-hover: 276 68% 52%;       /* Slightly darker on hover */
+
+  /* Secondary */
+  --secondary: 276 50% 30%;           /* Muted purple */
+  --secondary-foreground: 210 40% 98%;
+
+  /* Accent - Bright Amethyst */
+  --accent: 280 80% 75%;              /* #c77dff */
+  --accent-foreground: 260 30% 10%;
+
+  /* Borders & inputs */
+  --border: 260 15% 20%;              /* Subtle purple border */
+  --border-hover: 260 15% 28%;
+  --input: 260 20% 14%;
+  --ring: 276 68% 59%;
+
+  /* Semantic colors */
+  --success: 160 84% 39%;             /* #10b981 emerald */
+  --success-foreground: 160 84% 98%;
+  --warning: 38 92% 50%;              /* #f59e0b amber */
+  --warning-foreground: 38 92% 10%;
+  --destructive: 0 84% 60%;           /* #ef4444 red */
+  --destructive-foreground: 0 0% 98%;
+  --info: 217 91% 60%;                /* #3b82f6 blue */
+  --info-foreground: 217 91% 98%;
+
+  /* Muted surfaces */
+  --muted: 260 15% 18%;
+  --muted-foreground: 215 16% 55%;
+
+  /* Popover */
+  --popover: 260 20% 10%;
+  --popover-foreground: 210 40% 98%;
+
+  /* Chart colors - crystalline spectrum */
+  --chart-1: 276 68% 59%;             /* Purple */
+  --chart-2: 200 95% 50%;             /* Cyan */
+  --chart-3: 160 84% 45%;             /* Emerald */
+  --chart-4: 280 80% 70%;             /* Light purple */
+  --chart-5: 38 92% 55%;              /* Amber */
+
+  /* Crystal-specific semantic */
+  --crystal-stem: 142 71% 45%;        /* Green for stems */
+  --crystal-leaf: 200 95% 50%;        /* Cyan for leaves */
+  --crystal-fruit: 25 95% 55%;        /* Orange for fruits */
+
+  /* Stem facet shades */
+  --crystal-stem-highlight: 142 71% 62%;
+  --crystal-stem-shadow: 142 71% 32%;
+  --crystal-stem-specular: 142 71% 80%;
+
+  /* Leaf facet shades */
+  --crystal-leaf-highlight: 200 95% 67%;
+  --crystal-leaf-shadow: 200 95% 37%;
+  --crystal-leaf-specular: 200 95% 82%;
+
+  /* Fruit facet shades */
+  --crystal-fruit-highlight: 25 95% 72%;
+  --crystal-fruit-shadow: 25 95% 42%;
+  --crystal-fruit-specular: 25 95% 85%;
+
+  /* Special effects */
+  --glow-color: 276 68% 59% / 0.4;
+  --shimmer-start: 276 68% 59% / 0;
+  --shimmer-end: 276 68% 59% / 0.1;
+
+  /* Crystal facet colors */
+  --crystal-facet-light: 276 68% 68%;
+  --crystal-facet-dark: 280 60% 42%;
+  --crystal-edge: 280 80% 75% / 0.25;
+}
+
+/* ============================================
+   CELESTITE THEME (Light)
+   Clean blue-white with crystalline clarity
+   ============================================ */
+
+[data-theme="celestite"], :root:not([data-theme="amethyst"]):not(.dark) {
+  color-scheme: light;
+
+  /* Background layers - soft blue-tinted ivory */
+  --background: 220 20% 96%;          /* Warm blue-grey base */
+  --background-secondary: 220 18% 93.5%; /* Visible differentiation */
+  --card: 220 25% 98.5%;              /* Off-white with faint blue tint */
+  --card-elevated: 220 30% 99.5%;     /* Subtle lift above card */
+
+  /* Text hierarchy */
+  --foreground: 222 47% 11%;          /* #0f172a - near black */
+  --foreground-secondary: 215 16% 35%; /* #475569 */
+  --foreground-muted: 215 16% 57%;    /* #94a3b8 */
+  --heading: 222 47% 18%;             /* Slightly softer for headings */
+
+  /* Primary - Crystal Blue (toned down) */
+  --primary: 217 75% 58%;
+  --primary-foreground: 0 0% 100%;
+  --primary-glow: 217 75% 58% / 0.12;
+  --primary-hover: 217 78% 50%;
+
+  /* Secondary */
+  --secondary: 220 16% 91%;
+  --secondary-foreground: 222 47% 20%;
+
+  /* Accent - Sky Blue (toned down) */
+  --accent: 217 72% 68%;
+  --accent-foreground: 222 47% 11%;
+
+  /* Borders & inputs */
+  --border: 220 20% 88%;
+  --border-hover: 220 20% 80%;
+  --input: 220 18% 94%;
+  --ring: 217 75% 58%;
+
+  /* Semantic colors */
+  --success: 160 84% 39%;
+  --success-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 38 92% 10%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --info: 217 75% 58%;
+  --info-foreground: 0 0% 100%;
+
+  /* Muted surfaces */
+  --muted: 220 18% 93.5%;
+  --muted-foreground: 215 16% 45%;
+
+  /* Popover */
+  --popover: 220 25% 98.5%;
+  --popover-foreground: 222 47% 11%;
+
+  /* Chart colors (toned down) */
+  --chart-1: 217 75% 58%;
+  --chart-2: 160 70% 38%;
+  --chart-3: 276 68% 59%;
+  --chart-4: 25 80% 53%;
+  --chart-5: 330 68% 58%;
+
+  /* Crystal-specific semantic */
+  --crystal-stem: 142 71% 40%;
+  --crystal-leaf: 200 95% 45%;
+  --crystal-fruit: 25 95% 50%;
+
+  /* Stem facet shades */
+  --crystal-stem-highlight: 142 71% 55%;
+  --crystal-stem-shadow: 142 71% 28%;
+  --crystal-stem-specular: 142 71% 70%;
+
+  /* Leaf facet shades */
+  --crystal-leaf-highlight: 200 95% 60%;
+  --crystal-leaf-shadow: 200 95% 32%;
+  --crystal-leaf-specular: 200 95% 72%;
+
+  /* Fruit facet shades */
+  --crystal-fruit-highlight: 25 95% 65%;
+  --crystal-fruit-shadow: 25 95% 37%;
+  --crystal-fruit-specular: 25 95% 78%;
+
+  /* Special effects (toned down) */
+  --glow-color: 217 75% 58% / 0.22;
+  --shimmer-start: 217 75% 58% / 0;
+  --shimmer-end: 217 75% 58% / 0.07;
+
+  /* Crystal facet colors (toned down) */
+  --crystal-facet-light: 217 72% 68%;
+  --crystal-facet-dark: 217 68% 44%;
+  --crystal-edge: 217 72% 68% / 0.18;
+}
+
+/* ============================================
+   Base Layer Styles
+   ============================================ */
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    font-family: 'Geist', system-ui, -apple-system, sans-serif;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    margin: 0;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  /* Geometric heading font */
+  .font-heading {
+    font-family: 'Chakra Petch', system-ui, sans-serif;
+    letter-spacing: 0.02em;
+  }
+
+  h1, h2, h3, h4, h5, h6,
+  .text-2xl, .text-3xl, .text-4xl {
+    font-family: 'Chakra Petch', system-ui, sans-serif;
+    letter-spacing: 0.02em;
+  }
+
+  /* Monospace for data display */
+  .font-mono {
+    font-family: 'Space Mono', 'Geist Mono', 'JetBrains Mono', monospace;
+    font-feature-settings: 'tnum', 'zero';
+  }
+
+  /* Tabular numbers for aligned data */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ============================================
+   Component Utilities
+   ============================================ */
+
+@layer utilities {
+  /* Crystalline glow effect */
+  .crystal-glow {
+    box-shadow: 0 0 20px hsl(var(--glow-color)),
+                0 0 40px hsl(var(--glow-color));
+  }
+
+  .crystal-glow-sm {
+    box-shadow: 0 0 10px hsl(var(--glow-color));
+  }
+
+  /* Sidebar navigation hover outline glow (celestite ↔ amethyst cycle) */
+  @property --sidebar-nav-outline-angle {
+    syntax: "<angle>";
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  .sidebar-nav-item::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    clip-path: inherit;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    --sidebar-nav-outline-angle: 0deg;
+    background: conic-gradient(
+        from var(--sidebar-nav-outline-angle),
+        hsl(var(--celestite-blue) / 0.65),
+        hsl(var(--celestite-blue-soft) / 0.65),
+        hsl(var(--amethyst-purple) / 0.65),
+        hsl(var(--amethyst-purple-soft) / 0.65),
+        hsl(var(--celestite-blue) / 0.65)
+      )
+      border-box;
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  [data-theme="celestite"] .sidebar-nav-item:hover::after,
+  [data-theme="celestite"] .sidebar-nav-item:focus-visible::after,
+  [data-theme="celestite"] .sidebar-nav-item[data-active="true"]::after,
+  :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:hover::after,
+  :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:focus-visible::after,
+  :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item[data-active="true"]::after {
+    opacity: 1;
+    filter:
+      blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
+      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  [data-theme="amethyst"] .sidebar-nav-item:hover::after,
+  [data-theme="amethyst"] .sidebar-nav-item:focus-visible::after,
+  [data-theme="amethyst"] .sidebar-nav-item[data-active="true"]::after,
+  .dark .sidebar-nav-item:hover::after,
+  .dark .sidebar-nav-item:focus-visible::after,
+  .dark .sidebar-nav-item[data-active="true"]::after {
+    opacity: 1;
+    filter:
+      blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
+      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  @keyframes sidebar-nav-outline-cycle {
+    to {
+      --sidebar-nav-outline-angle: 360deg;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-theme="celestite"] .sidebar-nav-item:hover::after,
+    [data-theme="celestite"] .sidebar-nav-item:focus-visible::after,
+    [data-theme="celestite"] .sidebar-nav-item[data-active="true"]::after,
+    :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:hover::after,
+    :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:focus-visible::after,
+    :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item[data-active="true"]::after,
+    [data-theme="amethyst"] .sidebar-nav-item:hover::after,
+    [data-theme="amethyst"] .sidebar-nav-item:focus-visible::after,
+    [data-theme="amethyst"] .sidebar-nav-item[data-active="true"]::after,
+    .dark .sidebar-nav-item:hover::after,
+    .dark .sidebar-nav-item:focus-visible::after,
+    .dark .sidebar-nav-item[data-active="true"]::after {
+      animation: none;
+    }
+  }
+
+  /* Faceted card effect - subtle angular shadow */
+  .faceted {
+    background-color: hsl(var(--card));
+    background-image:
+      linear-gradient(
+        135deg,
+        hsl(var(--card)) 0%,
+        hsl(var(--card-elevated)) 18%,
+        hsl(var(--card-elevated) / 0.98) 48%,
+        hsl(var(--card)) 100%
+      ),
+      radial-gradient(
+        140% 120% at 0% 0%,
+        hsl(var(--primary) / 0.045) 0%,
+        transparent 44%
+      ),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.05' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.18'/%3E%3C/svg%3E");
+    background-size: auto, auto, 160px 160px;
+    background-blend-mode: normal, screen, soft-light;
+  }
+
+  /* Inner glow for active states */
+  .inner-glow {
+    box-shadow: inset 0 1px 0 0 hsl(var(--primary) / 0.1),
+                inset 0 0 20px hsl(var(--primary) / 0.05);
+  }
+
+  /* Gradient text */
+  .gradient-text {
+    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Status pulse animation */
+  .pulse-live {
+    animation: pulse-live 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  @keyframes pulse-live {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  /* Shimmer effect for loading states */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--shimmer-start)) 0%,
+      hsl(var(--shimmer-end)) 50%,
+      hsl(var(--shimmer-start)) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+
+  /* Data update flash */
+  .data-flash {
+    animation: data-flash 0.5s ease-out;
+  }
+
+  @keyframes data-flash {
+    0% {
+      background-color: hsl(var(--primary) / 0.2);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+
+  /* Block enter animation - reserve layout smoothly, animate content separately */
+  .block-enter-shell {
+    overflow: hidden;
+    animation: block-enter-shell var(--block-anim-duration, 400ms) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  }
+
+  .block-enter-content {
+    will-change: transform, opacity;
+    transform: translateZ(0);
+    animation: block-enter-content calc(var(--block-anim-duration, 400ms) * 0.9) cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes block-enter-shell {
+    from {
+      max-height: 0;
+    }
+    to {
+      max-height: 96px;
+    }
+  }
+
+  @keyframes block-enter-content {
+    from {
+      opacity: 0;
+      transform: translate3d(0, -6px, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .block-enter-shell {
+      animation: none;
+      max-height: none;
+    }
+
+    .block-enter-content {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Slide in animation */
+  .slide-in-right {
+    animation: slide-in-right 0.3s ease-out;
+  }
+
+  @keyframes slide-in-right {
+    from {
+      opacity: 0;
+      transform: translateX(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  /* Fade in up animation */
+  .fade-in-up {
+    animation: fade-in-up 0.4s ease-out;
+  }
+
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      transform: translateY(0);
+      /* No opacity - element fades to its natural opacity from classes */
+    }
+  }
+
+  @keyframes fadeInDown {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Stagger children animations */
+  .stagger-children > * {
+    animation: fade-in-up 0.4s ease-out backwards;
+  }
+
+  .stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+  .stagger-children > *:nth-child(2) { animation-delay: 50ms; }
+  .stagger-children > *:nth-child(3) { animation-delay: 100ms; }
+  .stagger-children > *:nth-child(4) { animation-delay: 150ms; }
+  .stagger-children > *:nth-child(5) { animation-delay: 200ms; }
+  .stagger-children > *:nth-child(6) { animation-delay: 250ms; }
+
+  /* ============================================
+     Geometric Shape Utilities
+     ============================================ */
+
+  /* Chamfered corners - 8px cuts */
+  .chamfered {
+    clip-path: polygon(
+      8px 0, calc(100% - 8px) 0,
+      100% 8px, 100% calc(100% - 8px),
+      calc(100% - 8px) 100%, 8px 100%,
+      0 calc(100% - 8px), 0 8px
+    );
+  }
+
+  /* Chamfered corners - 4px cuts (smaller elements) */
+  .chamfered-sm {
+    clip-path: polygon(
+      4px 0, calc(100% - 4px) 0,
+      100% 4px, 100% calc(100% - 4px),
+      calc(100% - 4px) 100%, 4px 100%,
+      0 calc(100% - 4px), 0 4px
+    );
+  }
+
+  /* Chamfered corners - 12px cuts (larger elements) */
+  .chamfered-lg {
+    clip-path: polygon(
+      12px 0, calc(100% - 12px) 0,
+      100% 12px, 100% calc(100% - 12px),
+      calc(100% - 12px) 100%, 12px 100%,
+      0 calc(100% - 12px), 0 12px
+    );
+  }
+
+  /* Chamfered border wrappers — wrap a .chamfered child to produce a
+     polygon-following border via the padding-gap technique.
+     Set --_cb-color on the element for a custom border color. */
+  .chamfered-border-wrap {
+    clip-path: polygon(
+      8px 0, calc(100% - 8px) 0,
+      100% 8px, 100% calc(100% - 8px),
+      calc(100% - 8px) 100%, 8px 100%,
+      0 calc(100% - 8px), 0 8px
+    );
+    padding: 1px;
+    background: var(--_cb-color, hsl(var(--border)));
+  }
+
+  .chamfered-sm-border-wrap {
+    clip-path: polygon(
+      4px 0, calc(100% - 4px) 0,
+      100% 4px, 100% calc(100% - 4px),
+      calc(100% - 4px) 100%, 4px 100%,
+      0 calc(100% - 4px), 0 4px
+    );
+    padding: 1px;
+    background: var(--_cb-color, hsl(var(--border)));
+  }
+
+  .chamfered-lg-border-wrap {
+    clip-path: polygon(
+      12px 0, calc(100% - 12px) 0,
+      100% 12px, 100% calc(100% - 12px),
+      calc(100% - 12px) 100%, 12px 100%,
+      0 calc(100% - 12px), 0 12px
+    );
+    padding: 1px;
+    background: var(--_cb-color, hsl(var(--border)));
+  }
+
+  /* Diamond shape */
+  .diamond {
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  }
+
+  /* Hexagon shape */
+  .hexagon {
+    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  }
+
+  /* Hexagon - small (for switch thumbs, micro indicators) */
+  .hexagon-sm {
+    clip-path: polygon(25% 5%, 75% 5%, 95% 50%, 75% 95%, 25% 95%, 5% 50%);
+  }
+
+  /* Diamond - small (for status indicators) */
+  .diamond-sm {
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  }
+
+  /* Octagon shape */
+  .octagon {
+    clip-path: polygon(
+      30% 0%, 70% 0%, 100% 30%, 100% 70%,
+      70% 100%, 30% 100%, 0% 70%, 0% 30%
+    );
+  }
+
+  /* 3D faceted gem effect for hexagonal badges.
+     Set --gem-highlight, --gem-base, --gem-shadow as HSL triplets
+     on the element via inline style.
+     Two crossing linear-gradients with hard stops at 50% create
+     4 triangular facets. Edges run corner-to-corner through the
+     hex vertices at (25%,0%)↔(75%,100%) and (75%,0%)↔(25%,100%).
+     Angles calibrated for ~3:1 aspect ratio (block-type badges). */
+  .hex-gem {
+    background:
+      /* Diagonal 1: top-left ↔ bottom-right vertex */
+      linear-gradient(
+        34deg,
+        hsl(var(--gem-shadow) / 0.28) 50%,
+        hsl(var(--gem-highlight) / 0.28) 50%
+      ),
+      /* Diagonal 2: top-right ↔ bottom-left vertex */
+      linear-gradient(
+        146deg,
+        hsl(var(--gem-highlight) / 0.28) 50%,
+        hsl(var(--gem-shadow) / 0.28) 50%
+      ),
+      /* Horizontal: left ↔ right vertex */
+      linear-gradient(
+        180deg,
+        hsl(var(--gem-highlight) / 0.15) 50%,
+        hsl(var(--gem-shadow) / 0.15) 50%
+      ),
+      /* Lateral tilt: very subtle, just breaks symmetry */
+      linear-gradient(
+        90deg,
+        hsl(var(--gem-highlight) / 0.06) 50%,
+        hsl(var(--gem-shadow) / 0.06) 50%
+      );
+    background-color: hsl(var(--gem-base) / 0.10);
+  }
+
+  /* Crystalline card styling */
+  .crystalline {
+    position: relative;
+    background-color: hsl(var(--card));
+    background-image:
+      linear-gradient(
+        145deg,
+        hsl(var(--card)) 0%,
+        hsl(var(--card-elevated) / 0.985) 16%,
+        hsl(var(--card-elevated)) 34%,
+        hsl(var(--card-elevated) / 0.94) 52%,
+        hsl(var(--card) / 0.985) 78%,
+        hsl(var(--card)) 100%
+      ),
+      radial-gradient(
+        140% 115% at 0% 0%,
+        hsl(var(--primary) / 0.055) 0%,
+        transparent 40%
+      ),
+      radial-gradient(
+        150% 120% at 100% 100%,
+        hsl(var(--accent) / 0.05) 0%,
+        transparent 42%
+      ),
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='192' height='192' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
+    background-size: auto, auto, auto, 192px 192px;
+    background-blend-mode: normal, screen, screen, soft-light;
+    transform: translateZ(0);
+  }
+
+  .crystalline::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px solid transparent;
+    background: linear-gradient(
+      135deg,
+      hsl(var(--crystal-facet-light) / 0.3) 0%,
+      hsl(var(--border)) 25%,
+      hsl(var(--crystal-edge)) 50%,
+      hsl(var(--border)) 75%,
+      hsl(var(--crystal-facet-dark) / 0.2) 100%
+    ) border-box;
+    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+
+  /* Crystal refraction line effect - optional decorative element */
+  .crystal-refraction::after {
+    content: "";
+    position: absolute;
+    top: 15%;
+    left: 8%;
+    right: 55%;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      hsl(var(--crystal-facet-light) / 0.15) 30%,
+      hsl(var(--crystal-facet-light) / 0.08) 70%,
+      transparent 100%
+    );
+    transform: rotate(-12deg);
+    pointer-events: none;
+  }
+
+  /* Faceted border gradient — override --_fb-fill to change the interior color */
+  .faceted-border {
+    --_fb-fill: var(--card);
+    border: 1px solid transparent;
+    background:
+      linear-gradient(hsl(var(--_fb-fill)), hsl(var(--_fb-fill))) padding-box,
+      linear-gradient(
+        135deg,
+        hsl(var(--primary) / 0.4) 0%,
+        hsl(var(--border)) 30%,
+        hsl(var(--accent) / 0.3) 60%,
+        hsl(var(--border)) 100%
+      ) border-box;
+  }
+
+  /* Geometric icon container */
+  .icon-hex {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    background: hsl(var(--muted));
+    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+  }
+
+  .icon-hex-sm {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  /* Angular divider */
+  .divider-angular {
+    position: relative;
+    height: 1px;
+    background: hsl(var(--border));
+  }
+
+  .divider-angular::before,
+  .divider-angular::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    background: hsl(var(--border));
+    transform: translateY(-50%) rotate(45deg);
+  }
+
+  .divider-angular::before {
+    left: 0;
+  }
+
+  .divider-angular::after {
+    right: 0;
+  }
+
+  /* Status diamond indicator */
+  .status-diamond {
+    width: 8px;
+    height: 8px;
+    background: currentColor;
+    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  }
+
+  .status-diamond-sm {
+    width: 6px;
+    height: 6px;
+  }
+}
+
+/* ============================================
+   Custom Scrollbar
+   ============================================ */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: hsl(var(--background-secondary));
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: hsl(var(--border));
+  border-radius: 4px;
+  transition: background var(--transition-fast);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--border-hover));
+}
+
+/* Firefox scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--border)) hsl(var(--background-secondary));
+}
+
+/* ============================================
+   Focus Styles
+   ============================================ */
+
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+/* ============================================
+   Selection
+   ============================================ */
+
+::selection {
+  background: hsl(var(--primary) / 0.3);
+  color: hsl(var(--foreground));
+}
+
+/* ============================================
+   Transitions
+   ============================================ */
+
+.transition-theme {
+  transition: background-color var(--transition-slow),
+              border-color var(--transition-slow),
+              color var(--transition-slow);
+}
+
+/* ============================================
+   Hexagonal Grid Background Pattern
+   ============================================ */
+
+.hex-grid-bg {
+  position: relative;
+}
+
+.hex-grid-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cpath fill='none' stroke='%239d4edd' stroke-width='0.4' stroke-opacity='0.08' d='M14 0L28 8v16L14 32 0 24V8zM14 17L28 25v16L14 49 0 41V25z'/%3E%3C/svg%3E");
+  pointer-events: none;
+  opacity: 1;
+}
+
+[data-theme="celestite"] .hex-grid-bg::before,
+:root:not([data-theme="amethyst"]):not(.dark) .hex-grid-bg::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cpath fill='none' stroke='%233b82f6' stroke-width='0.4' stroke-opacity='0.06' d='M14 0L28 8v16L14 32 0 24V8zM14 17L28 25v16L14 49 0 41V25z'/%3E%3C/svg%3E");
+}
+
+/* ============================================
+   Crystal Logo SVG Component
+   ============================================ */
+
+.crystal-logo {
+  --logo-primary: hsl(var(--primary));
+  --logo-accent: hsl(var(--accent));
+  --logo-facet: hsl(var(--crystal-facet-light));
+}

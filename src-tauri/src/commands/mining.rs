@@ -1,0 +1,161 @@
+//! Mining control commands
+//!
+//! Commands for starting, stopping, and monitoring mining.
+
+use serde::Serialize;
+use tauri::State;
+use xtal::MiningStatsDisplay;
+
+use crate::platform;
+use crate::state::AppState;
+
+/// Mining status response
+#[derive(Debug, Clone, Serialize)]
+pub struct MiningStatus {
+    pub is_active: bool,
+    pub threads: usize,
+    pub max_threads: usize,
+    pub wallet_name: Option<String>,
+    pub mining_address: Option<String>,
+}
+
+/// Start mining with specified thread count
+#[tauri::command]
+pub async fn start_mining(state: State<'_, AppState>, threads: usize) -> Result<(), String> {
+    let mining = state
+        .services
+        .mining
+        .as_ref()
+        .ok_or("Mining service not available")?;
+
+    mining
+        .start(threads, false, None, None)
+        .await
+        .map_err(|e| format!("Failed to start mining: {}", e))?;
+
+    // Prevent macOS App Nap from throttling mining threads
+    platform::begin_mining_activity();
+
+    Ok(())
+}
+
+/// Stop mining
+#[tauri::command]
+pub async fn stop_mining(state: State<'_, AppState>) -> Result<(), String> {
+    let mining = state
+        .services
+        .mining
+        .as_ref()
+        .ok_or("Mining service not available")?;
+
+    mining
+        .stop()
+        .await
+        .map_err(|e| format!("Failed to stop mining: {}", e))?;
+
+    // Release macOS App Nap prevention
+    platform::end_mining_activity();
+
+    Ok(())
+}
+
+/// Get current mining status
+#[tauri::command]
+pub async fn get_mining_status(state: State<'_, AppState>) -> Result<MiningStatus, String> {
+    // Get wallet info if available
+    let (wallet_name, mining_address) = if let Some(wallet) = &state.services.wallet {
+        if wallet.is_loaded() {
+            let name = wallet.get_wallet_path().and_then(|p| {
+                std::path::Path::new(&p)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(String::from)
+            });
+
+            let addr = wallet
+                .with_wallet(|w| {
+                    w.get_all_mining_keys()
+                        .map(|keys| keys.first().map(|(_, addr, _)| addr.clone()))
+                })
+                .ok()
+                .flatten();
+
+            (name, addr)
+        } else {
+            (None, None)
+        }
+    } else {
+        (None, None)
+    };
+
+    let max_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    match &state.services.mining {
+        Some(mining) => {
+            let is_active = mining.is_running();
+
+            // When mining is running, use the snapshotted wallet name (locked at start)
+            // When not running, use the currently loaded wallet name
+            let effective_wallet_name = if is_active {
+                mining.mining_wallet_name().await.or(wallet_name)
+            } else {
+                wallet_name
+            };
+
+            Ok(MiningStatus {
+                is_active,
+                threads: mining.thread_count(),
+                max_threads,
+                wallet_name: effective_wallet_name,
+                mining_address,
+            })
+        }
+        None => Ok(MiningStatus {
+            is_active: false,
+            threads: 0,
+            max_threads,
+            wallet_name,
+            mining_address,
+        }),
+    }
+}
+
+/// Get mining statistics (lock-free, can be called frequently)
+#[tauri::command]
+pub async fn get_mining_stats(
+    state: State<'_, AppState>,
+) -> Result<Option<MiningStatsDisplay>, String> {
+    match &state.services.mining {
+        Some(mining) => {
+            if mining.is_running() {
+                Ok(Some(mining.get_mining_stats().get_stats()))
+            } else {
+                Ok(None)
+            }
+        }
+        None => Ok(None),
+    }
+}
+
+/// Set mining thread count (requires restart)
+#[tauri::command]
+pub async fn set_mining_threads(state: State<'_, AppState>, threads: usize) -> Result<(), String> {
+    let mining = state
+        .services
+        .mining
+        .as_ref()
+        .ok_or("Mining service not available")?;
+
+    // Stop and restart with new thread count
+    if mining.is_running() {
+        mining.stop().await.map_err(|e| e.to_string())?;
+        mining
+            .start(threads, false, None, None)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}

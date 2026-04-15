@@ -1,0 +1,80 @@
+<svg width="512" height="512" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background circle for app icon -->
+  <circle cx="16" cy="16" r="15" fill="url(#bgGradient)"/>
+
+  <!-- Main crystal body - hexagonal prism -->
+  <path
+    d="M16 4L26 10V22L16 28L6 22V10L16 4Z"
+    fill="url(#crystalGradient)"
+    stroke="url(#crystalEdge)"
+    stroke-width="0.3"
+  />
+  <!-- Left facet -->
+  <path
+    d="M6 10L16 16V28L6 22V10Z"
+    fill="#1a1a2e"
+    fill-opacity="0.35"
+  />
+  <!-- Right facet -->
+  <path
+    d="M26 10L16 16V28L26 22V10Z"
+    fill="#ffffff"
+    fill-opacity="0.2"
+  />
+  <!-- Top facet highlight -->
+  <path
+    d="M16 4L26 10L16 16L6 10L16 4Z"
+    fill="#ffffff"
+    fill-opacity="0.4"
+  />
+  <!-- Inner refraction line -->
+  <path
+    d="M11 8L21 14"
+    stroke="#ffffff"
+    stroke-opacity="0.25"
+    stroke-width="0.4"
+  />
+  <!-- Center vertical axis -->
+  <path
+    d="M16 4V16"
+    stroke="#ffffff"
+    stroke-opacity="0.15"
+    stroke-width="0.4"
+  />
+  <!-- Subtle outer glow -->
+  <path
+    d="M16 4L26 10V22L16 28L6 22V10L16 4Z"
+    fill="none"
+    stroke="url(#glowGradient)"
+    stroke-width="0.8"
+    stroke-opacity="0.5"
+  />
+
+  <defs>
+    <!-- Background: deep blue-purple -->
+    <radialGradient id="bgGradient" cx="0.3" cy="0.3" r="0.8">
+      <stop offset="0%" stop-color="#2d2d44"/>
+      <stop offset="100%" stop-color="#1a1a2e"/>
+    </radialGradient>
+
+    <!-- Crystal: Celestite blue to Amethyst purple gradient -->
+    <linearGradient id="crystalGradient" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4d9de0"/><!-- Celestite blue -->
+      <stop offset="50%" stop-color="#7c6bdb"/><!-- Mid blend -->
+      <stop offset="100%" stop-color="#9b5de5"/><!-- Amethyst purple -->
+    </linearGradient>
+
+    <!-- Edge highlight gradient -->
+    <linearGradient id="crystalEdge" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#7dd3fc"/><!-- Light blue -->
+      <stop offset="50%" stop-color="#a78bfa"/><!-- Light purple -->
+      <stop offset="100%" stop-color="#c084fc"/><!-- Bright purple -->
+    </linearGradient>
+
+    <!-- Outer glow -->
+    <linearGradient id="glowGradient" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4d9de0" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#9b5de5" stop-opacity="0.6"/>
+    </linearGradient>
+  </defs>
+</svg>
