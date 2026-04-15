@@ -12,7 +12,7 @@ The UI is responsible for presenting blockchain data and collecting user input. 
 - Wallet management for creating, importing, loading, unloading, and using wallets.
 - UTXO and VM account views for balances, addresses, and transaction history.
 - Mining and validator panels for PoW and staking-related workflows.
-- Explorer, mempool, network, and RPC console views for inspecting node activity.
+- Block explorer, mempool viewer, network stats, and RPC console views for inspecting node activity.
 - Contract Gateway for deploying contracts, importing ABIs, and interacting with deployed contracts.
 - In-app toast notifications for live feedback, with notification preferences available in settings.
 - Light and dark theme support with a consistent Crystal Labs Facet visual style.
@@ -68,7 +68,7 @@ The frontend lives under `src/` and is a React 18 application bundled with Vite.
 Frontend responsibilities include:
 
 - navigation and panel layout
-- setup, wallet, mining, validator, gateway, explorer, network, console, and settings views
+- setup, wallet, mining, validator, gateway, block explorer, network, console, and settings views
 - local UI state, modals, toasts, and loading/error handling
 - presenting real-time blockchain, wallet, and network data
 
@@ -93,7 +93,7 @@ The frontend and backend communicate through three main channels:
 
 ## Usage
 
-On first launch, the app walks the user through setup. After configuration is in place, the main application opens into a multi-panel desktop UI where users can move between wallet, mining, validator, gateway, explorer, network, console, and settings screens.
+On first launch, the app walks the user through setup. After configuration is in place, the main application opens into a multi-panel desktop UI where users can interact with the node and view relevant statistics.
 
 Typical usage includes:
 
