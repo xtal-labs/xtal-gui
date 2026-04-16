@@ -25,7 +25,7 @@ import {
   isValidXtalInput,
   parseXtalToShards,
 } from "@/lib/utils";
-import { parseAddressInput, hexToBase58Address } from "@/lib/address";
+import { parseAddressInput } from "@/lib/address";
 import { buildCallData } from "@/lib/contractQuery";
 import { tauriCommand } from "@/hooks";
 import { useUiStore, useWalletStore } from "@/stores";
@@ -34,7 +34,7 @@ interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
   maxBalance: number;
-  defaultRecipient?: string; // hex PKH of user's primary UTXO address
+  defaultRecipient?: string; // Base58Check UTXO address
 }
 
 type WithdrawStep = "form" | "confirm" | "sending" | "success" | "error";
@@ -75,10 +75,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   // Pre-fill recipient with user's own address when modal opens
   useEffect(() => {
     if (isOpen && defaultRecipient) {
-      const base58 = hexToBase58Address(defaultRecipient);
-      if (base58) {
-        setRecipient(base58);
-      }
+      setRecipient(defaultRecipient);
     }
   }, [isOpen, defaultRecipient]);
 
@@ -111,11 +108,10 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   const totalDeducted = amountShards + maxGasFee;
   const hasInsufficientFunds = totalDeducted > maxBalance && amountShards > 0;
 
-  // Parse recipient address
+  // Withdrawals only support UTXO/Base58 recipients.
   const parsedAddress = parseAddressInput(recipient);
-  const recipientDisplay = parsedAddress
-    ? hexToBase58Address(parsedAddress.pkh) ?? recipient.trim()
-    : recipient.trim();
+  const isBase58Recipient = parsedAddress?.format === "base58";
+  const recipientDisplay = recipient.trim();
 
   const hasGasError =
     (gasLimit !== "" && gasConfig && parseInt(gasLimit) < gasConfig.defaultGasLimit) ||
@@ -124,7 +120,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
 
   const canProceed =
     recipient.length > 0 &&
-    parsedAddress !== null &&
+    isBase58Recipient &&
     amountShards > 0 &&
     !amountError &&
     !hasInsufficientFunds &&
@@ -139,8 +135,8 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
       setError(amountError || "Please enter a valid amount");
       return;
     }
-    if (!parsedAddress) {
-      setError("Please enter a valid recipient address");
+    if (!isBase58Recipient) {
+      setError("Please enter a valid Base58Check UTXO address");
       return;
     }
 
@@ -150,7 +146,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
     try {
       // Encode CAGE withdraw calldata: selector + recipient (utxo_address) + amount (u64)
       const data = buildCallData(CAGE_WITHDRAW_SELECTOR, [
-        { type: "utxo_address", value: recipient },
+        { type: "utxo_address", value: recipient.trim() },
         { type: "u64", value: String(amountShards) },
       ]);
 
@@ -205,10 +201,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
 
   const handleUseMyAddress = () => {
     if (defaultRecipient) {
-      const base58 = hexToBase58Address(defaultRecipient);
-      if (base58) {
-        setRecipient(base58);
-      }
+      setRecipient(defaultRecipient);
     }
   };
 
@@ -307,15 +300,15 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                   onChange={(e) => setRecipient(e.target.value)}
                   className={cn(
                     "font-mono text-sm",
-                    recipient && parsedAddress === null && "border-destructive"
+                    recipient && !isBase58Recipient && "border-destructive"
                   )}
                   autoComplete="off"
                   spellCheck={false}
                 />
-                {recipient && parsedAddress === null && (
+                {recipient && !isBase58Recipient && (
                   <p className="text-xs text-destructive flex items-center gap-1">
                     <AlertCircle className="h-3 w-3" />
-                    Invalid address format
+                    Enter a valid Base58Check UTXO address
                   </p>
                 )}
               </div>
