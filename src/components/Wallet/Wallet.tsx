@@ -16,6 +16,8 @@ import {
   Boxes,
   Key,
   FileText,
+  ArrowUpFromLine,
+  ArrowDownToLine,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -49,6 +51,8 @@ import { SendModal } from "./SendModal";
 import { ReceiveModal } from "./ReceiveModal";
 import { VmSendModal } from "./VmSendModal";
 import { VmReceiveModal } from "./VmReceiveModal";
+import { DepositModal } from "./DepositModal";
+import { WithdrawModal } from "./WithdrawModal";
 
 // Modal IDs for wallet operations (triggered by menu or buttons)
 const MODAL_WALLET_LOAD = "wallet-load";
@@ -60,6 +64,8 @@ const MODAL_SEND = "wallet-send";
 const MODAL_RECEIVE = "wallet-receive";
 const MODAL_VM_SEND = "wallet-vm-send";
 const MODAL_VM_RECEIVE = "wallet-vm-receive";
+const MODAL_DEPOSIT = "wallet-deposit";
+const MODAL_WITHDRAW = "wallet-withdraw";
 
 // Sub-tab types for the wallet view
 type WalletSubTab = "utxo" | "vm";
@@ -118,6 +124,8 @@ export default function Wallet() {
   const showVmSendModal = activeModal === MODAL_VM_SEND;
   const showVmReceiveModal = activeModal === MODAL_VM_RECEIVE;
   const showImportFileModal = activeModal === MODAL_WALLET_IMPORT_FILE;
+  const showDepositModal = activeModal === MODAL_DEPOSIT;
+  const showWithdrawModal = activeModal === MODAL_WITHDRAW;
   // For load modal, the wallet name is passed as modalData
   const selectedWalletFromMenu = showLoadModal ? (modalData as string | null) : null;
 
@@ -785,14 +793,14 @@ export default function Wallet() {
       </Card>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-3">
         <Button
           variant="crystalline"
           size="lg"
           className="h-14 text-foreground"
           onClick={() => openModal(MODAL_SEND)}
         >
-          <Send className="h-5 w-5 mr-2" />
+          <Send className="h-4 w-4 mr-1.5" />
           Send
         </Button>
         <Button
@@ -801,8 +809,17 @@ export default function Wallet() {
           className="h-14 text-foreground"
           onClick={() => openModal(MODAL_RECEIVE)}
         >
-          <Download className="h-5 w-5 mr-2" />
+          <Download className="h-4 w-4 mr-1.5" />
           Receive
+        </Button>
+        <Button
+          size="lg"
+          variant="outline-crystalline"
+          className="h-14 text-foreground"
+          onClick={() => openModal(MODAL_DEPOSIT)}
+        >
+          <ArrowUpFromLine className="h-4 w-4 mr-1.5" />
+          Deposit
         </Button>
       </div>
 
@@ -889,7 +906,7 @@ export default function Wallet() {
       </Card>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-3 gap-3">
         <Button
           variant="crystalline"
           size="lg"
@@ -897,7 +914,7 @@ export default function Wallet() {
           onClick={() => openModal(MODAL_VM_SEND)}
           disabled={vmAddresses.length === 0}
         >
-          <Send className="h-5 w-5 mr-2" />
+          <Send className="h-4 w-4 mr-1.5" />
           Send
         </Button>
         <Button
@@ -906,8 +923,18 @@ export default function Wallet() {
           className="h-14 text-foreground"
           onClick={() => openModal(MODAL_VM_RECEIVE)}
         >
-          <Download className="h-5 w-5 mr-2" />
+          <Download className="h-4 w-4 mr-1.5" />
           Receive
+        </Button>
+        <Button
+          size="lg"
+          variant="outline-crystalline"
+          className="h-14 text-foreground"
+          onClick={() => openModal(MODAL_WITHDRAW)}
+          disabled={vmAddresses.length === 0}
+        >
+          <ArrowDownToLine className="h-4 w-4 mr-1.5" />
+          Withdraw
         </Button>
       </div>
 
@@ -1086,6 +1113,15 @@ export default function Wallet() {
           </DropdownMenu>
         </div>
         <div className="flex items-center gap-2">
+          {/* Total Balance Readout */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            <span className="text-xs font-heading tracking-wide text-foreground-muted">TOTAL</span>
+            <AmountDisplay 
+              amount={balance.confirmed + (vmBalance?.balance ?? 0)} 
+              size="sm" 
+              showSymbol 
+            />
+          </div>
           <Button
             variant="ghost"
             size="icon"
@@ -1948,6 +1984,20 @@ export default function Wallet() {
         onClose={closeModal}
         vmAddresses={vmAddresses}
         onAddressGenerated={refreshVmData}
+      />
+
+      {/* CAGE Deposit Modal (UTXO -> VM) */}
+      <DepositModal
+        isOpen={showDepositModal}
+        onClose={closeModal}
+      />
+
+      {/* CAGE Withdraw Modal (VM -> UTXO) */}
+      <WithdrawModal
+        isOpen={showWithdrawModal}
+        onClose={closeModal}
+        maxBalance={vmBalance?.balance ?? 0}
+        defaultRecipient={addresses.length > 0 ? addresses[0].address : undefined}
       />
     </>
   );
