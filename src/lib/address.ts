@@ -2,9 +2,9 @@ import bs58 from "bs58";
 import { blake3 } from "@noble/hashes/blake3.js";
 
 /**
- * XTAL address version byte (same as Bitcoin's P2PKH)
+ * XTAL address version byte
  */
-const XTAL_VERSION_BYTE = 0x00;
+const XTAL_VERSION_BYTE = 0xC7;
 
 /**
  * Calculate the 4-byte checksum used in Base58Check: double Blake3 hash.
