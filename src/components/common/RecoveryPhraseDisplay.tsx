@@ -244,7 +244,7 @@ export function RecoveryPhraseDisplay({
            w-full chamfered py-3 font-medium text-lg transition-all duration-300
            flex items-center justify-center gap-3
            ${canContinue
-             ? 'bg-gradient-to-r from-accent to-primary text-[var(--foreground)] hover:shadow-glow hover:scale-[1.01]'
+              ? 'bg-gradient-to-r from-accent to-primary text-foreground hover:shadow-glow hover:scale-[1.01]'
              : 'bg-muted/20 text-foreground-muted cursor-not-allowed'
            }
          `}

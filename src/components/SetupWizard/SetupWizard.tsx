@@ -56,16 +56,16 @@ function ProgressIndicator({
             <div className="relative">
               {/* Diamond shape */}
               <div
-                className={`
+                  className={`
                   w-3 h-3 rotate-45 transition-all duration-300
-                  ${isCompleted ? 'bg-[var(--success)] shadow-[0_0_12px_var(--success)]' : ''}
-                  ${isCurrent ? 'bg-[var(--accent)] shadow-[0_0_16px_var(--accent)] scale-125' : ''}
-                  ${isUpcoming ? 'bg-[var(--border)] opacity-40' : ''}
+                  ${isCompleted ? 'bg-success shadow-[0_0_12px_var(--success)]' : ''}
+                  ${isCurrent ? 'bg-accent shadow-[0_0_16px_var(--accent)] scale-125' : ''}
+                  ${isUpcoming ? 'bg-border opacity-40' : ''}
                 `}
               />
               {/* Pulse effect for current */}
               {isCurrent && (
-                <div className="absolute inset-0 w-3 h-3 rotate-45 bg-[var(--accent)] animate-ping opacity-30" />
+                <div className="absolute inset-0 w-3 h-3 rotate-45 bg-accent animate-ping opacity-30" />
               )}
             </div>
 
@@ -74,7 +74,7 @@ function ProgressIndicator({
               <div
                 className={`
                   w-8 h-0.5 mx-1 transition-all duration-500
-                  ${index < currentIndex ? 'bg-[var(--success)]' : 'bg-[var(--border)] opacity-30'}
+                  ${index < currentIndex ? 'bg-success' : 'bg-border opacity-30'}
                 `}
               />
             )}
@@ -246,7 +246,7 @@ export function SetupWizard() {
   };
 
   return (
-    <div className="relative h-screen max-h-screen overflow-hidden bg-[var(--background)]">
+    <div className="relative h-screen max-h-screen overflow-hidden bg-background">
       {/* Crystalline background effect */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         {/* Radial gradient backdrop */}
@@ -267,10 +267,10 @@ export function SetupWizard() {
           }}
         />
         {/* Corner facet decorations */}
-        <div className="absolute top-0 left-0 w-32 h-32 border-l border-t border-[var(--accent)] opacity-20" />
-        <div className="absolute top-0 right-0 w-32 h-32 border-r border-t border-[var(--accent)] opacity-20" />
-        <div className="absolute bottom-0 left-0 w-32 h-32 border-l border-b border-[var(--primary)] opacity-20" />
-        <div className="absolute bottom-0 right-0 w-32 h-32 border-r border-b border-[var(--primary)] opacity-20" />
+        <div className="absolute top-0 left-0 w-32 h-32 border-l border-t border-accent opacity-20" />
+        <div className="absolute top-0 right-0 w-32 h-32 border-r border-t border-accent opacity-20" />
+        <div className="absolute bottom-0 left-0 w-32 h-32 border-l border-b border-primary opacity-20" />
+        <div className="absolute bottom-0 right-0 w-32 h-32 border-r border-b border-primary opacity-20" />
       </div>
 
       <div className="relative z-10 flex h-full min-h-0 flex-col">
@@ -284,7 +284,7 @@ export function SetupWizard() {
             {computed.canGoBack() && (
               <button
                 onClick={actions.goBack}
-                className="flex items-center gap-1 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors group"
+                className="flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors group"
               >
                 <ChevronLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
                 <span className="text-sm">Back</span>
@@ -294,7 +294,7 @@ export function SetupWizard() {
 
           {/* Step label */}
           <div className="text-center">
-            <span className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">
+            <span className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
               {STEP_LABELS[state.step]}
             </span>
           </div>
@@ -316,7 +316,7 @@ export function SetupWizard() {
           ref={mainRef}
           className="relative flex-1 min-h-0 px-4 pb-4 sm:px-6 sm:pb-6"
         >
-          <div className="mx-auto flex h-full w-full max-w-4xl justify-center">
+          <div className="mx-auto flex h-full w-full max-w-4xl items-center">
             <ScrollArea ref={contentRef} className="w-full">
               <div className={`mx-auto w-full ${contentWidthClass} pb-8`}>
                 {renderStep()}

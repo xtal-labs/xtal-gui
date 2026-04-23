@@ -59,7 +59,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <Loader2 className="w-8 h-8 animate-spin text-[var(--accent)]" />
+        <Loader2 className="w-8 h-8 animate-spin text-accent" />
       </div>
     );
   }
@@ -69,7 +69,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
       {/* Header */}
       <div className="text-center mb-8">
         <h2 className="text-2xl font-light mb-2">Choose Your Network</h2>
-        <p className="text-[var(--muted)]">
+        <p className="text-muted-foreground">
           Select which Crystal network to connect to
         </p>
       </div>
@@ -91,8 +91,8 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
                 group w-full chamfered p-5 text-left transition-all duration-300
                 border-2 relative overflow-hidden
                 ${isSelected
-                  ? 'border-[var(--accent)] bg-[var(--accent)]/5'
-                  : 'border-[var(--border)] bg-[var(--card)]/50 hover:border-[var(--accent)]/50 hover:bg-[var(--card)]'
+                  ? 'border-accent bg-accent/5'
+                  : 'border-border bg-card/50 hover:border-accent/50 hover:bg-card'
                 }
                 ${isProcessing && !isSelected ? 'opacity-50 cursor-not-allowed' : ''}
               `}
@@ -114,11 +114,11 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
                   icon-hex w-14 h-14 flex-shrink-0 flex items-center justify-center
                   bg-gradient-to-br ${config.color}
                 `}>
-                  <div className="icon-hex w-12 h-12 bg-[var(--background)] flex items-center justify-center">
+                  <div className="icon-hex w-12 h-12 bg-background flex items-center justify-center">
                     {isProcessingThis ? (
-                      <Loader2 className="w-6 h-6 animate-spin text-[var(--accent)]" />
+                      <Loader2 className="w-6 h-6 animate-spin text-accent" />
                     ) : isSelected && !isProcessing ? (
-                      <Check className="w-6 h-6 text-[var(--success)]" />
+                      <Check className="w-6 h-6 text-success" />
                     ) : (
                       <Icon className={`w-6 h-6 text-${config.accent}-400`} />
                     )}
@@ -140,7 +140,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-[var(--muted)] mt-0.5">
+                  <p className="text-sm text-muted-foreground mt-0.5">
                     {network.description}
                   </p>
                 </div>
@@ -148,7 +148,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
                 {/* Selection indicator */}
                 <div className={`
                   w-3 h-3 rotate-45 transition-all duration-300
-                  ${isSelected ? 'bg-[var(--accent)] shadow-[0_0_12px_var(--accent)]' : 'bg-[var(--border)]'}
+                  ${isSelected ? 'bg-accent shadow-[0_0_12px_var(--accent)]' : 'bg-border'}
                 `} />
               </div>
             </button>
@@ -157,7 +157,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
       </div>
 
       {/* Info text */}
-      <p className="mt-6 text-center text-xs text-[var(--muted)]">
+      <p className="mt-6 text-center text-xs text-muted-foreground">
         Mainnet uses real XTAL tokens. Testnet and Regtest are for testing only.
       </p>
     </div>

@@ -49,28 +49,28 @@ export function CompleteStep({
 
           {/* Checkmark container */}
           <div className="relative icon-hex w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
-            <div className="icon-hex w-16 h-16 bg-[var(--background)] flex items-center justify-center">
+            <div className="icon-hex w-16 h-16 bg-background flex items-center justify-center">
               <Check className="w-8 h-8 text-emerald-400" strokeWidth={3} />
             </div>
           </div>
         </div>
 
         <h2 className="text-2xl font-light mt-6 mb-2">Setup Complete!</h2>
-        <p className="text-[var(--muted)]">
+        <p className="text-muted-foreground">
           Your Crystal node is ready to launch
         </p>
       </div>
 
       {/* Configuration summary */}
       <div className="chamfered-border-wrap mb-8">
-      <div className="chamfered bg-[var(--card)] divide-y divide-[var(--border)]/50">
+      <div className="chamfered bg-card divide-y divide-border/50">
         {/* Network */}
         <div className="p-4 flex items-center gap-4">
           <div className="w-10 h-10 chamfered-sm bg-emerald-500/10 flex items-center justify-center">
             <Globe className="w-5 h-5 text-emerald-400" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs text-[var(--muted)] uppercase tracking-wider">Network</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Network</p>
             <p className="font-medium">{network?.name || 'Unknown'}</p>
           </div>
           <Check className="w-4 h-4 text-emerald-400" />
@@ -86,10 +86,10 @@ export function CompleteStep({
             )}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs text-[var(--muted)] uppercase tracking-wider">Node Type</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Node Type</p>
             <div className="flex items-center gap-2">
               <p className="font-medium">{nodeTypeLabel}</p>
-              <span className="text-xs text-[var(--muted)]">
+              <span className="text-xs text-muted-foreground">
                 {selectedFruits.length} of {TOTAL_FRUITS}
               </span>
             </div>
@@ -108,7 +108,7 @@ export function CompleteStep({
                 </span>
               )}
               {txIndex && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-[var(--accent)] bg-[var(--accent)]/10 px-1.5 py-0.5 rounded">
+                <span className="inline-flex items-center gap-1 text-[10px] text-accent bg-accent/10 px-1.5 py-0.5 rounded">
                   <Search className="w-2.5 h-2.5" />
                   TxIndex
                 </span>
@@ -121,23 +121,23 @@ export function CompleteStep({
         {/* Wallet */}
         <div className="p-4 flex items-center gap-4">
           <div className={`w-10 h-10 chamfered-sm flex items-center justify-center ${
-            walletName ? 'bg-emerald-500/10' : 'bg-[var(--muted)]/10'
+            walletName ? 'bg-emerald-500/10' : 'bg-muted/10'
           }`}>
-            <Wallet className={`w-5 h-5 ${walletName ? 'text-emerald-400' : 'text-[var(--muted)]'}`} />
+            <Wallet className={`w-5 h-5 ${walletName ? 'text-emerald-400' : 'text-muted-foreground'}`} />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs text-[var(--muted)] uppercase tracking-wider">Wallet</p>
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Wallet</p>
             {walletName ? (
               <div>
                 <p className="font-medium">{walletName}</p>
                 {walletAddress && (
-                  <p className="text-xs text-[var(--muted)] font-mono mt-0.5">
+                  <p className="text-xs text-muted-foreground font-mono mt-0.5">
                     {formatAddress(walletAddress)}
                   </p>
                 )}
               </div>
             ) : (
-              <p className="text-[var(--muted)]">Not created (can set up later)</p>
+              <p className="text-muted-foreground">Not created (can set up later)</p>
             )}
           </div>
           {walletName && <Check className="w-4 h-4 text-emerald-400" />}
@@ -145,12 +145,12 @@ export function CompleteStep({
 
         {/* Data Directory */}
         <div className="p-4 flex items-center gap-4">
-          <div className="w-10 h-10 chamfered-sm bg-[var(--accent)]/10 flex items-center justify-center">
-            <Folder className="w-5 h-5 text-[var(--accent)]" />
+          <div className="w-10 h-10 chamfered-sm bg-accent/10 flex items-center justify-center">
+            <Folder className="w-5 h-5 text-accent" />
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-xs text-[var(--muted)] uppercase tracking-wider">Data Directory</p>
-            <p className="font-mono text-sm text-[var(--muted)] truncate">
+            <p className="text-xs text-muted-foreground uppercase tracking-wider">Data Directory</p>
+            <p className="font-mono text-sm text-muted-foreground truncate">
               {dataDir || '~/.crystal/'}
             </p>
           </div>
@@ -166,8 +166,8 @@ export function CompleteStep({
           group w-full chamfered py-5 font-medium text-lg transition-all duration-300
           flex items-center justify-center gap-3
           ${isProcessing
-            ? 'bg-[var(--muted)]/20 text-[var(--muted)] cursor-wait'
-            : 'bg-gradient-to-r from-[var(--accent)] to-[var(--primary)] text-white hover:shadow-[0_0_40px_var(--accent)] hover:scale-[1.02]'
+            ? 'bg-muted/20 text-muted-foreground cursor-wait'
+            : 'bg-gradient-to-r from-accent to-primary text-white hover:shadow-[0_0_40px_var(--accent)] hover:scale-[1.02]'
           }
         `}
       >
@@ -185,7 +185,7 @@ export function CompleteStep({
       </button>
 
       {/* Note */}
-      <p className="mt-6 text-center text-xs text-[var(--muted)]">
+      <p className="mt-6 text-center text-xs text-muted-foreground">
         The application will restart and connect to the {network?.name || 'network'}
       </p>
     </div>

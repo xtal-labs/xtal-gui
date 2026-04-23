@@ -13,7 +13,7 @@ const ALL_FRUITS = Object.keys(FRUIT_COLORS);
 
 export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set(ALL_FRUITS));
-  const [archival, setArchival] = useState(false);
+  const [archival, setArchival] = useState(true);
   const [txIndex, setTxIndex] = useState(false);
   const [syncMode, setSyncMode] = useState<SyncModeOption>('full');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -58,16 +58,16 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
       {/* Header */}
       <div className="text-center mb-6">
         <h2 className="text-2xl font-light mb-2">Choose Your Fruit Shards</h2>
-        <p className="text-[var(--muted)] text-sm max-w-md mx-auto">
+        <p className="text-muted-foreground text-sm max-w-md mx-auto">
           Crystal's stem/leaf architecture lets you validate a subset of
           fruit shards while still participating in the network
         </p>
       </div>
 
       {/* Educational callout */}
-      <div className="chamfered-sm p-3 bg-[var(--accent)]/5 border border-[var(--accent)]/20 mb-6">
-        <p className="text-xs text-[var(--muted)] leading-relaxed">
-          <span className="text-[var(--accent)]">
+      <div className="chamfered-sm p-3 bg-accent/5 border border-accent/20 mb-6">
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          <span className="text-accent">
             <Sprout className="w-3 h-3 inline -mt-0.5 mr-1" />
             How it works:
           </span>{' '}
@@ -86,7 +86,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
              flex-1 chamfered-sm py-2 px-3 text-xs font-medium transition-all duration-200
              flex items-center justify-center gap-1.5
              opacity-50 cursor-not-allowed
-             bg-[var(--card)]/30 border border-[var(--border)] text-[var(--muted)]
+              bg-card/30 border border-border text-muted-foreground
            `}
          >
            {FRUIT_COLORS.Apple.emoji} Apple Only
@@ -100,7 +100,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
             flex items-center justify-center gap-1.5
             ${allSelected
               ? 'bg-amber-500/15 border border-amber-500/40 text-amber-400'
-              : 'bg-[var(--card)]/50 border border-[var(--border)] text-[var(--muted)] hover:border-amber-500/30'
+               : 'bg-card/50 border border-border text-muted-foreground hover:border-amber-500/30'
             }
           `}
         >
@@ -126,7 +126,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
                 border text-center
                 ${isSelected
                   ? `bg-gradient-to-br ${colors.bg} ${colors.border} shadow-md ${colors.glow}`
-                  : 'bg-[var(--card)]/30 border-[var(--border)] opacity-40 hover:opacity-60'
+                  : 'bg-card/30 border-border opacity-40 hover:opacity-60'
                 }
                 ${isApple ? 'cursor-default' : ''}
               `}
@@ -140,7 +140,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
               {/* Fruit name */}
               <span className={`
                 text-xs font-medium block
-                ${isSelected ? 'text-[var(--foreground)]' : 'text-[var(--muted)]'}
+                ${isSelected ? 'text-foreground' : 'text-muted-foreground'}
               `}>
                 {fruit}
               </span>
@@ -149,9 +149,9 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
               {isSelected && (
                 <div className="absolute top-1.5 right-1.5">
                   {isApple ? (
-                    <Lock className="w-3 h-3 text-[var(--muted)]" />
+                    <Lock className="w-3 h-3 text-muted-foreground" />
                   ) : (
-                    <Check className="w-3 h-3 text-[var(--success)]" />
+                    <Check className="w-3 h-3 text-success" />
                   )}
                 </div>
               )}
@@ -169,21 +169,21 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
           </p>
         </div>
       ) : (
-        <p className="text-xs text-[var(--muted)] text-center mb-4">
+        <p className="text-xs text-muted-foreground text-center mb-4">
           Select all 9 fruits to enable mining &middot;{' '}
-          <span className="text-[var(--foreground)]">{selected.size}</span> of {ALL_FRUITS.length} selected
+          <span className="text-foreground">{selected.size}</span> of {ALL_FRUITS.length} selected
         </p>
       )}
 
       {/* Toggle options */}
-      <div className="chamfered-sm bg-[var(--card)]/50 border border-[var(--border)] mb-4 divide-y divide-[var(--border)]/50">
+      <div className="chamfered-sm bg-card/50 border border-border mb-4 divide-y divide-border/50">
         {/* Transaction Index toggle */}
         <div className="p-4 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
-            <Search className={`w-5 h-5 flex-shrink-0 ${txIndex ? 'text-[var(--accent)]' : 'text-[var(--muted)]'}`} />
+            <Search className={`w-5 h-5 flex-shrink-0 ${txIndex ? 'text-accent' : 'text-muted-foreground'}`} />
             <div className="min-w-0">
               <p className="text-sm font-medium">Transaction Index</p>
-              <p className="text-xs text-[var(--muted)]">
+              <p className="text-xs text-muted-foreground">
                 Enables block explorer lookups &middot; Uses additional disk space
               </p>
             </div>
@@ -201,8 +201,8 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
         <button
           onClick={() => setShowAdvanced(!showAdvanced)}
           className="w-full chamfered-sm py-2.5 px-4 text-xs font-medium transition-all duration-200
-            bg-[var(--card)]/30 border border-[var(--border)] text-[var(--muted)]
-            hover:border-[var(--accent)]/30 hover:text-[var(--foreground)]
+            bg-card/30 border border-border text-muted-foreground
+            hover:border-accent/30 hover:text-foreground
             flex items-center justify-between"
         >
           <span className="uppercase tracking-wider">Advanced</span>
@@ -217,7 +217,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
         >
           {/* Sync Mode selector */}
           <div className="mb-3">
-            <p className="text-xs uppercase tracking-wider text-[var(--muted)] mb-2 ml-1">Sync Mode</p>
+            <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2 ml-1">Sync Mode</p>
             <div className="grid grid-cols-2 gap-2">
                {/* Fast Sync */}
                <button
@@ -226,19 +226,19 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
                  className={`
                    chamfered-sm p-3 text-left transition-all duration-200 border
                    opacity-50 cursor-not-allowed
-                   bg-[var(--card)]/20 border-[var(--border)]
+                    bg-card/20 border-border
                  `}
                >
                  <div className="flex items-center gap-2 mb-1">
-                   <Zap className="w-4 h-4 text-[var(--muted)]" />
-                   <span className="text-sm font-medium text-[var(--muted)]">
+                    <Zap className="w-4 h-4 text-muted-foreground" />
+                    <span className="text-sm font-medium text-muted-foreground">
                      Fast Sync
                    </span>
                  </div>
-                 <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
                    Download state at a checkpoint and verify forward
                  </p>
-                 <span className="text-[9px] uppercase tracking-wider text-[var(--muted)] mt-1.5 inline-block">Under Development</span>
+                 <span className="text-[9px] uppercase tracking-wider text-muted-foreground mt-1.5 inline-block">Under Development</span>
                </button>
 
               {/* Full Sync */}
@@ -249,17 +249,17 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
                   chamfered-sm p-3 text-left transition-all duration-200 border
                   ${syncMode === 'full'
                     ? 'bg-amber-500/10 border-amber-500/40'
-                    : 'bg-[var(--card)]/30 border-[var(--border)] hover:border-amber-500/20'
+                    : 'bg-card/30 border-border hover:border-amber-500/20'
                   }
                 `}
               >
                 <div className="flex items-center gap-2 mb-1">
-                  <RefreshCw className={`w-4 h-4 ${syncMode === 'full' ? 'text-amber-400' : 'text-[var(--muted)]'}`} />
-                  <span className={`text-sm font-medium ${syncMode === 'full' ? 'text-[var(--foreground)]' : 'text-[var(--muted)]'}`}>
+                  <RefreshCw className={`w-4 h-4 ${syncMode === 'full' ? 'text-amber-400' : 'text-muted-foreground'}`} />
+                  <span className={`text-sm font-medium ${syncMode === 'full' ? 'text-foreground' : 'text-muted-foreground'}`}>
                     Full Sync
                   </span>
                 </div>
-                <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
                   Re-execute every block from genesis
                 </p>
               </button>
@@ -281,10 +281,10 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
           )}
 
           {/* Archival toggle */}
-          <div className="chamfered-sm bg-[var(--card)]/50 border border-[var(--border)]">
+          <div className="chamfered-sm bg-card/50 border border-border">
             <div className="p-4 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
-                <HardDrive className={`w-5 h-5 flex-shrink-0 ${archival ? 'text-[var(--accent)]' : 'text-[var(--muted)]'}`} />
+                <HardDrive className={`w-5 h-5 flex-shrink-0 ${archival ? 'text-accent' : 'text-muted-foreground'}`} />
                 <div className="min-w-0">
                   <p className="text-sm font-medium flex items-center gap-1.5">
                     Archival Mode
@@ -292,7 +292,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
                       <Lock className="w-3 h-3 text-amber-400/70" />
                     )}
                   </p>
-                  <p className="text-xs text-[var(--muted)]">
+                  <p className="text-xs text-muted-foreground">
                     {archivalLocked
                       ? 'Required by Full Sync — all historical data retained'
                       : 'Keep all historical fruit data indefinitely'}
@@ -317,8 +317,8 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
           group w-full chamfered py-4 font-medium transition-all duration-300
           flex items-center justify-center gap-2
           ${isProcessing
-            ? 'bg-[var(--muted)]/20 text-[var(--muted)] cursor-wait'
-            : 'bg-gradient-to-r from-[var(--accent)] to-[var(--primary)] text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
+            ? 'bg-muted/20 text-muted-foreground cursor-wait'
+            : 'bg-gradient-to-r from-accent to-primary text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
           }
         `}
       >

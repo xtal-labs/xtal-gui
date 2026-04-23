@@ -11,11 +11,11 @@ export function MnemonicInputStep({ onSubmit, isProcessing }: MnemonicInputStepP
     <div className="animate-[fade-in-up_0.4s_ease-out]">
       {/* Header */}
       <div className="text-center mb-6">
-        <div className="inline-flex items-center justify-center w-16 h-16 mb-4 chamfered bg-[var(--accent)]/10">
-          <Download className="w-8 h-8 text-[var(--accent)]" />
+        <div className="inline-flex items-center justify-center w-16 h-16 mb-4 chamfered bg-accent/10">
+          <Download className="w-8 h-8 text-accent" />
         </div>
         <h2 className="text-2xl font-light mb-2">Restore Your Wallet</h2>
-        <p className="text-[var(--muted)]">
+        <p className="text-muted-foreground">
           Enter your 12-word recovery phrase to restore an existing wallet
         </p>
       </div>

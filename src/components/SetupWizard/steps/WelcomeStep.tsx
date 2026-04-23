@@ -10,11 +10,11 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
       {/* Crystal logo/icon */}
       <div className="relative inline-flex mb-8">
         {/* Outer glow */}
-        <div className="absolute inset-0 bg-[var(--accent)] blur-3xl opacity-20 animate-pulse" />
+        <div className="absolute inset-0 bg-accent blur-3xl opacity-20 animate-pulse" />
 
         {/* Hexagonal container */}
-        <div className="relative icon-hex w-24 h-24 bg-gradient-to-br from-[var(--accent)] to-[var(--primary)] flex items-center justify-center">
-          <div className="absolute inset-1 icon-hex bg-[var(--background)] flex items-center justify-center">
+        <div className="relative icon-hex w-24 h-24 bg-gradient-to-br from-accent to-primary flex items-center justify-center">
+          <div className="absolute inset-1 icon-hex bg-background flex items-center justify-center">
             {/* Crystal icon - using geometric shape */}
             <svg
               viewBox="0 0 48 48"
@@ -46,7 +46,7 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
       </h1>
 
       {/* Subtitle */}
-      <p className="text-[var(--muted)] text-lg mb-10 max-w-sm mx-auto">
+      <p className="text-muted-foreground text-lg mb-10 max-w-sm mx-auto">
         A next-generation blockchain with hybrid consensus and parallel execution
       </p>
 
@@ -59,12 +59,12 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
         ].map((feature, index) => (
           <div
             key={feature.label}
-            className="chamfered-sm p-4 bg-[var(--card)]/50 border border-[var(--border)]/50 transition-all duration-300 hover:border-[var(--accent)]/50 hover:bg-[var(--card)]"
+            className="chamfered-sm p-4 bg-card/50 border border-border/50 transition-all duration-300 hover:border-accent/50 hover:bg-card"
             style={{ animationDelay: `${index * 100}ms` }}
           >
-            <feature.icon className="w-5 h-5 mx-auto mb-2 text-[var(--accent)]" />
+            <feature.icon className="w-5 h-5 mx-auto mb-2 text-accent" />
             <div className="text-sm font-medium">{feature.label}</div>
-            <div className="text-xs text-[var(--muted)]">{feature.desc}</div>
+            <div className="text-xs text-muted-foreground">{feature.desc}</div>
           </div>
         ))}
       </div>
@@ -72,14 +72,14 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
        {/* Get Started button */}
        <button
          onClick={onNext}
-         className="group chamfered inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-[var(--accent)] to-[var(--primary)] text-[var(--foreground)] font-medium text-lg transition-all duration-300 hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.02]"
+          className="group chamfered inline-flex items-center gap-3 px-8 py-4 bg-gradient-to-r from-accent to-primary text-foreground font-medium text-lg transition-all duration-300 hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.02]"
        >
          <span>Get Started</span>
         <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
       </button>
 
       {/* Version info */}
-      <p className="mt-8 text-xs text-[var(--muted)] opacity-60">
+      <p className="mt-8 text-xs text-muted-foreground opacity-60">
         Crystal v0.1.0 &middot; First-time setup
       </p>
     </div>

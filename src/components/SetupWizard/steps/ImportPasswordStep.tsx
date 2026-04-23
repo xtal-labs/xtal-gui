@@ -52,14 +52,14 @@ export function ImportPasswordStep({
           <CheckCircle className="w-8 h-8 text-success" />
         </div>
         <h2 className="text-2xl font-light mb-2">Wallet Imported Successfully</h2>
-        <p className="text-[var(--muted)]">
-          <span className="text-[var(--foreground)] font-medium">{walletName}</span> has been restored from your recovery phrase
+        <p className="text-muted-foreground">
+          <span className="text-foreground font-medium">{walletName}</span> has been restored from your recovery phrase
         </p>
       </div>
 
       {/* Password toggle */}
       <div className="chamfered-border-wrap mb-6">
-        <div className="chamfered p-5 bg-[var(--card)]">
+        <div className="chamfered p-5 bg-card">
           <button
             type="button"
             onClick={() => setWantsPassword(!wantsPassword)}
@@ -69,23 +69,23 @@ export function ImportPasswordStep({
             <div className="flex items-center gap-3">
               <div className={`
                 w-10 h-10 chamfered-sm flex items-center justify-center transition-colors
-                ${wantsPassword ? 'bg-[var(--accent)]/20' : 'bg-[var(--muted)]/30'}
+                ${wantsPassword ? 'bg-accent/20' : 'bg-muted/30'}
               `}>
                 <Lock className={`
                   w-5 h-5 transition-colors
-                  ${wantsPassword ? 'text-[var(--accent)]' : 'text-[var(--muted)]'}
+                  ${wantsPassword ? 'text-accent' : 'text-muted-foreground'}
                 `} />
               </div>
               <div className="text-left">
                 <p className="font-medium text-sm">Add Password Protection</p>
-                <p className="text-xs text-[var(--muted)]">Encrypt your wallet with a password</p>
+                <p className="text-xs text-muted-foreground">Encrypt your wallet with a password</p>
               </div>
             </div>
 
             {/* Toggle */}
             <div className={`
               w-11 h-6 chamfered-sm relative transition-colors
-              ${wantsPassword ? 'bg-[var(--accent)]' : 'bg-[var(--border)]'}
+              ${wantsPassword ? 'bg-accent' : 'bg-border'}
             `}>
               <div className={`
                 absolute top-0.5 w-5 h-5 chamfered-sm bg-white transition-all
@@ -96,10 +96,10 @@ export function ImportPasswordStep({
 
           {/* Password fields (conditional) */}
           {wantsPassword && (
-            <form onSubmit={handleSetPassword} onKeyDown={handleKeyDown} className="mt-5 pt-5 border-t border-[var(--border)]/50 space-y-4">
+            <form onSubmit={handleSetPassword} onKeyDown={handleKeyDown} className="mt-5 pt-5 border-t border-border/50 space-y-4">
               {/* Password */}
               <div>
-                <label className="block text-sm font-medium mb-2 text-[var(--muted)]">
+                <label className="block text-sm font-medium mb-2 text-muted-foreground">
                   Password
                 </label>
                 <div className="relative">
@@ -112,14 +112,14 @@ export function ImportPasswordStep({
                     autoCorrect="off"
                     autoCapitalize="off"
                     spellCheck={false}
-                    className="w-full chamfered-sm px-4 py-3 pr-12 bg-[var(--background)] border border-[var(--border)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:border-[var(--accent)]"
+                    className="w-full chamfered-sm px-4 py-3 pr-12 bg-background border border-border transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                     placeholder="Minimum 8 characters"
                     autoFocus
                   />
                   <button
                     type="button"
                     onClick={() => setShowPassword(!showPassword)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
@@ -131,7 +131,7 @@ export function ImportPasswordStep({
 
               {/* Confirm Password */}
               <div>
-                <label className="block text-sm font-medium mb-2 text-[var(--muted)]">
+                <label className="block text-sm font-medium mb-2 text-muted-foreground">
                   Confirm Password
                 </label>
                 <input
@@ -143,7 +143,7 @@ export function ImportPasswordStep({
                   autoCorrect="off"
                   autoCapitalize="off"
                   spellCheck={false}
-                  className="w-full chamfered-sm px-4 py-3 bg-[var(--background)] border border-[var(--border)] transition-all focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50 focus:border-[var(--accent)]"
+                  className="w-full chamfered-sm px-4 py-3 bg-background border border-border transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
                   placeholder="Re-enter password"
                 />
                 {confirmPassword.length > 0 && !confirmValid && (
@@ -159,8 +159,8 @@ export function ImportPasswordStep({
                   w-full chamfered py-4 font-medium text-lg transition-all duration-300
                   flex items-center justify-center gap-3
                   ${canSetPassword
-                    ? 'bg-gradient-to-r from-[var(--accent)] to-[var(--primary)] text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
-                    : 'bg-[var(--muted)]/20 text-[var(--muted)] cursor-not-allowed'
+                    ? 'bg-gradient-to-r from-accent to-primary text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
+                    : 'bg-muted/20 text-muted-foreground cursor-not-allowed'
                   }
                 `}
               >
@@ -182,9 +182,9 @@ export function ImportPasswordStep({
       </div>
 
       {/* Info box */}
-      <div className="chamfered-sm p-4 mb-6 bg-[var(--accent)]/5 border border-[var(--accent)]/20">
-        <p className="text-sm text-[var(--muted)]">
-          <span className="text-[var(--accent)]">Tip:</span>{' '}
+      <div className="chamfered-sm p-4 mb-6 bg-accent/5 border border-accent/20">
+        <p className="text-sm text-muted-foreground">
+          <span className="text-accent">Tip:</span>{' '}
           Your wallet is stored locally on this device. A password adds an extra layer of security
           to prevent unauthorized access.
         </p>
@@ -198,7 +198,7 @@ export function ImportPasswordStep({
           className={`
             w-full chamfered py-4 font-medium text-lg transition-all duration-300
             flex items-center justify-center gap-3
-            bg-gradient-to-r from-[var(--accent)] to-[var(--primary)] text-white
+            bg-gradient-to-r from-accent to-primary text-white
             hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]
           `}
         >

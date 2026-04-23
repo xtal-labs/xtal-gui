@@ -42,9 +42,9 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
       {/* Header */}
       <div className="text-center mb-8">
         <h2 className="text-2xl font-light mb-2">Set Up Your Wallet</h2>
-        <p className="text-[var(--muted)]">
+        <p className="text-muted-foreground">
           A wallet stores your XTAL and allows you to send transactions on{' '}
-          <span className="text-[var(--foreground)]">{networkName}</span>
+          <span className="text-foreground">{networkName}</span>
         </p>
       </div>
 
@@ -62,8 +62,8 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
                 group w-full chamfered p-5 text-left transition-all duration-300
                 border relative overflow-hidden
                 ${option.disabled
-                  ? 'border-[var(--border)]/50 bg-[var(--card)]/30 opacity-60 cursor-not-allowed'
-                  : 'border-[var(--border)] bg-[var(--card)]/50 hover:border-[var(--accent)]/70 hover:bg-[var(--card)]'
+                  ? 'border-border/50 bg-card/30 opacity-60 cursor-not-allowed'
+                  : 'border-border bg-card/50 hover:border-accent/70 hover:bg-card'
                 }
               `}
               style={{
@@ -75,15 +75,15 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
                 <div className={`
                   w-12 h-12 chamfered-sm flex items-center justify-center flex-shrink-0
                   ${option.disabled
-                    ? 'bg-[var(--muted)]/10'
+                    ? 'bg-muted/10'
                     : option.recommended
-                      ? 'bg-gradient-to-br from-[var(--accent)]/20 to-[var(--primary)]/20'
-                      : 'bg-[var(--accent)]/10'
+                      ? 'bg-gradient-to-br from-accent/20 to-primary/20'
+                      : 'bg-accent/10'
                   }
                 `}>
                   <Icon className={`
                     w-5 h-5
-                    ${option.disabled ? 'text-[var(--muted)]' : 'text-[var(--accent)]'}
+                    ${option.disabled ? 'text-muted-foreground' : 'text-accent'}
                   `} />
                 </div>
 
@@ -92,27 +92,27 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
                   <div className="flex items-center gap-2">
                     <h3 className="font-medium">{option.title}</h3>
                     {option.recommended && (
-                      <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 bg-[var(--accent)]/20 text-[var(--accent)] rounded">
+                      <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 bg-accent/20 text-accent rounded">
                         Recommended
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-[var(--muted)] mt-0.5">
+                  <p className="text-sm text-muted-foreground mt-0.5">
                     {option.disabled ? option.disabledReason : option.description}
                   </p>
                 </div>
 
                 {/* Arrow */}
                 {!option.disabled && (
-                  <ArrowRight className="w-5 h-5 text-[var(--muted)] group-hover:text-[var(--accent)] group-hover:translate-x-1 transition-all" />
+                  <ArrowRight className="w-5 h-5 text-muted-foreground group-hover:text-accent group-hover:translate-x-1 transition-all" />
                 )}
               </div>
 
               {/* Recommended highlight */}
               {option.recommended && !option.disabled && (
                 <div className="absolute top-0 right-0 w-16 h-16 overflow-hidden">
-                  <div className="absolute top-0 right-0 w-1 h-16 bg-gradient-to-b from-[var(--accent)] to-transparent opacity-50" />
-                  <div className="absolute top-0 right-0 w-16 h-1 bg-gradient-to-l from-[var(--accent)] to-transparent opacity-50" />
+                  <div className="absolute top-0 right-0 w-1 h-16 bg-gradient-to-b from-accent to-transparent opacity-50" />
+                  <div className="absolute top-0 right-0 w-16 h-1 bg-gradient-to-l from-accent to-transparent opacity-50" />
                 </div>
               )}
             </button>
@@ -121,9 +121,9 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
       </div>
 
       {/* Info */}
-      <div className="mt-6 chamfered-sm p-4 bg-[var(--accent)]/5 border border-[var(--accent)]/20">
-        <p className="text-sm text-[var(--muted)]">
-          <span className="text-[var(--accent)]">Tip:</span>{' '}
+      <div className="mt-6 chamfered-sm p-4 bg-accent/5 border border-accent/20">
+        <p className="text-sm text-muted-foreground">
+          <span className="text-accent">Tip:</span>{' '}
           Your wallet is encrypted and stored locally. Always back up your recovery phrase securely.
         </p>
       </div>

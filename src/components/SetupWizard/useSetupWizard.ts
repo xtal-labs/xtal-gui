@@ -87,9 +87,9 @@ const initialState: WizardState = {
   backupConfirmed: false,
   importWalletName: '',
   selectedFruits: ['Grape', 'Kiwi', 'Apple', 'Pineapple', 'Watermelon', 'Pear', 'Orange', 'Peach', 'Strawberry'],
-  archival: false,
+  archival: true,
   txIndex: false,
-  syncMode: 'fast',
+  syncMode: 'full',
 };
 
 export function useSetupWizard() {

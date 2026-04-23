@@ -61,11 +61,11 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
     <div className="animate-[fade-in-up_0.4s_ease-out]">
       {/* Header */}
       <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-16 h-16 mb-4 chamfered bg-[var(--accent)]/10">
-          <Wallet className="w-8 h-8 text-[var(--accent)]" />
+        <div className="inline-flex items-center justify-center w-16 h-16 mb-4 chamfered bg-accent/10">
+          <Wallet className="w-8 h-8 text-accent" />
         </div>
         <h2 className="text-2xl font-light mb-2">Create Your Wallet</h2>
-        <p className="text-[var(--muted)]">
+        <p className="text-muted-foreground">
           Choose a name and secure password for your wallet
         </p>
       </div>
@@ -73,7 +73,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
       <form onSubmit={handleSubmit} onKeyDown={handleKeyDown} className="space-y-5">
         {/* Wallet Name */}
         <div>
-          <label className="block text-sm font-medium mb-2 text-[var(--muted)]">
+          <label className="block text-sm font-medium mb-2 text-muted-foreground">
             Wallet Name
           </label>
           <input
@@ -87,11 +87,11 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
             autoCapitalize="off"
             spellCheck={false}
             className={`
-              w-full chamfered-sm px-4 py-3 bg-[var(--card)] border transition-all
-              focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50
+              w-full chamfered-sm px-4 py-3 bg-card border transition-all
+              focus:outline-none focus:ring-2 focus:ring-accent/50
               ${touched.name && !nameValid
                 ? 'border-red-500/50'
-                : 'border-[var(--border)] focus:border-[var(--accent)]'
+                : 'border-border focus:border-accent'
               }
             `}
             placeholder="default"
@@ -103,7 +103,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
 
         {/* Password */}
         <div>
-          <label className="block text-sm font-medium mb-2 text-[var(--muted)]">
+          <label className="block text-sm font-medium mb-2 text-muted-foreground">
             Password
           </label>
           <div className="relative">
@@ -118,11 +118,11 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
               autoCapitalize="off"
               spellCheck={false}
               className={`
-                w-full chamfered-sm px-4 py-3 pr-12 bg-[var(--card)] border transition-all
-                focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50
+                w-full chamfered-sm px-4 py-3 pr-12 bg-card border transition-all
+                focus:outline-none focus:ring-2 focus:ring-accent/50
                 ${touched.password && !passwordValid
                   ? 'border-red-500/50'
-                  : 'border-[var(--border)] focus:border-[var(--accent)]'
+                  : 'border-border focus:border-accent'
                 }
               `}
               placeholder="Minimum 8 characters"
@@ -130,7 +130,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
             <button
               type="button"
               onClick={() => setShowPassword(!showPassword)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
             >
               {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
             </button>
@@ -144,13 +144,13 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
                   <div
                     key={i}
                     className={`h-1 flex-1 rounded-full transition-all ${
-                      i <= strength.score ? strength.color : 'bg-[var(--border)]'
+                      i <= strength.score ? strength.color : 'bg-border'
                     }`}
                   />
                 ))}
               </div>
-              <p className="text-xs text-[var(--muted)]">
-                Password strength: <span className="text-[var(--foreground)]">{strength.label}</span>
+              <p className="text-xs text-muted-foreground">
+                Password strength: <span className="text-foreground">{strength.label}</span>
               </p>
             </div>
           )}
@@ -162,7 +162,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
 
         {/* Confirm Password */}
         <div>
-          <label className="block text-sm font-medium mb-2 text-[var(--muted)]">
+          <label className="block text-sm font-medium mb-2 text-muted-foreground">
             Confirm Password
           </label>
           <div className="relative">
@@ -177,13 +177,13 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
               autoCapitalize="off"
               spellCheck={false}
               className={`
-                w-full chamfered-sm px-4 py-3 pr-20 bg-[var(--card)] border transition-all
-                focus:outline-none focus:ring-2 focus:ring-[var(--accent)]/50
+                w-full chamfered-sm px-4 py-3 pr-20 bg-card border transition-all
+                focus:outline-none focus:ring-2 focus:ring-accent/50
                 ${touched.confirm && !confirmValid
                   ? 'border-red-500/50'
                   : confirmValid
                     ? 'border-emerald-500/50'
-                    : 'border-[var(--border)] focus:border-[var(--accent)]'
+                    : 'border-border focus:border-accent'
                 }
               `}
               placeholder="Re-enter password"
@@ -197,7 +197,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
               <button
                 type="button"
                 onClick={() => setShowConfirm(!showConfirm)}
-                className="text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+                className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 {showConfirm ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
@@ -216,8 +216,8 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
             w-full chamfered py-4 font-medium text-lg transition-all duration-300
             flex items-center justify-center gap-3
              ${canSubmit
-               ? 'bg-gradient-to-r from-[var(--accent)] to-[var(--primary)] text-[var(--foreground)] hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
-               : 'bg-[var(--muted)]/20 text-[var(--muted)] cursor-not-allowed'
+               ? 'bg-gradient-to-r from-accent to-primary text-foreground hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
+               : 'bg-muted/20 text-muted-foreground cursor-not-allowed'
              }
           `}
         >
@@ -233,7 +233,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
       </form>
 
       {/* Security note */}
-      <p className="mt-6 text-center text-xs text-[var(--muted)]">
+      <p className="mt-6 text-center text-xs text-muted-foreground">
         Your wallet will be encrypted with this password. Store it safely.
       </p>
     </div>
