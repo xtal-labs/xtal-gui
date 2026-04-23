@@ -29,6 +29,7 @@ import { parseAddressInput } from "@/lib/address";
 import { buildCallData } from "@/lib/contractQuery";
 import { tauriCommand } from "@/hooks";
 import { useUiStore, useWalletStore } from "@/stores";
+import type { CageConfig } from "@/types/contract";
 
 interface WithdrawModalProps {
   isOpen: boolean;
@@ -44,9 +45,7 @@ interface SendResult {
   fee: number;
 }
 
-const CAGE_ADDRESS = "8c60323df1e423daa9fe523bb16bb7bd3102f6ae";
 const CAGE_WITHDRAW_SELECTOR = [1, 0, 0, 0];
-const CAGE_FEE_RATE = 0.001; // 0.1%
 
 export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }: WithdrawModalProps) {
   const { addToast } = useUiStore();
@@ -55,9 +54,15 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   // Gas config from backend
   const [gasConfig, setGasConfig] = useState<GasConfig | null>(null);
 
+  // CAGE bridge config from parent lib (address + current withdrawal fee bps)
+  const [cageConfig, setCageConfig] = useState<CageConfig | null>(null);
+
   useEffect(() => {
     if (isOpen) {
-      tauriCommand<GasConfig>("get_gas_config").then(setGasConfig).catch(() => {});
+      Promise.all([
+        tauriCommand<GasConfig>("get_gas_config").then(setGasConfig).catch(() => {}),
+        tauriCommand<CageConfig>("get_cage_config").then(setCageConfig).catch(() => {}),
+      ]);
     }
   }, [isOpen]);
 
@@ -100,7 +105,10 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   const parsedAmountShards = parseXtalToShards(amount);
   const amountShards = parsedAmountShards ?? 0;
   const amountError = getXtalInputError(amount);
-  const cageFee = amountShards > 0 ? Math.ceil(amountShards * CAGE_FEE_RATE) : 0;
+  const feeRateBps = cageConfig?.withdrawFeeBps;
+  const feeRate = feeRateBps ? feeRateBps / 10000 : 0;
+  const cageConfigLoaded = cageConfig !== null && feeRateBps !== undefined;
+  const cageFee = amountShards > 0 ? Math.ceil(amountShards * feeRate) : 0;
   const netAmount = Math.max(0, amountShards - cageFee);
   const effectiveGasLimit = parseInt(gasLimit) || gasConfig?.defaultGasLimit || 100_000;
   const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
@@ -140,6 +148,11 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
       return;
     }
 
+    if (!cageConfig?.address) {
+      setError("CAGE contract not yet loaded. Please wait a moment and try again.");
+      return;
+    }
+
     setStep("sending");
     setError(null);
 
@@ -151,7 +164,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
       ]);
 
       const result = await tauriCommand<SendResult>("call_contract", {
-        contractAddress: CAGE_ADDRESS,
+        contractAddress: cageConfig?.address ?? "",
         method: "withdraw",
         data,
         gasLimit: effectiveGasLimit,
@@ -358,9 +371,9 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                   <span>VM Balance:</span>
                   <AmountDisplay amount={maxBalance} size="sm" showSymbol />
                 </div>
-                {cageFee > 0 && (
+                {cageFee > 0 && cageConfigLoaded && (
                   <div className="flex items-center justify-between text-xs text-foreground-muted">
-                    <span>0.1% CAGE fee:</span>
+                    <span>{(feeRateBps! / 100).toFixed(1)}% CAGE fee:</span>
                     <AmountDisplay amount={cageFee} size="sm" showSymbol />
                   </div>
                 )}
@@ -417,7 +430,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                   <AmountDisplay amount={amountShards} size="sm" showSymbol />
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground-muted font-heading">CAGE FEE (0.1%)</span>
+                  <span className="text-sm text-foreground-muted font-heading">CAGE FEE ({cageConfigLoaded ? `${(feeRateBps! / 100).toFixed(1)}` : "—"}%)</span>
                   <AmountDisplay amount={cageFee} size="sm" showSymbol negative />
                 </div>
                 <div className="flex items-center justify-between">
@@ -478,12 +491,14 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                 </div>
               )}
 
-              <div className="flex items-start gap-2 p-3 chamfered-sm bg-warning/10 text-warning">
-                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                <p className="text-xs">
-                  CAGE charges a 0.1% bridging fee. The net amount will arrive as a spendable UTXO after maturation.
-                </p>
-              </div>
+              {cageConfigLoaded && (
+                <div className="flex items-start gap-2 p-3 chamfered-sm bg-warning/10 text-warning">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <p className="text-xs">
+                    CAGE charges a {(feeRateBps! / 100).toFixed(1)}% bridging fee. The net amount will arrive as a spendable UTXO after maturation.
+                  </p>
+                </div>
+              )}
 
               <div className="flex gap-3">
                 <Button variant="outline" className="flex-1" onClick={() => setStep("form")}>

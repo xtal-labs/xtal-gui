@@ -84,6 +84,14 @@ pub struct GasEstimate {
 
 /// Result of a UTXO deposit via CAGE contract
 #[derive(Debug, Clone, Serialize)]
+pub struct CageConfig {
+    /// CAGE contract address as hex string (e.g., "0xd0223910cc28a8eae9b4f7324840b66b8b1ab969")
+    pub address: String,
+    /// Current withdrawal fee in basis points (e.g., 10 = 0.1%)
+    pub withdraw_fee_bps: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DepositResult {
     /// Transaction hash of the contract call (raw hex)
     pub txid: String,
@@ -676,6 +684,55 @@ mod tests {
         assert_eq!(&encoded[32..64], &tx_id);
         assert_eq!(&encoded[64..66], &output_index.to_le_bytes());
     }
+}
+
+// ===========================================================================
+// CAGE Bridge Configuration
+// ===========================================================================
+
+/// Get CAGE bridge configuration: address and current withdrawal fee basis points
+#[tauri::command]
+pub async fn get_cage_config(state: State<'_, AppState>) -> Result<CageConfig, String> {
+    // Address from parent lib constant
+    let address_hex = format!("0x{}", hex::encode(CAGE_CONTRACT_ADDRESS));
+
+    // Query current withdrawal fee bps from CAGE contract storage
+    let storage = state.services.storage();
+    let chain = state.services.blockchain();
+    let timestamp = chain
+        .get_latest_block()
+        .map_err(|e| format!("Failed to get latest block: {}", e))?
+        .map(|b| b.header.timestamp)
+        .unwrap_or(0);
+
+    let backend = Box::new(RocksDBBackend::new(
+        storage.db.clone(),
+        "unified_state".to_string(),
+    ));
+    let mpt = Arc::new(UnifiedMPT::new(backend).map_err(|e| format!("MPT error: {}", e))?);
+
+    // __fee_basis_points key — stored as little-endian u64
+    let fee_bps_value = mpt
+        .get_storage(
+            &CAGE_CONTRACT_ADDRESS,
+            FruitType::Apple,
+            b"__fee_basis_points",
+        )
+        .map_err(|e| format!("Failed to read CAGE fee config: {}", e))?;
+
+    let withdraw_fee_bps = match fee_bps_value {
+        Some(bytes) if bytes.len() >= 8 => {
+            u64::from_le_bytes(bytes[..8].try_into().map_err(|_| "Invalid fee bps length")?)
+        }
+        _ => {
+            return Err("Failed to read CAGE withdrawal fee from contract storage".to_string());
+        }
+    };
+
+    Ok(CageConfig {
+        address: address_hex,
+        withdraw_fee_bps,
+    })
 }
 
 // ===========================================================================

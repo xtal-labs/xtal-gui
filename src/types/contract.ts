@@ -31,9 +31,12 @@ export interface AbiParam {
   label?: string;
 }
 
+export type DisplayFormat = "raw" | "xtal_amount" | "basis_points" | "percentage";
+
 export interface AbiReturn {
   type: ParamType;
   description?: string;
+  display?: DisplayFormat;
 }
 
 export interface AbiEvent {
@@ -131,4 +134,9 @@ export interface DepositUtxoResult {
   fee: number;
   amount: number;
   anchorStemHash: string;
+}
+
+export interface CageConfig {
+  address: string;
+  withdrawFeeBps: number;
 }

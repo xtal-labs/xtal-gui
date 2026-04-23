@@ -1,7 +1,7 @@
 import { CheckCircle, AlertCircle, Copy } from "lucide-react";
 
 import { AmountDisplay } from "@/components/common/AmountDisplay";
-import { cn, copyToClipboard } from "@/lib/utils";
+import { cn, copyToClipboard, formatPercent } from "@/lib/utils";
 import { decodeReturnValue } from "@/lib/contractQuery";
 import { useUiStore } from "@/stores";
 import type { QueryResult, AbiReturn } from "@/types/contract";
@@ -12,6 +12,56 @@ interface ResultDisplayProps {
   methodName: string;
 }
 
+/**
+ * Format a numeric return value according to the ABI display hint.
+ *
+ * The display field on AbiReturn is the single source of truth for how UI
+ * should render a value — this prevents ad-hoc method name checks in the
+ * frontend.
+ */
+function formatReturnValue(decoded: string, returnDef?: AbiReturn): string | null {
+  if (!returnDef) return null;
+
+  const numericValue = Number(decoded);
+  if (Number.isNaN(numericValue)) return null;
+
+  const displayHint = returnDef.display;
+
+  switch (displayHint) {
+    case "xtal_amount":
+      return `xtal:${numericValue}`; // sentinel for AmountDisplay component
+    case "basis_points":
+      return `bps:${numericValue}`;
+    case "percentage":
+      return `pct:${(numericValue / 100).toFixed(2)}`;
+    case "raw":
+    default:
+      return null; // fall through to raw display
+  }
+}
+
+type RenderedValue =
+  | { type: "xtal"; amount: number }
+  | { type: "basis_points"; value: number }
+  | { type: "percentage"; value: string }
+  | { type: "raw"; text: string };
+
+function renderValue(decoded: string, returnDef?: AbiReturn): RenderedValue | null {
+  const formatted = formatReturnValue(decoded, returnDef);
+  if (!formatted) return null;
+
+  if (formatted.startsWith("xtal:")) {
+    return { type: "xtal", amount: Number(decoded) };
+  }
+  if (formatted.startsWith("bps:")) {
+    return { type: "basis_points", value: Number(decoded) };
+  }
+  if (formatted.startsWith("pct:")) {
+    return { type: "percentage", value: formatted.split(":")[1]! };
+  }
+  return null;
+}
+
 export function ResultDisplay({ result, returnDef, methodName }: ResultDisplayProps) {
   const { addToast } = useUiStore();
 
@@ -19,12 +69,20 @@ export function ResultDisplay({ result, returnDef, methodName }: ResultDisplayPr
     ? decodeReturnValue(result.returnData, returnDef.type)
     : result.returnData || "(empty)";
 
-  const isAmountResult =
-    returnDef?.type === "u64" || returnDef?.type === "xtal_amount";
-  const numericValue = isAmountResult ? Number(decoded) : null;
+  const rendered = renderValue(decoded, returnDef);
 
   const handleCopy = async () => {
-    const success = await copyToClipboard(decoded);
+    // For formatted values, copy the human-readable form
+    let copyText = decoded;
+    if (rendered?.type === "xtal") {
+      copyText = `${decoded} shards`;
+    } else if (rendered?.type === "basis_points") {
+      copyText = `${decoded} bps (${(Number(decoded) / 100).toFixed(2)}%)`;
+    } else if (rendered?.type === "percentage") {
+      copyText = `${decoded}%`;
+    }
+
+    const success = await copyToClipboard(copyText);
     if (success) {
       addToast({ type: "success", title: "Copied", duration: 2000 });
     }
@@ -72,8 +130,18 @@ export function ResultDisplay({ result, returnDef, methodName }: ResultDisplayPr
             </button>
           </div>
           <div className="p-3 chamfered-sm bg-muted/30 border border-border/50">
-            {isAmountResult && numericValue !== null ? (
-              <AmountDisplay amount={numericValue} size="md" showSymbol />
+            {rendered?.type === "xtal" ? (
+              <AmountDisplay amount={rendered.amount} size="md" showSymbol />
+            ) : rendered?.type === "basis_points" ? (
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm">{rendered.value}</span>
+                <span className="text-xs text-foreground-muted font-mono">bps</span>
+                <span className="text-xs text-foreground-muted/60 font-mono">
+                  ({formatPercent(Number(decoded) / 100, 2)})
+                </span>
+              </div>
+            ) : rendered?.type === "percentage" ? (
+              <span className="font-mono text-sm">{rendered.value}%</span>
             ) : decoded.includes("\n") ? (
               decoded.split("\n").map((line, i) => (
                 <p key={i} className="font-mono text-sm break-all">
