@@ -11,6 +11,7 @@ use tauri::State;
 
 use ed25519_dalek::Signer;
 
+use xtal::address::decode_utxo_address;
 use xtal::address_format::format_utxo_address;
 use xtal::blockchain::processing::utxo_verifier::consume_utxo_digest;
 use xtal::crypto::hash_public_key;
@@ -214,6 +215,28 @@ fn encode_cage_consume_utxo_call_data(
     .encode()
 }
 
+fn encode_cage_propose_withdrawal_call_data(
+    address_str: &str,
+    amount: u64,
+) -> Result<Vec<u8>, String> {
+    let trimmed = address_str.trim();
+    decode_utxo_address(trimmed).map_err(|e| format!("Invalid UTXO address: {}", e))?;
+    let addr_bytes = trimmed.as_bytes();
+    if addr_bytes.is_empty() || addr_bytes.len() > 40 {
+        return Err(format!(
+            "UTXO address must be 1-40 bytes, got {}",
+            addr_bytes.len()
+        ));
+    }
+
+    let mut encoded = Vec::with_capacity(4 + 1 + addr_bytes.len() + 8);
+    encoded.extend_from_slice(&[0x05, 0, 0, 0]);
+    encoded.push(addr_bytes.len() as u8);
+    encoded.extend_from_slice(addr_bytes);
+    encoded.extend_from_slice(&amount.to_le_bytes());
+    Ok(encoded)
+}
+
 // ===========================================================================
 // Wallet-Signing Commands
 // ===========================================================================
@@ -353,7 +376,7 @@ pub async fn deploy_contract(
         .map_err(|e| format!("Build failed: {}", e))?;
 
     let contract_address = xtal::crypto::calculate_contract_address(&sender_entry.pkh, nonce);
-    let tx_hash = tx.hash().map_err(|e| format!("Hash failed: {}", e))?;
+    let tx_hash = tx.id().map_err(|e| format!("Hash failed: {}", e))?;
 
     state
         .services
@@ -490,7 +513,7 @@ pub async fn call_contract(
         .with_nonce(nonce)
         .build()
         .map_err(|e| format!("Build failed: {}", e))?;
-    let tx_hash = tx.hash().map_err(|e| format!("Hash failed: {}", e))?;
+    let tx_hash = tx.id().map_err(|e| format!("Hash failed: {}", e))?;
 
     state
         .services
@@ -623,7 +646,7 @@ pub async fn deposit_utxo(
         .sponsored()
         .build()
         .map_err(|e| format!("Build failed: {}", e))?;
-    let tx_hash = tx.hash().map_err(|e| format!("Hash failed: {}", e))?;
+    let tx_hash = tx.id().map_err(|e| format!("Hash failed: {}", e))?;
 
     state
         .services
@@ -684,6 +707,46 @@ mod tests {
         assert_eq!(&encoded[32..64], &tx_id);
         assert_eq!(&encoded[64..66], &output_index.to_le_bytes());
     }
+
+    #[test]
+    fn cage_propose_withdrawal_call_data_encodes_len_prefixed_p2pkh() {
+        let address = xtal::address::encode_pkh(&[0x01; 20]);
+        let amount = 123_456u64;
+
+        let encoded = encode_cage_propose_withdrawal_call_data(&address, amount).unwrap();
+
+        assert_eq!(&encoded[..4], &[0x05, 0, 0, 0]);
+        assert_eq!(encoded[4] as usize, address.len());
+        assert_eq!(&encoded[5..5 + address.len()], address.as_bytes());
+        assert_eq!(
+            u64::from_le_bytes(
+                encoded[5 + address.len()..13 + address.len()]
+                    .try_into()
+                    .unwrap()
+            ),
+            amount
+        );
+    }
+
+    #[test]
+    fn cage_propose_withdrawal_call_data_encodes_len_prefixed_p2sh() {
+        let address = xtal::address::encode_sh(&[0xAB; 20]);
+        let amount = 789u64;
+
+        let encoded = encode_cage_propose_withdrawal_call_data(&address, amount).unwrap();
+
+        assert_eq!(&encoded[..4], &[0x05, 0, 0, 0]);
+        assert_eq!(encoded[4] as usize, address.len());
+        assert_eq!(&encoded[5..5 + address.len()], address.as_bytes());
+        assert_eq!(
+            u64::from_le_bytes(
+                encoded[5 + address.len()..13 + address.len()]
+                    .try_into()
+                    .unwrap()
+            ),
+            amount
+        );
+    }
 }
 
 // ===========================================================================
@@ -721,9 +784,11 @@ pub async fn get_cage_config(state: State<'_, AppState>) -> Result<CageConfig, S
         .map_err(|e| format!("Failed to read CAGE fee config: {}", e))?;
 
     let withdraw_fee_bps = match fee_bps_value {
-        Some(bytes) if bytes.len() >= 8 => {
-            u64::from_le_bytes(bytes[..8].try_into().map_err(|_| "Invalid fee bps length")?)
-        }
+        Some(bytes) if bytes.len() >= 8 => u64::from_le_bytes(
+            bytes[..8]
+                .try_into()
+                .map_err(|_| "Invalid fee bps length")?,
+        ),
         _ => {
             return Err("Failed to read CAGE withdrawal fee from contract storage".to_string());
         }

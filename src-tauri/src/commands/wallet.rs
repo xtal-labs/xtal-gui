@@ -83,6 +83,7 @@ pub struct WalletCreationResult {
     pub wallet_name: String,
     pub mnemonic: Vec<String>,
     pub primary_address: String,
+    /// Deprecated compatibility field. Master seed is no longer exported.
     pub master_seed: Option<String>,
 }
 
@@ -547,8 +548,8 @@ pub fn create_wallet_impl(
     Ok(WalletCreationResult {
         wallet_name: wallet_name.to_string(),
         mnemonic: mnemonic_words,
-        primary_address: result.primary_address,
-        master_seed: result.master_seed,
+        primary_address: result.primary_address.clone(),
+        master_seed: None,
     })
 }
 
@@ -585,8 +586,8 @@ pub fn wallet_from_mnemonic_impl(
     Ok(WalletCreationResult {
         wallet_name: wallet_name.to_string(),
         mnemonic: mnemonic_words,
-        primary_address: result.primary_address,
-        master_seed: result.master_seed,
+        primary_address: result.primary_address.clone(),
+        master_seed: None,
     })
 }
 
@@ -702,10 +703,10 @@ pub async fn import_wallet_from_file(
         .collect();
 
     Ok(WalletCreationResult {
-        wallet_name: result.wallet_name,
+        wallet_name: result.wallet_name.clone(),
         mnemonic: mnemonic_words,
-        primary_address: result.primary_address,
-        master_seed: result.master_seed,
+        primary_address: result.primary_address.clone(),
+        master_seed: None,
     })
 }
 
@@ -1494,7 +1495,7 @@ pub async fn get_transaction_history(
     let limit = limit.unwrap_or(50);
     let mut transactions = Vec::new();
     let mut seen_txids = std::collections::HashSet::new();
-    let wallet_db_ref = state.services.wallet.as_ref().and_then(|w| w.database());
+    let mut wallet_db_ref = state.services.wallet.as_ref().and_then(|w| w.database());
 
     // Determine the wallet_id to use for querying transactions:
     // 1. If explicit wallet_id is provided, use it
@@ -1515,7 +1516,13 @@ pub async fn get_transaction_history(
                     false
                 }
             })
-            .and_then(|entry| entry.value().get_wallet_id())
+            .and_then(|entry| {
+                wallet_db_ref = entry
+                    .value()
+                    .get_wallet_database()
+                    .or_else(|| wallet_db_ref.clone());
+                entry.value().get_wallet_id()
+            })
             .or_else(|| {
                 // Not a validator address, use regular wallet
                 state
@@ -1553,243 +1560,231 @@ pub async fn get_transaction_history(
 
     // Query wallet database for outgoing transactions (works for both validator and normal wallet)
     // This must happen before building the address set since both contexts share the same DB
-    if let Some(wallet) = state.services.wallet.as_ref() {
-        if let (Some(db), Some(wallet_id)) = (wallet.database(), query_wallet_id.clone()) {
-            log::debug!("Querying wallet database for outgoing transactions");
-            let queries = WalletQueries::new(db.connection());
+    if let (Some(db), Some(wallet_id)) = (wallet_db_ref.as_ref(), query_wallet_id.clone()) {
+        log::debug!("Querying wallet database for outgoing transactions");
+        let queries = WalletQueries::new(db.connection());
 
-            // Get pending outgoing transactions (sends, stakes, unstakes)
-            match queries.list_pending_outgoing(&wallet_id) {
-                Ok(pending) => {
-                    log::debug!("Found {} pending outgoing transactions", pending.len());
-                    for ptx in pending {
-                        let in_mempool = mempool.get_transaction_by_hash(&ptx.txid).is_some();
+        // Get pending outgoing transactions (sends, stakes, unstakes)
+        match queries.list_pending_outgoing(&wallet_id) {
+            Ok(pending) => {
+                log::debug!("Found {} pending outgoing transactions", pending.len());
+                for ptx in pending {
+                    let in_mempool = mempool.get_transaction_by_hash(&ptx.txid).is_some();
 
-                        if in_mempool {
-                            // Still pending - include with 0 confirmations
-                            seen_txids.insert(ptx.txid);
-                            transactions.push(TransactionSummary {
-                                txid: hex::encode(ptx.txid),
-                                amount: -(ptx.amount as i64),
-                                fee: ptx.fee.unwrap_or(0),
-                                confirmations: 0,
-                                timestamp: ptx.created_at as u64,
-                                tx_type: ptx.tx_type.as_str().to_string(),
-                                execution_status: lookup_any_receipt(
-                                    blockchain.as_ref(),
-                                    &ptx.txid,
-                                )
+                    if in_mempool {
+                        // Still pending - include with 0 confirmations
+                        seen_txids.insert(ptx.txid);
+                        transactions.push(TransactionSummary {
+                            txid: hex::encode(ptx.txid),
+                            amount: -(ptx.amount as i64),
+                            fee: ptx.fee.unwrap_or(0),
+                            confirmations: 0,
+                            timestamp: ptx.created_at as u64,
+                            tx_type: ptx.tx_type.as_str().to_string(),
+                            execution_status: lookup_any_receipt(blockchain.as_ref(), &ptx.txid)
                                 .map(|receipt| execution_status_label(&receipt.status))
                                 .or_else(|| {
                                     ptx.execution_status
                                         .map(|status| status.as_str().to_string())
                                 }),
-                                maturity_status: None,
-                            });
-                        } else {
-                            // Not in mempool — check if confirmed via UTXO set
-                            // (same approach as coinbase maturity: use creation_height from UTXOs)
-                            let mut confirmed_leaf_height: Option<u64> = None;
+                            maturity_status: None,
+                        });
+                    } else {
+                        // Not in mempool — check if confirmed via UTXO set
+                        // (same approach as coinbase maturity: use creation_height from UTXOs)
+                        let mut confirmed_leaf_height: Option<u64> = None;
 
-                            if let Ok(tx) = Transaction::decode(&mut ptx.raw_tx.as_slice()) {
-                                // Try to find any output of this tx in the UTXO set
-                                for (idx, _) in tx.utxo_outputs().iter().enumerate() {
-                                    if let Ok(Some(utxo)) =
-                                        blockchain.get_utxo(&ptx.txid, idx as u16)
-                                    {
-                                        confirmed_leaf_height = Some(utxo.creation_height);
-                                        break;
-                                    }
+                        if let Ok(tx) = Transaction::decode(&mut ptx.raw_tx.as_slice()) {
+                            // Try to find any output of this tx in the UTXO set
+                            for (idx, _) in tx.utxo_outputs().iter().enumerate() {
+                                if let Ok(Some(utxo)) = blockchain.get_utxo(&ptx.txid, idx as u16) {
+                                    confirmed_leaf_height = Some(utxo.creation_height);
+                                    break;
                                 }
+                            }
 
-                                // Fallback: if outputs already spent, check if inputs were consumed
-                                if confirmed_leaf_height.is_none() {
-                                    if let Some(inputs) = tx.utxo_inputs() {
-                                        for input in inputs {
-                                            if input.tx_id != [0u8; 32] {
-                                                if let Ok(None) = blockchain
-                                                    .get_utxo(&input.tx_id, input.output_index)
-                                                {
-                                                    // Input consumed → tx confirmed at unknown height
-                                                    confirmed_leaf_height =
-                                                        Some(current_leaf_height);
-                                                    break;
-                                                }
+                            // Fallback: if outputs already spent, check if inputs were consumed
+                            if confirmed_leaf_height.is_none() {
+                                if let Some(inputs) = tx.utxo_inputs() {
+                                    for input in inputs {
+                                        if input.tx_id != [0u8; 32] {
+                                            if let Ok(None) = blockchain
+                                                .get_utxo(&input.tx_id, input.output_index)
+                                            {
+                                                // Input consumed → tx confirmed at unknown height
+                                                confirmed_leaf_height = Some(current_leaf_height);
+                                                break;
                                             }
                                         }
                                     }
                                 }
                             }
+                        }
 
-                            if let Some(leaf_height) = confirmed_leaf_height {
-                                let fallback_ts = std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs())
-                                    .unwrap_or(0);
-                                let block_ts =
-                                    get_block_timestamp(&blockchain, &ptx.txid, None, fallback_ts);
-                                let confirmation = Some((block_ts as i64, leaf_height));
-                                let _ = queries.set_transaction_confirmed(&ptx.txid, confirmation);
-                                let _ = queries.subtract_pending_outgoing(
-                                    &wallet_id,
-                                    ptx.amount + ptx.fee.unwrap_or(0),
-                                );
+                        if let Some(leaf_height) = confirmed_leaf_height {
+                            let fallback_ts = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
+                            let block_ts =
+                                get_block_timestamp(&blockchain, &ptx.txid, None, fallback_ts);
+                            let confirmation = Some((block_ts as i64, leaf_height));
+                            let _ = queries.set_transaction_confirmed(&ptx.txid, confirmation);
+                            let _ = queries.subtract_pending_outgoing(
+                                &wallet_id,
+                                ptx.amount + ptx.fee.unwrap_or(0),
+                            );
 
-                                let confirmations =
-                                    current_leaf_height.saturating_sub(leaf_height) as u32 + 1;
+                            let confirmations =
+                                current_leaf_height.saturating_sub(leaf_height) as u32 + 1;
 
-                                seen_txids.insert(ptx.txid);
-                                transactions.push(TransactionSummary {
-                                    txid: hex::encode(ptx.txid),
-                                    amount: -(ptx.amount as i64),
-                                    fee: ptx.fee.unwrap_or(0),
-                                    confirmations,
-                                    timestamp: block_ts,
-                                    tx_type: ptx.tx_type.as_str().to_string(),
-                                    execution_status: ptx
-                                        .execution_status
-                                        .map(|status| status.as_str().to_string()),
-                                    maturity_status: None,
-                                });
+                            seen_txids.insert(ptx.txid);
+                            transactions.push(TransactionSummary {
+                                txid: hex::encode(ptx.txid),
+                                amount: -(ptx.amount as i64),
+                                fee: ptx.fee.unwrap_or(0),
+                                confirmations,
+                                timestamp: block_ts,
+                                tx_type: ptx.tx_type.as_str().to_string(),
+                                execution_status: ptx
+                                    .execution_status
+                                    .map(|status| status.as_str().to_string()),
+                                maturity_status: None,
+                            });
 
-                                log::info!(
-                                    "Updated tx {} to confirmed at leaf height {}",
-                                    hex::encode(ptx.txid),
-                                    leaf_height
-                                );
-                            } else {
-                                // Not in mempool and not confirmed — dropped
-                                let _ = queries.remove_transaction(&ptx.txid);
-                                let _ = queries.subtract_pending_outgoing(
-                                    &wallet_id,
-                                    ptx.amount + ptx.fee.unwrap_or(0),
-                                );
-                                log::info!(
-                                    "Cleaned up dropped tx {} (no longer in mempool or blockchain)",
-                                    hex::encode(ptx.txid)
-                                );
-                            }
+                            log::info!(
+                                "Updated tx {} to confirmed at leaf height {}",
+                                hex::encode(ptx.txid),
+                                leaf_height
+                            );
+                        } else {
+                            // Not in mempool and not confirmed — dropped
+                            let _ = queries.remove_transaction(&ptx.txid);
+                            let _ = queries.subtract_pending_outgoing(
+                                &wallet_id,
+                                ptx.amount + ptx.fee.unwrap_or(0),
+                            );
+                            log::info!(
+                                "Cleaned up dropped tx {} (no longer in mempool or blockchain)",
+                                hex::encode(ptx.txid)
+                            );
                         }
                     }
                 }
-                Err(e) => {
-                    log::warn!("Failed to query pending outgoing transactions: {}", e);
+            }
+            Err(e) => {
+                log::warn!("Failed to query pending outgoing transactions: {}", e);
+            }
+        }
+
+        // Include confirmed outgoing transactions (sends, stakes, unstakes)
+        if let Ok(confirmed_outgoing) = queries.list_confirmed_outgoing(&wallet_id) {
+            for ctx in confirmed_outgoing {
+                if !seen_txids.contains(&ctx.txid) {
+                    seen_txids.insert(ctx.txid);
+                    let (confirmed_at, height) = ctx.confirmation.unwrap_or((ctx.created_at, 0));
+                    let confirmations = current_leaf_height.saturating_sub(height) as u32 + 1;
+                    let timestamp =
+                        get_block_timestamp(&blockchain, &ctx.txid, None, confirmed_at as u64);
+
+                    transactions.push(TransactionSummary {
+                        txid: hex::encode(ctx.txid),
+                        amount: -(ctx.amount as i64), // Negative for outgoing
+                        fee: ctx.fee.unwrap_or(0),
+                        confirmations,
+                        timestamp,
+                        tx_type: ctx.tx_type.as_str().to_string(),
+                        execution_status: ctx
+                            .execution_status
+                            .map(|status| status.as_str().to_string()),
+                        maturity_status: None,
+                    });
                 }
             }
+        }
 
-            // Include confirmed outgoing transactions (sends, stakes, unstakes)
-            if let Ok(confirmed_outgoing) = queries.list_confirmed_outgoing(&wallet_id) {
-                for ctx in confirmed_outgoing {
-                    if !seen_txids.contains(&ctx.txid) {
-                        seen_txids.insert(ctx.txid);
-                        let (confirmed_at, height) =
-                            ctx.confirmation.unwrap_or((ctx.created_at, 0));
-                        let confirmations = current_leaf_height.saturating_sub(height) as u32 + 1;
-                        let timestamp =
-                            get_block_timestamp(&blockchain, &ctx.txid, None, confirmed_at as u64);
+        // Include confirmed incoming transactions from DB (receive, coinbase, withdrawal)
+        // This ensures the UTXO scan (section 4) only catches newly discovered txs
+        if let Ok(all_confirmed) = queries.list_all_confirmed(&wallet_id) {
+            for ctx in all_confirmed {
+                if !seen_txids.contains(&ctx.txid) {
+                    seen_txids.insert(ctx.txid);
+                    let (confirmed_at, db_height) = ctx.confirmation.unwrap_or((ctx.created_at, 0));
 
-                        transactions.push(TransactionSummary {
-                            txid: hex::encode(ctx.txid),
-                            amount: -(ctx.amount as i64), // Negative for outgoing
-                            fee: ctx.fee.unwrap_or(0),
-                            confirmations,
-                            timestamp,
-                            tx_type: ctx.tx_type.as_str().to_string(),
-                            execution_status: ctx
-                                .execution_status
-                                .map(|status| status.as_str().to_string()),
-                            maturity_status: None,
-                        });
-                    }
+                    // For coinbase/withdrawal, use UTXO creation_height (leaf height)
+                    // as source of truth. The wallet sync service may store the general
+                    // block height which differs from leaf height in this hybrid chain.
+                    let height = if matches!(
+                        ctx.tx_type,
+                        TransactionType::Coinbase | TransactionType::VmWithdrawal
+                    ) {
+                        (0u16..16)
+                            .find_map(|idx| {
+                                blockchain
+                                    .get_utxo(&ctx.txid, idx)
+                                    .ok()
+                                    .flatten()
+                                    .map(|u| u.creation_height)
+                            })
+                            .unwrap_or(db_height)
+                    } else {
+                        db_height
+                    };
+
+                    let confirmations = current_leaf_height.saturating_sub(height) as u32 + 1;
+                    let timestamp = get_block_timestamp(
+                        &blockchain,
+                        &ctx.txid,
+                        Some(height),
+                        confirmed_at as u64,
+                    );
+
+                    // Determine sign based on tx type
+                    let amount = if matches!(
+                        ctx.tx_type,
+                        TransactionType::ContractDeploy
+                            | TransactionType::ContractCall
+                            | TransactionType::AccountTransfer
+                    ) {
+                        pending_vm_amount_from_record(&ctx, &wallet_pkhs)
+                            .unwrap_or(ctx.amount as i64)
+                    } else if ctx.is_outgoing() {
+                        -(ctx.amount as i64)
+                    } else {
+                        ctx.amount as i64
+                    };
+
+                    // Maturity status for coinbase/withdrawal
+                    let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
+                    let maturity_status = match ctx.tx_type {
+                        TransactionType::Coinbase | TransactionType::VmWithdrawal => {
+                            let age = current_leaf_height.saturating_sub(height);
+                            let blocks_remaining = maturity_required.saturating_sub(age);
+                            Some(MaturityStatus {
+                                is_immature: blocks_remaining > 0,
+                                blocks_until_mature: blocks_remaining,
+                            })
+                        }
+                        _ => None,
+                    };
+
+                    transactions.push(TransactionSummary {
+                        txid: hex::encode(ctx.txid),
+                        amount,
+                        fee: ctx.fee.unwrap_or(0),
+                        confirmations,
+                        timestamp,
+                        tx_type: ctx.tx_type.as_str().to_string(),
+                        execution_status: ctx
+                            .execution_status
+                            .map(|status| status.as_str().to_string()),
+                        maturity_status,
+                    });
                 }
             }
-
-            // Include confirmed incoming transactions from DB (receive, coinbase, withdrawal)
-            // This ensures the UTXO scan (section 4) only catches newly discovered txs
-            if let Ok(all_confirmed) = queries.list_all_confirmed(&wallet_id) {
-                for ctx in all_confirmed {
-                    if !seen_txids.contains(&ctx.txid) {
-                        seen_txids.insert(ctx.txid);
-                        let (confirmed_at, db_height) =
-                            ctx.confirmation.unwrap_or((ctx.created_at, 0));
-
-                        // For coinbase/withdrawal, use UTXO creation_height (leaf height)
-                        // as source of truth. The wallet sync service may store the general
-                        // block height which differs from leaf height in this hybrid chain.
-                        let height = if matches!(
-                            ctx.tx_type,
-                            TransactionType::Coinbase | TransactionType::VmWithdrawal
-                        ) {
-                            (0u16..16)
-                                .find_map(|idx| {
-                                    blockchain
-                                        .get_utxo(&ctx.txid, idx)
-                                        .ok()
-                                        .flatten()
-                                        .map(|u| u.creation_height)
-                                })
-                                .unwrap_or(db_height)
-                        } else {
-                            db_height
-                        };
-
-                        let confirmations = current_leaf_height.saturating_sub(height) as u32 + 1;
-                        let timestamp = get_block_timestamp(
-                            &blockchain,
-                            &ctx.txid,
-                            Some(height),
-                            confirmed_at as u64,
-                        );
-
-                        // Determine sign based on tx type
-                        let amount = if matches!(
-                            ctx.tx_type,
-                            TransactionType::ContractDeploy
-                                | TransactionType::ContractCall
-                                | TransactionType::AccountTransfer
-                        ) {
-                            pending_vm_amount_from_record(&ctx, &wallet_pkhs)
-                                .unwrap_or(ctx.amount as i64)
-                        } else if ctx.is_outgoing() {
-                            -(ctx.amount as i64)
-                        } else {
-                            ctx.amount as i64
-                        };
-
-                        // Maturity status for coinbase/withdrawal
-                        let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
-                        let maturity_status = match ctx.tx_type {
-                            TransactionType::Coinbase | TransactionType::VmWithdrawal => {
-                                let age = current_leaf_height.saturating_sub(height);
-                                let blocks_remaining = maturity_required.saturating_sub(age);
-                                Some(MaturityStatus {
-                                    is_immature: blocks_remaining > 0,
-                                    blocks_until_mature: blocks_remaining,
-                                })
-                            }
-                            _ => None,
-                        };
-
-                        transactions.push(TransactionSummary {
-                            txid: hex::encode(ctx.txid),
-                            amount,
-                            fee: ctx.fee.unwrap_or(0),
-                            confirmations,
-                            timestamp,
-                            tx_type: ctx.tx_type.as_str().to_string(),
-                            execution_status: ctx
-                                .execution_status
-                                .map(|status| status.as_str().to_string()),
-                            maturity_status,
-                        });
-                    }
-                }
-            }
-        } else {
-            log::debug!("No wallet database available for outgoing transaction query");
         }
     } else {
-        log::debug!("No wallet service available for outgoing transaction query");
+        log::debug!("No wallet database available for outgoing transaction query");
     }
 
     // 3. Scan mempool for relevant pending VM transactions
@@ -1829,8 +1824,8 @@ pub async fn get_transaction_history(
     let now = current_unix_timestamp();
 
     for tx in mempool.get_transactions() {
-        // Get transaction hash
-        let tx_hash = match tx.hash() {
+        // Get canonical transaction id
+        let tx_hash = match tx.id() {
             Ok(h) => h,
             Err(_) => continue,
         };
@@ -1875,6 +1870,62 @@ pub async fn get_transaction_history(
                 execution_status: None,
                 maturity_status: None,
             });
+
+            if let (Some(db), Some(wallet_id)) = (wallet_db_ref.as_ref(), query_wallet_id.as_ref())
+            {
+                let queries = WalletQueries::new(db.connection());
+                if queries.get_transaction(&tx_hash).ok().flatten().is_none() {
+                    let input_details = tx.utxo_inputs().and_then(|inputs| {
+                        let details: Vec<InputDetail> = inputs
+                            .iter()
+                            .map(|input| {
+                                let (amount, address) = if let Ok(Some(utxo)) =
+                                    blockchain.get_utxo(&input.tx_id, input.output_index)
+                                {
+                                    let address = extract_pkh_from_script(&utxo.script_pubkey)
+                                        .map(|pkh| format_utxo_address(&pkh));
+                                    (utxo.amount, address)
+                                } else {
+                                    (0, None)
+                                };
+
+                                InputDetail {
+                                    txid: hex::encode(input.tx_id),
+                                    index: input.output_index,
+                                    amount,
+                                    address,
+                                }
+                            })
+                            .collect();
+
+                        if details.is_empty() {
+                            None
+                        } else {
+                            InputDetail::serialize_list(&details)
+                        }
+                    });
+
+                    let record = TransactionRecord {
+                        txid: tx_hash,
+                        raw_tx: tx.encode(),
+                        tx_type: TransactionType::Receive,
+                        amount: incoming_amount,
+                        fee: None,
+                        to_address: None,
+                        memo: None,
+                        created_at: now as i64,
+                        confirmation: None,
+                        expires_at: None,
+                        priority: None,
+                        input_details,
+                        execution_status: None,
+                    };
+
+                    if let Err(e) = queries.insert_transaction(wallet_id, &record) {
+                        log::warn!("Failed to store pending incoming tx in wallet DB: {}", e);
+                    }
+                }
+            }
         }
     }
 
@@ -2008,36 +2059,53 @@ pub async fn get_transaction_history(
         // Store in wallet DB if not already present (captures input_details while resolvable)
         if let (Some(ref db), Some(ref wid)) = (&wallet_db_ref, &query_wallet_id) {
             let q = WalletQueries::new(db.connection());
-            if q.get_transaction(tx_id).ok().flatten().is_none() {
-                let record_tx_type = if info.is_coinbase {
-                    TransactionType::Coinbase
-                } else if info.is_withdrawal {
-                    TransactionType::VmWithdrawal
-                } else {
-                    TransactionType::Receive
-                };
-
-                let record = TransactionRecord {
-                    txid: *tx_id,
-                    raw_tx,
-                    tx_type: record_tx_type,
-                    amount: info.total_amount,
-                    fee: if info.is_coinbase || info.is_withdrawal {
-                        None
+            match q.get_transaction(tx_id).ok().flatten() {
+                Some(existing) if existing.is_pending() => {
+                    if let Err(e) = q.set_transaction_confirmed(
+                        tx_id,
+                        Some((timestamp as i64, info.creation_height)),
+                    ) {
+                        log::warn!(
+                            "Failed to confirm tracked incoming tx {} in wallet DB: {}",
+                            hex::encode(tx_id),
+                            e
+                        );
+                    }
+                }
+                Some(_) => {}
+                None => {
+                    let record_tx_type = if info.is_coinbase {
+                        TransactionType::Coinbase
                     } else {
-                        Some(tx_fee)
-                    },
-                    to_address: None,
-                    memo: None,
-                    created_at: timestamp as i64,
-                    confirmation: Some((timestamp as i64, info.creation_height)),
-                    expires_at: None,
-                    priority: None,
-                    input_details,
-                    execution_status: None,
-                };
-                if let Err(e) = q.insert_transaction(wid, &record) {
-                    log::warn!("Failed to store incoming tx in wallet DB: {}", e);
+                        if info.is_withdrawal {
+                            TransactionType::VmWithdrawal
+                        } else {
+                            TransactionType::Receive
+                        }
+                    };
+
+                    let record = TransactionRecord {
+                        txid: *tx_id,
+                        raw_tx,
+                        tx_type: record_tx_type,
+                        amount: info.total_amount,
+                        fee: if info.is_coinbase || info.is_withdrawal {
+                            None
+                        } else {
+                            Some(tx_fee)
+                        },
+                        to_address: None,
+                        memo: None,
+                        created_at: timestamp as i64,
+                        confirmation: Some((timestamp as i64, info.creation_height)),
+                        expires_at: None,
+                        priority: None,
+                        input_details,
+                        execution_status: None,
+                    };
+                    if let Err(e) = q.insert_transaction(wid, &record) {
+                        log::warn!("Failed to store incoming tx in wallet DB: {}", e);
+                    }
                 }
             }
         }
@@ -2462,8 +2530,10 @@ fn decode_cage_withdrawal_call(
         return None;
     }
 
-    let (recipient, recipient_len) =
-        decode_abi_address(&resolved_method.params[0].param_type, &call_tx.data[4..])?;
+    let (requested_recipient, recipient_len) = decode_cage_withdrawal_recipient(
+        &resolved_method.params[0].param_type,
+        &call_tx.data[4..],
+    )?;
     let (requested_amount, _) = decode_abi_u64(
         &resolved_method.params[1].param_type,
         &call_tx.data[4 + recipient_len..],
@@ -2471,13 +2541,34 @@ fn decode_cage_withdrawal_call(
 
     Some(DecodedCageWithdrawalCall {
         requested_amount,
-        requested_recipient: format_utxo_address(&recipient),
+        requested_recipient,
     })
+}
+
+fn decode_cage_withdrawal_recipient(
+    param_type: &ParamType,
+    data: &[u8],
+) -> Option<(String, usize)> {
+    match param_type {
+        ParamType::UtxoAddress => {
+            let len = *data.first()? as usize;
+            if len == 0 || len > 40 {
+                return None;
+            }
+            let address = std::str::from_utf8(data.get(1..1 + len)?).ok()?.to_string();
+            Some((address, 1 + len))
+        }
+        ParamType::Bytes20 | ParamType::VmAddress => {
+            let (recipient, consumed) = decode_abi_address(param_type, data)?;
+            Some((format_utxo_address(&recipient), consumed))
+        }
+        _ => None,
+    }
 }
 
 fn decode_abi_address(param_type: &ParamType, data: &[u8]) -> Option<([u8; 20], usize)> {
     match param_type {
-        ParamType::Bytes20 | ParamType::VmAddress | ParamType::UtxoAddress => {
+        ParamType::Bytes20 | ParamType::VmAddress => {
             let bytes = data.get(..20)?;
             let mut address = [0u8; 20];
             address.copy_from_slice(bytes);
@@ -2504,7 +2595,7 @@ fn extract_produced_withdrawal(
 
     Some(ProducedWithdrawalView {
         net_withdrawal_amount: withdrawal.amount,
-        produced_output_recipient: Some(format_utxo_address(&withdrawal.recipient)),
+        produced_output_recipient: String::from_utf8(withdrawal.recipient.clone()).ok(),
     })
 }
 
@@ -2929,7 +3020,7 @@ fn collect_pending_vm_mempool_transactions(
     let mut mempool_hashes = std::collections::HashSet::new();
 
     for tx in &mempool_txs {
-        if let Ok(tx_hash) = tx.hash() {
+        if let Ok(tx_hash) = tx.id() {
             mempool_hashes.insert(tx_hash);
         }
     }
@@ -2962,7 +3053,7 @@ fn collect_pending_vm_mempool_transactions(
     let mut summaries = Vec::new();
 
     for tx in mempool_txs {
-        let tx_hash = match tx.hash() {
+        let tx_hash = match tx.id() {
             Ok(hash) => hash,
             Err(_) => continue,
         };
@@ -3650,7 +3741,7 @@ pub async fn send_vm_transfer(
         .build()
         .map_err(|e| format!("Build failed: {}", e))?;
     let tx_hash = tx
-        .hash()
+        .id()
         .map_err(|e| format!("Failed to hash transaction: {}", e))?;
     let txid = hex::encode(tx_hash);
 
@@ -3788,10 +3879,14 @@ mod tests {
     fn build_vm_detail_enriches_cage_withdrawal_calls() {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let recipient = [0x42; 20];
+        let recipient_address = xtal::address::encode_pkh(&recipient);
         let data = cage_abi()
             .encode_call(
                 "withdraw",
-                &[AbiValue::Address(recipient), AbiValue::U64(1_000_000_000)],
+                &[
+                    AbiValue::String(recipient_address.clone()),
+                    AbiValue::U64(1_000_000_000),
+                ],
             )
             .unwrap();
         let tx = Transaction::ContractCall(ContractCallTransaction {
@@ -3817,7 +3912,7 @@ mod tests {
             26_972,
         );
         receipt.produced_withdrawals.push(PendingWithdrawal {
-            recipient,
+            recipient: recipient_address.as_bytes().to_vec(),
             amount: 999_000_000,
             source: caller,
         });
@@ -3833,11 +3928,8 @@ mod tests {
             }) => {
                 assert_eq!(requested_amount, 1_000_000_000);
                 assert_eq!(net_withdrawal_amount, Some(999_000_000));
-                assert_eq!(requested_recipient, format_utxo_address(&recipient));
-                assert_eq!(
-                    produced_output_recipient,
-                    Some(format_utxo_address(&recipient))
-                );
+                assert_eq!(requested_recipient, recipient_address);
+                assert_eq!(produced_output_recipient, Some(recipient_address));
             }
             other => panic!("expected cage withdrawal bridge, got {:?}", other),
         }
