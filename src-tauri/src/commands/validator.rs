@@ -91,7 +91,7 @@ pub async fn list_validators(state: State<'_, AppState>) -> Result<Vec<Validator
 /// 1. Load the wallet via WalletManager
 /// 2. Unlock it with the provided password
 /// 3. Create a ValidatorService
-/// 4. Start all eligible fruit productions
+/// 4. Register the validator service without auto-starting productions
 #[tauri::command]
 pub async fn start_validator(
     state: State<'_, AppState>,
@@ -137,22 +137,21 @@ pub async fn start_validator(
 
     let address = status.validator_address.clone();
 
-    // Start all eligible fruit productions
-    let start_result = service
-        .start_all_eligible()
-        .map_err(|e| format!("Failed to start validator: {}", e))?;
+    // Determine which fruits are currently eligible without auto-starting them.
+    let eligible_fruits = get_fruits_by_stake_requirement()
+        .into_iter()
+        .filter_map(|(fruit_type, spec)| {
+            (status.stake >= spec.min_stake_threshold).then(|| format!("{:?}", fruit_type))
+        })
+        .collect::<Vec<_>>();
 
     // Add to services
     state.services.add_validator(address.clone(), service);
 
     Ok(ValidatorStartResult {
         address,
-        eligible_fruits: start_result
-            .started
-            .iter()
-            .map(|f| format!("{:?}", f))
-            .collect(),
-        started_count: start_result.started.len(),
+        eligible_fruits,
+        started_count: 0,
     })
 }
 
@@ -553,6 +552,7 @@ pub struct ValidatorWalletCreationResult {
     pub wallet_name: String,
     pub mnemonic: Vec<String>,
     pub address: String,
+    /// Deprecated compatibility field. Master seed is no longer exported.
     pub master_seed: Option<String>,
 }
 
@@ -600,8 +600,8 @@ pub async fn create_validator_wallet(
     Ok(ValidatorWalletCreationResult {
         wallet_name,
         mnemonic: mnemonic_words,
-        address: result.primary_address,
-        master_seed: result.master_seed,
+        address: result.primary_address.clone(),
+        master_seed: None,
     })
 }
 
@@ -635,9 +635,9 @@ pub async fn import_validator_wallet(
 
     Ok(ValidatorWalletCreationResult {
         wallet_name,
-        mnemonic: result.mnemonic,
-        address: result.primary_address,
-        master_seed: result.master_seed,
+        mnemonic: result.mnemonic.clone(),
+        address: result.primary_address.clone(),
+        master_seed: None,
     })
 }
 

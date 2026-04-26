@@ -394,6 +394,12 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                 .build()?;
 
             let view_menu = SubmenuBuilder::new(app, "View")
+                .item(
+                    &MenuItemBuilder::with_id("reload_interface", "Reload Interface")
+                        .accelerator("CmdOrCtrl+R")
+                        .build(app)?,
+                )
+                .separator()
                 .item(&PredefinedMenuItem::fullscreen(app, None)?)
                 .build()?;
 
@@ -475,6 +481,11 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                     "import_wallet_file" => {
                         if let Err(e) = window.eval("window.openWalletImportFile?.()") {
                             error!("Failed to eval openWalletImportFile: {}", e);
+                        }
+                    }
+                    "reload_interface" => {
+                        if let Err(e) = window.reload() {
+                            error!("Failed to reload interface: {}", e);
                         }
                     }
                     "open_logs" => {
@@ -721,6 +732,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_contract_info,
             commands::get_contract_storage_value,
             commands::estimate_contract_gas,
+            commands::get_cage_config,
             commands::load_contract_abi,
             commands::list_cached_contracts,
             commands::import_contract_abi,
@@ -812,6 +824,19 @@ enum StartupUpdate {
     Bootstrap(BootstrapProgress),
 }
 
+fn gui_startup_cli_config(network: NetworkType, config_path: PathBuf) -> CliConfig {
+    CliConfig {
+        network_port: 0,
+        api_port: 0,
+        rpc_port: 0,
+        mining_threads: 0,
+        metrics_port: 0,
+        network: Some(network),
+        config_path: config_path.to_string_lossy().to_string(),
+        ..CliConfig::for_network(network)
+    }
+}
+
 /// Spawn the node in a dedicated thread. Returns channels for communication
 /// and the thread handle immediately — does NOT block.
 fn spawn_node_thread(
@@ -865,11 +890,7 @@ fn spawn_node_thread(
                     }
                 };
 
-                let cli_config = CliConfig {
-                    network: Some(network),
-                    config_path: config_path.to_string_lossy().to_string(),
-                    ..CliConfig::for_network(network)
-                };
+                let cli_config = gui_startup_cli_config(network, config_path);
 
                 // Create wallet manager
                 let wallet = match load_wallet_manager(network) {
@@ -964,7 +985,7 @@ fn spawn_node_thread(
 
                 // Send services to GUI thread
                 let services = node.services.clone();
-                let api_port = cli_config.api_port;
+                let api_port = node.cli_config.api_port;
                 if services_tx.send((services, api_port)).is_err() {
                     error!("Failed to send services to GUI thread");
                     return;
@@ -982,4 +1003,23 @@ fn spawn_node_thread(
         .expect("Failed to spawn node thread");
 
     (services_rx, error_rx, progress_rx, node_handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gui_startup_cli_config_preserves_persisted_node_settings() {
+        let cli_config =
+            gui_startup_cli_config(NetworkType::Testnet, PathBuf::from("/tmp/config.json"));
+
+        assert_eq!(cli_config.network, Some(NetworkType::Testnet));
+        assert_eq!(cli_config.config_path, "/tmp/config.json");
+        assert_eq!(cli_config.network_port, 0);
+        assert_eq!(cli_config.api_port, 0);
+        assert_eq!(cli_config.rpc_port, 0);
+        assert_eq!(cli_config.mining_threads, 0);
+        assert_eq!(cli_config.metrics_port, 0);
+    }
 }

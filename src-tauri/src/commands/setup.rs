@@ -7,7 +7,8 @@ use serde::Serialize;
 use std::str::FromStr;
 use tauri::AppHandle;
 
-use xtal::config::{Config as NodeConfig, SyncMode};
+use xtal::cli::setup_wizard::write_default_config;
+use xtal::config::SyncMode;
 use xtal::utils::{CrystalDirs, DirectoryConfig, NetworkType};
 use xtal::wallet::database::models::WalletType;
 use xtal::wallet::WalletManager;
@@ -15,7 +16,7 @@ use xtal::wallet::WalletManager;
 use crate::commands::wallet::{
     create_wallet_impl, wallet_from_mnemonic_impl, WalletCreationResult,
 };
-use crate::config::{node_config_exists, save_node_config, set_node_sync_preferences, GuiConfig};
+use crate::config::{node_config_exists, node_config_path, set_node_sync_preferences, GuiConfig};
 
 /// Network information for selection
 #[derive(Debug, Clone, Serialize)]
@@ -88,8 +89,10 @@ pub async fn initialize_node(network: String) -> Result<InitResult, String> {
 
     log::info!("Created directories at: {:?}", dirs.data_dir);
 
-    let config = NodeConfig::for_network(network_type);
-    save_node_config(&config).map_err(|e| format!("Failed to save node configuration: {}", e))?;
+    let config_path = node_config_path()
+        .map_err(|e| format!("Failed to resolve node configuration path: {}", e))?;
+    write_default_config(&config_path, network_type)
+        .map_err(|e| format!("Failed to save node configuration: {}", e))?;
 
     GuiConfig::load_or_create()
         .map_err(|e| format!("Failed to prepare GUI configuration: {}", e))?;
