@@ -128,6 +128,15 @@ export default function Wallet() {
   const showWithdrawModal = activeModal === MODAL_WITHDRAW;
   // For load modal, the wallet name is passed as modalData
   const selectedWalletFromMenu = showLoadModal ? (modalData as string | null) : null;
+  const bridgeActionGlowClass = [
+    "relative isolate overflow-hidden",
+    "bg-primary/15 text-primary shadow-inner-glow",
+    "shadow-[0_0_18px_hsl(var(--primary)/0.18),0_0_38px_hsl(var(--accent)/0.16)]",
+    "hover:bg-primary/20 hover:shadow-[0_0_22px_hsl(var(--primary)/0.22),0_0_46px_hsl(var(--accent)/0.2)]",
+    "before:pointer-events-none before:absolute before:inset-0 before:content-['']",
+    "before:bg-[radial-gradient(135%_135%_at_18%_18%,hsl(var(--primary)/0.24)_0%,transparent_46%),radial-gradient(135%_140%_at_82%_82%,hsl(var(--accent)/0.22)_0%,transparent_50%)]",
+    "[&>*]:relative [&>*]:z-[1]",
+  ].join(" ");
 
   // UI state
   const [isLoading, setIsLoading] = useState(false);
@@ -443,10 +452,7 @@ export default function Wallet() {
   };
 
   const handleConfirmMnemonic = async () => {
-    // Capture the wallet name before clearing form state
     const createdName = newWalletName;
-    console.log('[Wallet] handleConfirmMnemonic with name:', createdName);
-    setLoaded(true, createdName);
     closeModal();
     setCreatedMnemonic(null);
     setCreatedAddress(null);
@@ -454,8 +460,13 @@ export default function Wallet() {
     setNewWalletName("");
     setPassword("");
     setConfirmPassword("");
-    // Refresh wallet list
     await fetchAvailableWallets();
+    addToast({
+      type: "success",
+      title: "Wallet created",
+      message: `Wallet "${createdName}" is available to load`,
+      duration: 3000,
+    });
   };
 
   const handleImportMnemonicSubmit = (words: string[], walletName: string) => {
@@ -487,7 +498,6 @@ export default function Wallet() {
         password: importPassword,
         mnemonic,
       });
-      setLoaded(true, importWalletName);
       closeModal();
       // Reset import state
       setImportStep("mnemonic");
@@ -500,7 +510,7 @@ export default function Wallet() {
       addToast({
         type: "success",
         title: "Wallet imported",
-        message: `Wallet "${importWalletName}" imported successfully`,
+        message: `Wallet "${importWalletName}" is available to load`,
         duration: 3000,
       });
     } catch (err) {
@@ -552,7 +562,6 @@ export default function Wallet() {
         password,
         privateKeyHex: importKeyHex,
       });
-      setLoaded(true, result.wallet_name);
       closeModal();
       // Reset import state
       setImportMode("mnemonic");
@@ -567,7 +576,7 @@ export default function Wallet() {
       addToast({
         type: "success",
         title: "Key imported",
-        message: `Signer wallet "${result.wallet_name}" imported successfully`,
+        message: `Signer wallet "${result.wallet_name}" is available to load`,
         duration: 3000,
       });
     } catch (err) {
@@ -645,14 +654,13 @@ export default function Wallet() {
         fileData: Array.from(fileImportData), // Convert Uint8Array to number[]
         password: fileImportPassword,
       });
-      setLoaded(true, fileImportName);
       closeModal();
       resetFileImportForm();
       await fetchAvailableWallets();
       addToast({
         type: "success",
         title: "Wallet imported",
-        message: `"${fileImportName}" imported from file successfully`,
+        message: `Wallet "${fileImportName}" is available to load`,
         duration: 3000,
       });
     } catch (err) {
@@ -815,7 +823,7 @@ export default function Wallet() {
         <Button
           size="lg"
           variant="outline-crystalline"
-          className="h-14 text-foreground"
+          className={cn("h-14", bridgeActionGlowClass)}
           onClick={() => openModal(MODAL_DEPOSIT)}
         >
           <ArrowUpFromLine className="h-4 w-4 mr-1.5" />
@@ -929,7 +937,7 @@ export default function Wallet() {
         <Button
           size="lg"
           variant="outline-crystalline"
-          className="h-14 text-foreground"
+          className={cn("h-14", bridgeActionGlowClass)}
           onClick={() => openModal(MODAL_WITHDRAW)}
           disabled={vmAddresses.length === 0}
         >

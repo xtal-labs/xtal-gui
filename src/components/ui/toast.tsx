@@ -37,7 +37,7 @@ const iconStyles = {
 };
 
 function ToastItem({ toast }: { toast: Toast }) {
-  const { removeToast } = useUiStore();
+  const removeToast = useUiStore((state) => state.removeToast);
   const isFruitToast = toast.type === "fruit" && toast.fruitType;
 
   // Get styling based on toast type
@@ -94,7 +94,7 @@ function ToastItem({ toast }: { toast: Toast }) {
 }
 
 export function ToastContainer() {
-  const { toasts } = useUiStore();
+  const toasts = useUiStore((state) => state.toasts);
 
   if (toasts.length === 0) return null;
 

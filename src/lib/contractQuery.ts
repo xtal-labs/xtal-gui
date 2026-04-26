@@ -65,14 +65,20 @@ export function encodeParamHex(type: string, value: string): string {
     case "bool":
       return value === "true" ? "01" : "00";
     case "utxo_address": {
-      const pkh = decodeBase58Address(value.trim());
-      if (!pkh) {
-        // Fallback: accept raw 40-char hex PKH
-        const raw = value.toLowerCase();
-        if (/^[0-9a-f]{40}$/.test(raw)) return raw;
-        return "00".repeat(20);
+      const trimmed = value.trim();
+      if (!decodeBase58Address(trimmed)) {
+        throw new Error("Invalid Base58Check UTXO address");
       }
-      return Array.from(pkh).map((b) => b.toString(16).padStart(2, "0")).join("");
+      const bytes = new TextEncoder().encode(trimmed);
+      if (bytes.length === 0 || bytes.length > 40) {
+        throw new Error("UTXO address must be 1-40 bytes");
+      }
+      return (
+        bytes.length.toString(16).padStart(2, "0") +
+        Array.from(bytes)
+          .map((b) => b.toString(16).padStart(2, "0"))
+          .join("")
+      );
     }
     case "vm_address":
     case "bytes20": {

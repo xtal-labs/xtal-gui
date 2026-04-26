@@ -74,6 +74,25 @@ interface WalletCTACardProps {
   addToast: (toast: any) => void;
 }
 
+function mergeValidatorTransactions(
+  previous: Transaction[],
+  next: Transaction[],
+): Transaction[] {
+  const merged = new Map(next.map((tx) => [tx.txid, tx]));
+
+  for (const tx of previous) {
+    const isStableIncomingReceive =
+      tx.confirmations > 0 &&
+      (tx.txType === "receive" || (tx.txType === "standard" && tx.amount > 0));
+
+    if (isStableIncomingReceive && !merged.has(tx.txid)) {
+      merged.set(tx.txid, tx);
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) => b.timestamp - a.timestamp);
+}
+
 function WalletCTACard({ availableWallets, onSelectWallet, onCreateWallet, onImportWallet, addToast }: WalletCTACardProps) {
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
@@ -336,44 +355,45 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
 // ============================================================================
 
 export default function Validator() {
-  const {
-    isLoaded,
-    isRunning,
-    address,
-    walletName,
-    matureStake,
-    pendingStake,
-    effectiveStake,
-    availableBalance,
-    pendingUnstake,
-    immatureBalance,
-    fruitSpecs,
-    productions,
-    totalFruitsProduced,
-    sessionStartTime,
-    availableValidatorWallets,
-    creationResult,
-    networkStats,
-    validatorEarnings,
-    refreshTrigger,
-    recentFruits,
-    productionStats: wsProductionStats,
-    setLoaded,
-    setRunning,
-    setFruitSpecs,
-    setProductions,
-    setProductionActive,
-    setValidatorInfo,
-    setAvailableValidatorWallets,
-    setCreationResult,
-    setNetworkStats,
-    setValidatorEarnings,
-    setBalanceInfo,
-    startSession,
-    reset,
-  } = useValidatorStore();
+  const isLoaded = useValidatorStore((state) => state.isLoaded);
+  const isRunning = useValidatorStore((state) => state.isRunning);
+  const address = useValidatorStore((state) => state.address);
+  const walletName = useValidatorStore((state) => state.walletName);
+  const matureStake = useValidatorStore((state) => state.matureStake);
+  const pendingStake = useValidatorStore((state) => state.pendingStake);
+  const effectiveStake = useValidatorStore((state) => state.effectiveStake);
+  const availableBalance = useValidatorStore((state) => state.availableBalance);
+  const pendingUnstake = useValidatorStore((state) => state.pendingUnstake);
+  const immatureBalance = useValidatorStore((state) => state.immatureBalance);
+  const fruitSpecs = useValidatorStore((state) => state.fruitSpecs);
+  const productions = useValidatorStore((state) => state.productions);
+  const totalFruitsProduced = useValidatorStore((state) => state.totalFruitsProduced);
+  const sessionStartTime = useValidatorStore((state) => state.sessionStartTime);
+  const availableValidatorWallets = useValidatorStore((state) => state.availableValidatorWallets);
+  const creationResult = useValidatorStore((state) => state.creationResult);
+  const networkStats = useValidatorStore((state) => state.networkStats);
+  const validatorEarnings = useValidatorStore((state) => state.validatorEarnings);
+  const refreshTrigger = useValidatorStore((state) => state.refreshTrigger);
+  const recentFruits = useValidatorStore((state) => state.recentFruits);
+  const wsProductionStats = useValidatorStore((state) => state.productionStats);
+  const setLoaded = useValidatorStore((state) => state.setLoaded);
+  const setRunning = useValidatorStore((state) => state.setRunning);
+  const setFruitSpecs = useValidatorStore((state) => state.setFruitSpecs);
+  const setProductions = useValidatorStore((state) => state.setProductions);
+  const setProductionActive = useValidatorStore((state) => state.setProductionActive);
+  const setValidatorInfo = useValidatorStore((state) => state.setValidatorInfo);
+  const setAvailableValidatorWallets = useValidatorStore((state) => state.setAvailableValidatorWallets);
+  const setCreationResult = useValidatorStore((state) => state.setCreationResult);
+  const setNetworkStats = useValidatorStore((state) => state.setNetworkStats);
+  const setValidatorEarnings = useValidatorStore((state) => state.setValidatorEarnings);
+  const setBalanceInfo = useValidatorStore((state) => state.setBalanceInfo);
+  const startSession = useValidatorStore((state) => state.startSession);
+  const reset = useValidatorStore((state) => state.reset);
 
-  const { activeModal, openModal, closeModal, addToast } = useUiStore();
+  const activeModal = useUiStore((state) => state.activeModal);
+  const openModal = useUiStore((state) => state.openModal);
+  const closeModal = useUiStore((state) => state.closeModal);
+  const addToast = useUiStore((state) => state.addToast);
 
   // UI state
   const [isLoading, setIsLoading] = useState(false);
@@ -436,6 +456,44 @@ export default function Validator() {
   const showStakeModal = activeModal === MODAL_STAKE;
   const showUnstakeModal = activeModal === MODAL_UNSTAKE;
 
+  const refreshValidatorStatus = useCallback(async () => {
+    if (!address) return;
+
+    try {
+      const [status, eligible] = await Promise.all([
+        tauriCommand<ValidatorInfo | null>("get_validator_status", { address }),
+        tauriCommand<EligibleFruit[]>("get_eligible_fruits", { address }),
+      ]);
+
+      if (!status) {
+        setRunning(false);
+        setProductions([]);
+        return;
+      }
+
+      setValidatorInfo(status);
+
+      const activeProductions = new Set(status.activeProductions);
+      const backendCounts: Record<string, number> = {};
+      for (const ps of status.productionStats ?? []) {
+        backendCounts[ps.fruitType] = ps.fruitsProduced;
+      }
+
+      const prods = eligible.map((e) => ({
+        fruitType: e.fruitType,
+        isActive: activeProductions.has(e.fruitType),
+        isEligible: e.isEligible,
+        fruitsProduced: backendCounts[e.fruitType] ?? 0,
+        minStake: e.minStake,
+        shortfall: e.shortfall,
+        emoji: e.emoji,
+      }));
+      setProductions(prods);
+    } catch (err) {
+      console.error("Failed to refresh validator status:", err);
+    }
+  }, [address, setProductions, setRunning, setValidatorInfo]);
+
   // Fetch network stats
   const fetchNetworkStats = useCallback(async () => {
     try {
@@ -482,7 +540,7 @@ export default function Validator() {
         limit: 50,
         address: address,
       });
-      setTransactions(response.transactions);
+      setTransactions((previous) => mergeValidatorTransactions(previous, response.transactions));
     } catch (err) {
       console.error("Failed to fetch transactions:", err);
     }
@@ -524,7 +582,15 @@ export default function Validator() {
       fetchTransactions();
       fetchProductionStats();
     }
-  }, [isLoaded, address, fetchValidatorEarnings, fetchBalanceInfo, fetchTransactions]);
+  }, [
+    isLoaded,
+    address,
+    fetchBalanceInfo,
+    fetchProductionStats,
+    fetchTransactions,
+    fetchValidatorEarnings,
+    refreshValidatorStatus,
+  ]);
 
   // Refresh validator data when triggered by new blocks or fruit production events
   useEffect(() => {
@@ -541,7 +607,16 @@ export default function Validator() {
         fetchValidatorEarnings();
       }
     }
-  }, [refreshTrigger]);
+  }, [
+    refreshTrigger,
+    isLoaded,
+    address,
+    fetchBalanceInfo,
+    fetchProductionStats,
+    fetchTransactions,
+    fetchValidatorEarnings,
+    refreshValidatorStatus,
+  ]);
 
   const fetchFruitSpecs = async () => {
     try {
@@ -561,43 +636,6 @@ export default function Validator() {
     }
   };
 
-  const refreshValidatorStatus = async () => {
-    if (!address) return;
-
-    try {
-      const [status, eligible] = await Promise.all([
-        tauriCommand<ValidatorInfo | null>("get_validator_status", { address }),
-        tauriCommand<EligibleFruit[]>("get_eligible_fruits", { address }),
-      ]);
-
-      if (status) {
-        setValidatorInfo(status);
-
-        // Build lookup map from backend per-fruit production stats
-        const backendCounts: Record<string, number> = {};
-        if (status.productionStats) {
-          for (const ps of status.productionStats) {
-            backendCounts[ps.fruitType] = ps.fruitsProduced;
-          }
-        }
-
-        // Build productions from eligible fruits and status
-        const prods = eligible.map((e) => ({
-          fruitType: e.fruitType,
-          isActive: status.activeProductions.includes(e.fruitType),
-          isEligible: e.isEligible,
-          fruitsProduced: backendCounts[e.fruitType] ?? 0,
-          minStake: e.minStake,
-          shortfall: e.shortfall,
-          emoji: e.emoji,
-        }));
-        setProductions(prods);
-      }
-    } catch (err) {
-      console.error("Failed to refresh validator status:", err);
-    }
-  };
-
   const handleLoadValidator = async () => {
     if (!selectedWallet || !password) {
       setError("Please select a wallet and enter password");
@@ -614,7 +652,7 @@ export default function Validator() {
       );
 
       setLoaded(true, selectedWallet, result.address);
-      setRunning(true);
+      setRunning(false);
       startSession();
       closeModal();
       setPassword("");
@@ -622,13 +660,20 @@ export default function Validator() {
 
       addToast({
         type: "success",
-        title: "Validator started",
-        message: `Started ${result.startedCount} fruit productions`,
+        title: result.startedCount > 0 ? "Validator started" : "Validator loaded",
+        message: result.startedCount > 0
+          ? `Started ${result.startedCount} fruit productions`
+          : "Validator loaded. Start fruit production manually.",
         duration: 5000,
       });
 
-      // Refresh status
-      await refreshValidatorStatus();
+      await Promise.all([
+        refreshValidatorStatus(),
+        fetchBalanceInfo(),
+        fetchTransactions(),
+        fetchProductionStats(),
+        fetchValidatorEarnings(),
+      ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -790,6 +835,8 @@ export default function Validator() {
         await tauriCommand("stop_fruit_production", { address, fruitType: fruitType.toLowerCase() });
       }
       setProductionActive(fruitType, active);
+      setRunning(active || Object.values(productions).some((prod) => prod.fruitType !== fruitType && prod.isActive));
+      await refreshValidatorStatus();
 
       addToast({
         type: "fruit",
@@ -844,9 +891,12 @@ export default function Validator() {
       });
 
       // Refresh immediately so the pending tx appears
-      refreshValidatorStatus();
-      fetchBalanceInfo();
-      fetchTransactions();
+      await Promise.all([
+        refreshValidatorStatus(),
+        fetchBalanceInfo(),
+        fetchTransactions(),
+        fetchProductionStats(),
+      ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
@@ -889,9 +939,12 @@ export default function Validator() {
       });
 
       // Refresh immediately so the pending tx appears
-      refreshValidatorStatus();
-      fetchBalanceInfo();
-      fetchTransactions();
+      await Promise.all([
+        refreshValidatorStatus(),
+        fetchBalanceInfo(),
+        fetchTransactions(),
+        fetchProductionStats(),
+      ]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setError(message);

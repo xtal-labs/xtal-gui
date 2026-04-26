@@ -156,6 +156,7 @@ export function TransactionList({
                   onClick={() => handleTransactionClick(tx)}
                   isSelected={selectedTx?.txid === tx.txid}
                   walletType={surface === "validator" ? "validator" : "normal"}
+                  surface={surface}
                 />
               ))}
 

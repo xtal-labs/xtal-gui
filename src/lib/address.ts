@@ -5,6 +5,7 @@ import { blake3 } from "@noble/hashes/blake3.js";
  * XTAL address version byte
  */
 const XTAL_VERSION_BYTE = 0xC7;
+const XTAL_P2SH_VERSION_BYTE = 0x06;
 
 /**
  * Calculate the 4-byte checksum used in Base58Check: double Blake3 hash.
@@ -74,8 +75,8 @@ export function decodeBase58Address(address: string): Uint8Array | null {
       return null;
     }
 
-    // Check version byte
-    if (decoded[0] !== XTAL_VERSION_BYTE) {
+    // Check version byte. UTXO addresses may name either P2PKH or P2SH outputs.
+    if (decoded[0] !== XTAL_VERSION_BYTE && decoded[0] !== XTAL_P2SH_VERSION_BYTE) {
       return null;
     }
 

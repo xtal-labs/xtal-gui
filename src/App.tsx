@@ -141,48 +141,48 @@ const navItems: NavItem[] = [
 ];
 
 function AppContent() {
-  const {
-    activeTab,
-    setActiveTab,
-    needsSetup,
-    setNeedsSetup,
-    isInitializing,
-    setIsInitializing,
-    sidebarCollapsed,
-    toggleSidebar,
-    openModal,
-    addToast,
-    nodeConnectionState,
-    setNodeConnectionState,
-    hydrateToastsEnabled,
-  } = useUiStore();
+  const activeTab = useUiStore((state) => state.activeTab);
+  const setActiveTab = useUiStore((state) => state.setActiveTab);
+  const needsSetup = useUiStore((state) => state.needsSetup);
+  const setNeedsSetup = useUiStore((state) => state.setNeedsSetup);
+  const isInitializing = useUiStore((state) => state.isInitializing);
+  const setIsInitializing = useUiStore((state) => state.setIsInitializing);
+  const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
+  const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const openModal = useUiStore((state) => state.openModal);
+  const addToast = useUiStore((state) => state.addToast);
+  const nodeConnectionState = useUiStore((state) => state.nodeConnectionState);
+  const setNodeConnectionState = useUiStore((state) => state.setNodeConnectionState);
+  const hydrateToastsEnabled = useUiStore((state) => state.hydrateToastsEnabled);
 
-  const {
-    syncProgress,
-    isSynced,
-    setSyncProgress,
-    handleWsBlockchainInfo,
-    handleWsStemProviderInfo,
-    triggerRefresh: triggerBlockchainRefresh,
-  } = useBlockchainStore();
-  const { setPeerCount, setPeers, peerCount } = useNetworkStore();
-  const { setStats: setMiningStats, isActive: isMining, addMinedBlock } = useMiningStore();
-  const {
-    isLoaded: walletIsLoaded,
-    setLoaded: setWalletLoaded,
-    setBalance: setWalletBalance,
-    setAddresses: setWalletAddresses,
-    setTransactionPage: setWalletTransactionPage,
-    setAvailableWallets,
-    triggerRefresh: triggerWalletRefresh,
-  } = useWalletStore();
-  const {
-    isLoaded: validatorIsLoaded,
-    triggerRefresh: triggerValidatorRefresh,
-    setNetworkStats: setValidatorNetworkStats,
-    setProductionStats: setValidatorProductionStats,
-    addProducedFruit,
-  } = useValidatorStore();
+  const syncProgress = useBlockchainStore((state) => state.syncProgress);
+  const isSynced = useBlockchainStore((state) => state.isSynced);
+  const setSyncProgress = useBlockchainStore((state) => state.setSyncProgress);
+  const handleWsBlockchainInfo = useBlockchainStore((state) => state.handleWsBlockchainInfo);
+  const handleWsStemProviderInfo = useBlockchainStore((state) => state.handleWsStemProviderInfo);
+  const triggerBlockchainRefresh = useBlockchainStore((state) => state.triggerRefresh);
+
+  const setPeerCount = useNetworkStore((state) => state.setPeerCount);
+  const setPeers = useNetworkStore((state) => state.setPeers);
+  const peerCount = useNetworkStore((state) => state.peerCount);
+
+  const setMiningStats = useMiningStore((state) => state.setStats);
+  const isMining = useMiningStore((state) => state.isActive);
+  const addMinedBlock = useMiningStore((state) => state.addMinedBlock);
+
+  const walletIsLoaded = useWalletStore((state) => state.isLoaded);
+  const setWalletLoaded = useWalletStore((state) => state.setLoaded);
+  const setWalletBalance = useWalletStore((state) => state.setBalance);
+  const setWalletAddresses = useWalletStore((state) => state.setAddresses);
+  const setWalletTransactionPage = useWalletStore((state) => state.setTransactionPage);
+  const setAvailableWallets = useWalletStore((state) => state.setAvailableWallets);
+  const triggerWalletRefresh = useWalletStore((state) => state.triggerRefresh);
+
+  const validatorIsLoaded = useValidatorStore((state) => state.isLoaded);
+  const triggerValidatorRefresh = useValidatorStore((state) => state.triggerRefresh);
+  const setValidatorNetworkStats = useValidatorStore((state) => state.setNetworkStats);
+  const setValidatorProductionStats = useValidatorStore((state) => state.setProductionStats);
+  const addProducedFruit = useValidatorStore((state) => state.addProducedFruit);
 
   // State for API port (needed for WebSocket connection)
   const [apiPort, setApiPort] = useState<number | null>(null);

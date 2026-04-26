@@ -28,6 +28,7 @@ import { Badge } from "@/components/ui/badge";
 import { AmountDisplay } from "./AmountDisplay";
 import { HashDisplay } from "./HashDisplay";
 import { cn, formatTimeAgo } from "@/lib/utils";
+import { getFruitColor } from "@/lib/fruitColors";
 import type { TransactionDetail, UTXODetail, VMDetail } from "@/types";
 
 interface TransactionDetailPanelProps {
@@ -49,7 +50,11 @@ function formatGas(gas: number): string {
   return gas.toLocaleString();
 }
 
-function getTransactionStyle(txType: string, netAmount: number) {
+function getTransactionStyle(
+  txType: string,
+  netAmount: number,
+  preferredFruitType?: string,
+) {
   switch (txType) {
     case "coinbase":
       return {
@@ -79,15 +84,28 @@ function getTransactionStyle(txType: string, netAmount: number) {
         gradient: "from-orange-400/10 via-transparent to-transparent",
       };
     case "contract_call":
-    case "contract_deploy":
+    case "contract_deploy": {
+      const label = txType === "contract_deploy" ? "Deploy Contract" : "Contract Call";
+      if (preferredFruitType) {
+        const fruit = getFruitColor(preferredFruitType);
+        return {
+          icon: FileCode,
+          color: fruit.icon,
+          bg: fruit.bg,
+          borderColor: fruit.border,
+          label,
+          gradient: fruit.bg,
+        };
+      }
       return {
         icon: FileCode,
         color: "text-cyan-400",
         bg: "bg-cyan-400/20",
         borderColor: "border-cyan-400/30",
-        label: txType === "contract_deploy" ? "Deploy Contract" : "Contract Call",
+        label,
         gradient: "from-cyan-400/10 via-transparent to-transparent",
       };
+    }
     case "account_transfer":
       return {
         icon: ArrowRightLeft,
@@ -636,9 +654,9 @@ function VmDetailBody({
 
           {vmDetail.preferredFruitType && (
             <DetailRow label="Fruit Type">
-              <Badge variant="fruit" shape="chamfered" diamond>
-                {vmDetail.preferredFruitType}
-              </Badge>
+              <span className={cn("text-xs font-heading", getFruitColor(vmDetail.preferredFruitType).icon)}>
+                {getFruitColor(vmDetail.preferredFruitType).emoji} {vmDetail.preferredFruitType}
+              </span>
             </DetailRow>
           )}
         </div>
@@ -774,8 +792,10 @@ export function TransactionDetailPanel({
 
   const payload = detail?.detail;
   const netAmount = payload?.kind === "utxo" ? payload.netAmount : 0;
+  const preferredFruitType =
+    payload?.kind === "vm" ? payload.preferredFruitType : undefined;
   const style = detail
-    ? getTransactionStyle(detail.txType, netAmount)
+    ? getTransactionStyle(detail.txType, netAmount, preferredFruitType)
     : getTransactionStyle("standard", 0);
   const Icon = style.icon;
   const executionBadge = getExecutionStatusBadge(detail?.executionStatus);

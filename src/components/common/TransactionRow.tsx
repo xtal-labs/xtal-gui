@@ -9,6 +9,7 @@ interface TransactionRowProps {
   onClick?: () => void;
   isSelected?: boolean;
   walletType?: "normal" | "validator";
+  surface?: "utxo" | "vm" | "validator";
 }
 
 /**
@@ -88,10 +89,14 @@ function getExecutionStatusBadge(status: Transaction["executionStatus"]) {
 /**
  * Reusable transaction row component for displaying transactions in a list
  */
-export function TransactionRow({ transaction, onClick, isSelected, walletType }: TransactionRowProps) {
+export function TransactionRow({ transaction, onClick, isSelected, walletType, surface }: TransactionRowProps) {
   const { icon: Icon, color, bg } = getTransactionIcon(transaction.txType, transaction.amount);
   const label = getTransactionLabel(transaction.txType, transaction.amount, walletType);
   const executionBadge = getExecutionStatusBadge(transaction.executionStatus);
+
+  // Suppress VM execution status badge on UTXO surface — UTXO records
+  // lack VM receipt data, so "pending_execution" gets stuck indefinitely.
+  const showExecutionBadge = surface !== "utxo" && executionBadge;
 
   return (
     <div
@@ -114,7 +119,7 @@ export function TransactionRow({ transaction, onClick, isSelected, walletType }:
         </div>
       </div>
       <div className="text-right">
-        {executionBadge && (
+        {showExecutionBadge && (
           <div className="mb-1 flex justify-end">
             <Badge
               variant={executionBadge.variant}
