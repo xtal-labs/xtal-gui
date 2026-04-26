@@ -2,7 +2,7 @@
 
 ## Overview
 
-Crystal GUI is a desktop interface for running and interacting with the Crystal blockchain. It is built as a Tauri v2 application with a Rust backend and a React/TypeScript frontend. The GUI embeds the Crystal node for functionality and therefore must be present to compile the GUI.
+Crystal GUI is a desktop interface for running and interacting with the Crystal blockchain. It is built as a Tauri v2 application with a Rust backend and a React/TypeScript frontend, and it depends on the parent `xtal` node/backend layer that lives in the same workspace.
 
 The UI is responsible for presenting blockchain data and collecting user input. The backend is responsible for desktop integration, startup, persistence, and communicating with the node through Tauri-based IPC.
 
@@ -19,18 +19,41 @@ The UI is responsible for presenting blockchain data and collecting user input. 
 
 ## Getting Started
 
-### Prerequisites
+### Required Layout
 
-- Rust toolchain
-- Node.js and npm
-- Tauri v2 system dependencies for your platform
-- access to the companion `xtal` crate/backend during development
-
-This repository currently depends on:
+`crystal-gui` is not a standalone Rust package. Its backend depends on the parent `xtal` crate:
 
 ```toml
 xtal = { path = ".." }
 ```
+
+That means the directory above `crystal-gui/` must be the `xtal` crate root.
+
+Use this layout:
+
+```text
+xtal/
+├── Cargo.toml
+├── src/
+├── crystal-cli/
+└── crystal-gui/
+```
+
+In practice:
+
+- place `crystal-gui/` directly inside the `xtal/` repository root
+- do not place `crystal-gui/` beside `xtal/` as a sibling checkout
+- do not move `crystal-gui/` out of the workspace unless you also update its Cargo dependency paths
+
+If `crystal-gui/` is checked out somewhere else, `cargo` will fail because `..` will not contain the `xtal` crate.
+
+### Prerequisites
+
+- Rust stable toolchain
+- Node.js and npm
+- Tauri v2 system dependencies for your platform
+
+The frontend dependencies are tracked in `package.json`, and the Rust workspace is defined by the parent `xtal/Cargo.toml`.
 
 ### Run Locally
 
@@ -46,16 +69,68 @@ Run the full desktop app in development:
 npm run tauri dev
 ```
 
+This starts:
+
+- the Vite frontend dev server
+- the Tauri desktop shell
+- the Rust backend linked against the parent `xtal` crate
+
 Build the desktop application bundle:
 
 ```bash
 npm run tauri build
 ```
 
-Optional verification:
+This builds the frontend bundle and then produces the native desktop application through Tauri.
+
+Useful verification:
 
 ```bash
-cargo check
+cargo check -p crystal-gui
+npm run build
+```
+
+What these verify:
+
+- `cargo check -p crystal-gui` verifies the Rust/Tauri side and the `xtal` linkage
+- `npm run build` verifies the React/TypeScript frontend bundle
+
+### Common Layout Mistakes
+
+If you see an error about the `xtal` dependency path, check the directory structure first.
+
+This is wrong:
+
+```text
+projects/
+├── xtal/
+└── crystal-gui/
+```
+
+In that layout, `crystal-gui` resolves `..` to `projects/`, not to the `xtal` crate.
+
+This is correct:
+
+```text
+projects/
+└── xtal/
+    ├── Cargo.toml
+    └── crystal-gui/
+```
+
+### Current Workspace Notes
+
+In this workspace, the expected layout is already present:
+
+```text
+/Users/cm8/Desktop/xtal26/
+├── Cargo.toml
+└── crystal-gui/
+```
+
+The frontend build succeeds from `crystal-gui/` with:
+
+```bash
 npm run build
 ```
 
@@ -109,7 +184,7 @@ Screenshots coming soon.
 
 ## Notes
 
-- The GUI cannot function without the separate `xtal` backend/library layer, which is not included directly in this repository.
+- The GUI cannot function without the parent `xtal` backend/library layer.
 - GUI configuration is stored in `~/.crystal/config.toml`.
 - Node configuration is stored in `~/.crystal/config/config.json`.
 - Some setup options are present in the UI but still marked as under development, including `Apple Only` shard selection and `Fast Sync`.
