@@ -14,11 +14,11 @@ import type { LucideIcon } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { AmountDisplay } from "@/components/common/AmountDisplay";
-import { cn, truncateAddress } from "@/lib/utils";
+import { cn, truncateAddress, formatPercent } from "@/lib/utils";
 import { hexToBytes } from "@/lib/contractQuery";
 import { useContractDashboard } from "@/hooks/useContractDashboard";
 import type { DashboardQueryResult } from "@/hooks/useContractDashboard";
-import type { ContractAbi } from "@/types/contract";
+import type { ContractAbi, DisplayFormat } from "@/types/contract";
 
 // ---------------------------------------------------------------------------
 // Props
@@ -145,6 +145,55 @@ function StatCard({ result }: { result: DashboardQueryResult }) {
 // Value display per return type
 // ---------------------------------------------------------------------------
 
+function renderDashboardValue(
+  returnType: string,
+  decodedValue: string | undefined,
+  numericValue: number | undefined,
+  display: DisplayFormat | undefined,
+): { element: React.ReactNode; description?: string } | null {
+  // basis_points display — e.g. withdrawal fee
+  if (display === "basis_points" && numericValue !== undefined) {
+    return {
+      element: (
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-sm">{numericValue}</span>
+          <span className="text-xs text-foreground-muted font-mono">bps</span>
+          <span className="text-xs text-foreground-muted/60 font-mono">
+            ({formatPercent(numericValue / 100, 2)})
+          </span>
+        </div>
+      ),
+    };
+  }
+
+  // percentage display
+  if (display === "percentage" && numericValue !== undefined) {
+    return {
+      element: <span className="font-mono text-sm">{formatPercent(numericValue / 100, 2)}</span>,
+    };
+  }
+
+  // Amount types (u64 / xtal_amount) — use AmountDisplay
+  if ((returnType === "u64" || returnType === "xtal_amount") && numericValue !== undefined) {
+    return {
+      element: (
+        <div className="text-2xl font-heading font-bold tabular-nums">
+          <AmountDisplay amount={numericValue} size="md" showSymbol />
+        </div>
+      ),
+    };
+  }
+
+  // Numeric types (u32 / u16 / u8)
+  if (returnType === "u32" || returnType === "u16" || returnType === "u8") {
+    return {
+      element: <div className="text-2xl font-heading font-bold tabular-nums">{decodedValue ?? "--"}</div>,
+    };
+  }
+
+  return null;
+}
+
 function StatCardValue({
   result,
   isAddressList,
@@ -152,31 +201,14 @@ function StatCardValue({
   result: DashboardQueryResult;
   isAddressList: boolean;
 }) {
-  const { returnType, decodedValue, numericValue, returnDescription, rawHex } = result;
+  const { returnType, decodedValue, numericValue, returnDescription, rawHex, display } = result;
 
-  // Amount types (u64 / xtal_amount) — use AmountDisplay
-  if ((returnType === "u64" || returnType === "xtal_amount") && numericValue !== undefined) {
+  const rendered = renderDashboardValue(returnType, decodedValue, numericValue, display);
+
+  if (rendered) {
     return (
       <>
-        <div className="text-2xl font-heading font-bold tabular-nums">
-          <AmountDisplay amount={numericValue} size="md" showSymbol />
-        </div>
-        {returnDescription && (
-          <p className="text-xs text-foreground-muted mt-1 font-mono">
-            {returnDescription}
-          </p>
-        )}
-      </>
-    );
-  }
-
-  // Numeric types (u32 / u16 / u8)
-  if (returnType === "u32" || returnType === "u16" || returnType === "u8") {
-    return (
-      <>
-        <div className="text-2xl font-heading font-bold tabular-nums">
-          {decodedValue ?? "--"}
-        </div>
+        {rendered.element}
         {returnDescription && (
           <p className="text-xs text-foreground-muted mt-1 font-mono">
             {returnDescription}

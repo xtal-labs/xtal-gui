@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { encodeSelectorHex, decodeReturnValue, decodeU64 } from "@/lib/contractQuery";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { useBlockchainStore } from "@/stores";
-import type { ContractAbi, AbiMethod, ParamType, QueryResult } from "@/types/contract";
+import type { ContractAbi, AbiMethod, ParamType, QueryResult, DisplayFormat } from "@/types/contract";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -14,6 +14,7 @@ export interface DashboardQueryResult {
   displayName: string;
   returnType: ParamType;
   returnDescription?: string;
+  display?: DisplayFormat;
   status: "loading" | "success" | "error";
   rawHex?: string;
   decodedValue?: string;
@@ -54,6 +55,7 @@ export function useContractDashboard(
         displayName: m.displayName || m.name,
         returnType: m.returns!.type,
         returnDescription: m.returns!.description,
+        display: m.returns!.display,
         status: "loading" as const,
       })),
     );
@@ -83,6 +85,7 @@ export function useContractDashboard(
             displayName: m.displayName || m.name,
             returnType,
             returnDescription: m.returns!.description,
+            display: m.returns!.display,
             status: "success" as const,
             rawHex,
             decodedValue,
@@ -102,6 +105,7 @@ export function useContractDashboard(
           displayName: m.displayName || m.name,
           returnType: m.returns!.type,
           returnDescription: m.returns!.description,
+          display: m.returns!.display,
           status: "error" as const,
           errorMessage,
         };
