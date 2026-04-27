@@ -262,7 +262,7 @@ export default function Dashboard() {
         </Card>
       )}
 
-      {/* Best Block */}
+      {/* Best Leaf */}
       {bestBlockHash && (
         <Card variant="crystalline">
           <CardHeader className="pb-3">
@@ -270,7 +270,7 @@ export default function Dashboard() {
               <div className="icon-hex icon-hex-sm bg-primary/20">
                 <TrendingUp className="h-3.5 w-3.5 text-primary" />
               </div>
-              BEST BLOCK
+              BEST LEAF
             </CardTitle>
           </CardHeader>
           <CardContent>
