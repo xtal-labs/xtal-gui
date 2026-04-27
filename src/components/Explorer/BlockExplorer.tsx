@@ -399,7 +399,7 @@ export default function BlockExplorer() {
                 )}
               </div>
 
-              <div className="space-y-1">
+              <div className="space-y-1 pr-4">
                 <p className="text-[10px] font-heading tracking-wider uppercase text-foreground-muted flex items-center gap-1.5">
                   <Clock className="h-3 w-3" />
                   TIMESTAMP
