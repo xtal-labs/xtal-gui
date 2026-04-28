@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {
   Blocks,
   Users,
-  TrendingUp,
+  Leaf,
   Layers,
   Shield,
   Zap,
@@ -72,6 +72,20 @@ export default function Dashboard() {
     address: validatorAddress,
   } = useValidatorStore();
   const totalStake = matureStake + pendingStake;
+
+  // Leaf pulse animation state
+  const [isLeafPulse, setIsLeafPulse] = useState(false);
+  const prevHashRef = useRef(bestBlockHash);
+
+  // Detect new leaf by comparing hash
+  useEffect(() => {
+    if (prevHashRef.current !== bestBlockHash && bestBlockHash) {
+      setIsLeafPulse(true);
+      const timer = setTimeout(() => setIsLeafPulse(false), 1500);
+      prevHashRef.current = bestBlockHash;
+      return () => clearTimeout(timer);
+    }
+  }, [bestBlockHash]);
 
   // Mempool polling (no dedicated store — fetch on-demand)
   const [mempoolInfo, setMempoolInfo] = useState<MempoolInfo | null>(null);
@@ -268,7 +282,7 @@ export default function Dashboard() {
           <CardHeader className="pb-3">
             <CardTitle className="text-base font-heading tracking-wide flex items-center gap-2">
               <div className="icon-hex icon-hex-sm bg-primary/20">
-                <TrendingUp className="h-3.5 w-3.5 text-primary" />
+                <Leaf className={cn("h-3.5 w-3.5 transition-colors duration-500", isLeafPulse ? "text-amber-400" : "text-primary")} />
               </div>
               BEST LEAF
             </CardTitle>
