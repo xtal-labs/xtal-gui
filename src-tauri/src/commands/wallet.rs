@@ -8,21 +8,23 @@
 //! to rebuild directory configuration on every command.
 
 use ed25519_dalek::VerifyingKey;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::State;
 use xtal::fruit::codec::{Decode, Encode};
 use xtal::fruit::core::FruitTx;
 
-use xtal::address::ContractAddress;
+use xtal::address::{encode_sh, ContractAddress};
 use xtal::address_format::{format_contract_address, format_utxo_address};
 use xtal::crypto::hash_public_key;
 use xtal::gas::{can_afford_transaction, TX_BASE_GAS};
 use xtal::interfaces::ChainDataProvider;
 use xtal::interfaces::UtxoData;
 use xtal::mempool::TransactionSource;
-use xtal::script::extract_pkh_from_script;
+use xtal::script::{
+    extract_pkh_from_script, multisig_script_pubkey, p2sh_script_hash, MAX_MULTISIG_KEYS,
+};
 use xtal::storage::UnifiedMPT;
 use xtal::transaction::builders::TransferBuilder;
 use xtal::transaction::receipt::TransactionReceipt;
@@ -33,11 +35,12 @@ use xtal::vm::abi::{cage_abi, ParamType};
 use xtal::vm::cage_contract::CAGE_CONTRACT_ADDRESS;
 use xtal::wallet::database::models::{
     InputDetail, KeyType, TransactionExecutionStatus, TransactionRecord, TransactionType,
-    WalletType,
+    WalletScriptRecord, WalletType,
 };
 use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::sync::WalletSyncService;
 use xtal::wallet::{FeeStrategy, WalletManager};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::commands::tx_detail_utils::{
     extract_inputs, extract_transaction_details, vm_transaction_fee,
@@ -92,6 +95,34 @@ pub struct WalletCreationResult {
 pub struct WalletLoadResult {
     pub wallet_name: String,
     pub primary_address: String,
+}
+
+/// Result of creating a P2SH multisig address.
+#[derive(Debug, Clone, Serialize)]
+pub struct MultisigAddressResult {
+    pub address: String,
+    pub script_hash: String,
+    pub redeem_script: String,
+    pub threshold: u8,
+    pub public_keys: Vec<String>,
+    pub label: Option<String>,
+    pub saved: bool,
+    #[serde(rename = "type")]
+    pub script_type: String,
+}
+
+/// Saved script-address metadata for wallet display and PSXT construction.
+#[derive(Debug, Clone, Serialize)]
+pub struct MultisigAddressInfo {
+    pub address: String,
+    pub script_hash: String,
+    pub redeem_script: String,
+    pub threshold: Option<u8>,
+    pub public_keys: Vec<String>,
+    pub label: Option<String>,
+    pub created_at: i64,
+    #[serde(rename = "type")]
+    pub script_type: String,
 }
 
 /// Maturity status for coinbase/withdrawal transactions
@@ -313,14 +344,14 @@ pub(crate) fn surfaced_wallet_account_entries(
 fn merge_vm_address_catalog(
     owned_pkhs: &[WalletOwnedPkh],
     account_entries: &[WalletAccountStateEntry],
+    next_vm_account_index: u32,
 ) -> Vec<String> {
     let mut addresses = Vec::new();
     let mut seen = HashSet::new();
 
-    for owned in owned_pkhs
-        .iter()
-        .filter(|owned| owned.key_type == KeyType::VmAccount)
-    {
+    for owned in owned_pkhs.iter().filter(|owned| {
+        owned.key_type == KeyType::VmAccount && owned.key_index < next_vm_account_index
+    }) {
         if seen.insert(owned.pkh) {
             addresses.push(owned.hex_address.clone());
         }
@@ -842,11 +873,26 @@ pub async fn unload_wallet(
 }
 
 /// Change wallet password
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangePasswordRequest {
+    current_password: String,
+    new_password: String,
+}
+
+impl std::fmt::Debug for ChangePasswordRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChangePasswordRequest")
+            .field("current_password", &"[REDACTED]")
+            .field("new_password", &"[REDACTED]")
+            .finish()
+    }
+}
+
 #[tauri::command]
 pub async fn change_password(
     state: State<'_, AppState>,
-    current_password: String,
-    new_password: String,
+    request: ChangePasswordRequest,
 ) -> Result<(), String> {
     let wallet = state
         .services
@@ -855,7 +901,7 @@ pub async fn change_password(
         .ok_or("Wallet manager not available")?;
 
     wallet
-        .change_password(&current_password, &new_password)
+        .change_password(&request.current_password, &request.new_password)
         .map_err(|e| format!("Failed to change password: {}", e))
 }
 
@@ -1186,6 +1232,153 @@ pub async fn generate_address(state: State<'_, AppState>) -> Result<String, Stri
         .map_err(|e| format!("Failed to generate address: {}", e))
 }
 
+fn parse_saved_multisig_keys(public_keys_json: Option<&str>) -> Vec<String> {
+    public_keys_json
+        .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+        .unwrap_or_default()
+}
+
+fn saved_script_to_multisig_info(script: WalletScriptRecord) -> MultisigAddressInfo {
+    let public_keys = parse_saved_multisig_keys(script.public_keys_json.as_deref());
+    MultisigAddressInfo {
+        address: script.address,
+        script_hash: hex::encode(script.script_hash),
+        redeem_script: script.redeem_script_hex,
+        threshold: script.threshold,
+        public_keys,
+        label: script.label,
+        created_at: script.created_at,
+        script_type: script.script_type,
+    }
+}
+
+/// Create a P2SH multisig address and optionally save its redeem script to the loaded wallet.
+#[tauri::command]
+pub async fn create_multisig_address(
+    state: State<'_, AppState>,
+    threshold: u8,
+    public_keys: Vec<String>,
+    label: Option<String>,
+    save: Option<bool>,
+) -> Result<MultisigAddressResult, String> {
+    if !(2..=MAX_MULTISIG_KEYS).contains(&public_keys.len()) {
+        return Err(format!(
+            "public_keys must contain between 2 and {} keys",
+            MAX_MULTISIG_KEYS
+        ));
+    }
+
+    if threshold == 0 || threshold as usize > public_keys.len() {
+        return Err(
+            "threshold must be at least 1 and no greater than public_keys length".to_string(),
+        );
+    }
+
+    let mut seen = HashSet::new();
+    let mut parsed_keys = Vec::with_capacity(public_keys.len());
+    let mut canonical_public_keys = Vec::with_capacity(public_keys.len());
+
+    for key_hex in &public_keys {
+        let bytes = hex::decode(key_hex)
+            .map_err(|e| format!("Invalid public key hex '{}': {}", key_hex, e))?;
+        if bytes.len() != 32 {
+            return Err(format!(
+                "Public key must be 32 bytes, got {} bytes",
+                bytes.len()
+            ));
+        }
+
+        let mut key_bytes = [0u8; 32];
+        key_bytes.copy_from_slice(&bytes);
+        if !seen.insert(key_bytes) {
+            return Err("Duplicate public keys are not allowed".to_string());
+        }
+
+        let verifying_key = VerifyingKey::from_bytes(&key_bytes)
+            .map_err(|e| format!("Invalid Ed25519 public key: {}", e))?;
+        canonical_public_keys.push(hex::encode(key_bytes));
+        parsed_keys.push(verifying_key);
+    }
+
+    let redeem_script = multisig_script_pubkey(&parsed_keys, threshold)
+        .map_err(|e| format!("Invalid multisig script: {}", e))?;
+    let script_hash = p2sh_script_hash(&redeem_script);
+    let address = encode_sh(&script_hash);
+    let redeem_script_hex = hex::encode(redeem_script.bytes());
+    let should_save = save.unwrap_or(true);
+    let mut saved = false;
+
+    if should_save {
+        let wallet = state
+            .services
+            .wallet
+            .as_ref()
+            .ok_or("Wallet not available")?;
+        let wallet_id = wallet.current_wallet_id().ok_or("Wallet not loaded")?;
+        let db = wallet.database().ok_or("Wallet database not available")?;
+        let queries = WalletQueries::new(db.connection());
+        let created_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let public_keys_json = serde_json::to_string(&canonical_public_keys)
+            .map_err(|e| format!("Failed to encode public keys: {}", e))?;
+
+        queries
+            .upsert_wallet_script(&WalletScriptRecord {
+                id: None,
+                wallet_id,
+                address: address.clone(),
+                script_hash,
+                script_type: "p2sh_multisig".to_string(),
+                redeem_script_hex: redeem_script_hex.clone(),
+                threshold: Some(threshold),
+                public_keys_json: Some(public_keys_json),
+                label: label.clone(),
+                created_at,
+            })
+            .map_err(|e| format!("Failed to save multisig address: {}", e))?;
+        saved = true;
+    }
+
+    Ok(MultisigAddressResult {
+        address,
+        script_hash: hex::encode(script_hash),
+        redeem_script: redeem_script_hex,
+        threshold,
+        public_keys: canonical_public_keys,
+        label,
+        saved,
+        script_type: "p2sh_multisig".to_string(),
+    })
+}
+
+/// List saved P2SH multisig addresses for the loaded wallet.
+#[tauri::command]
+pub async fn get_multisig_addresses(
+    state: State<'_, AppState>,
+) -> Result<Vec<MultisigAddressInfo>, String> {
+    let wallet = state
+        .services
+        .wallet
+        .as_ref()
+        .ok_or("Wallet not available")?;
+    let wallet_id = wallet.current_wallet_id().ok_or("Wallet not loaded")?;
+    let db = wallet.database().ok_or("Wallet database not available")?;
+    let queries = WalletQueries::new(db.connection());
+
+    queries
+        .list_wallet_scripts(&wallet_id)
+        .map_err(|e| format!("Failed to get multisig addresses: {}", e))
+        .map(|scripts| {
+            scripts
+                .into_iter()
+                .filter(|script| script.script_type == "p2sh_multisig")
+                .map(saved_script_to_multisig_info)
+                .collect()
+        })
+}
+
 /// Get list of wallet addresses
 #[tauri::command]
 pub async fn get_addresses(
@@ -1197,6 +1390,20 @@ pub async fn get_addresses(
         .wallet
         .as_ref()
         .ok_or("Wallet not available")?;
+    let wallet_id = wallet.current_wallet_id();
+    let saved_script_addresses =
+        if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet_id.as_ref()) {
+            let queries = WalletQueries::new(db.connection());
+            queries
+                .list_wallet_scripts(wallet_id)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|script| script.script_type == "p2sh_multisig")
+                .map(|script| script.address)
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
     wallet
         .with_wallet(|w| {
@@ -1213,6 +1420,8 @@ pub async fn get_addresses(
                 .chain(receiving.into_iter().map(|(_, _, addr, _)| addr))
                 .chain(change.into_iter().map(|(_, _, addr, _)| addr))
                 .collect();
+
+            addresses.extend(saved_script_addresses);
 
             addresses.sort();
             addresses.dedup();
@@ -3627,7 +3836,12 @@ pub async fn get_vm_addresses(state: State<'_, AppState>) -> Result<Vec<String>,
 
     let owned_pkhs = wallet_owned_pkhs_from_queries(&queries, &wallet_id)?;
     let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
-    let addresses = merge_vm_address_catalog(&owned_pkhs, &account_entries);
+    let next_vm_account_index = queries
+        .get_key_indices(&wallet_id)
+        .map_err(|e| format!("Failed to get wallet key indices: {}", e))?
+        .map(|indices| indices.next_vm_account_index)
+        .unwrap_or(0);
+    let addresses = merge_vm_address_catalog(&owned_pkhs, &account_entries, next_vm_account_index);
 
     Ok(addresses)
 }
@@ -3795,6 +4009,7 @@ mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
     use std::fs;
+    use xtal::config::SHARDS_PER_XTAL;
     use xtal::fruit::core::FruitType;
     use xtal::storage::{trie::RocksDBBackend as XtalRocksDbBackend, Storage};
     use xtal::transaction::receipt::TxStatus;
@@ -3880,15 +4095,22 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let recipient = [0x42; 20];
         let recipient_address = xtal::address::encode_pkh(&recipient);
-        let data = cage_abi()
-            .encode_call(
+        let abi = cage_abi();
+        let mut data = abi
+            .method("withdraw")
+            .expect("bundled CAGE ABI includes withdraw")
+            .selector
+            .to_vec();
+        data.extend(
+            abi.encode_args(
                 "withdraw",
                 &[
                     AbiValue::String(recipient_address.clone()),
-                    AbiValue::U64(1_000_000_000),
+                    AbiValue::U64(SHARDS_PER_XTAL),
                 ],
             )
-            .unwrap();
+            .unwrap(),
+        );
         let tx = Transaction::ContractCall(ContractCallTransaction {
             caller: signing_key.verifying_key(),
             contract_address: CAGE_CONTRACT_ADDRESS,
@@ -3913,7 +4135,7 @@ mod tests {
         );
         receipt.produced_withdrawals.push(PendingWithdrawal {
             recipient: recipient_address.as_bytes().to_vec(),
-            amount: 999_000_000,
+            amount: SHARDS_PER_XTAL - (SHARDS_PER_XTAL / 1_000),
             source: caller,
         });
 
@@ -3926,8 +4148,11 @@ mod tests {
                 requested_recipient,
                 produced_output_recipient,
             }) => {
-                assert_eq!(requested_amount, 1_000_000_000);
-                assert_eq!(net_withdrawal_amount, Some(999_000_000));
+                assert_eq!(requested_amount, SHARDS_PER_XTAL);
+                assert_eq!(
+                    net_withdrawal_amount,
+                    Some(SHARDS_PER_XTAL - (SHARDS_PER_XTAL / 1_000))
+                );
                 assert_eq!(requested_recipient, recipient_address);
                 assert_eq!(produced_output_recipient, Some(recipient_address));
             }
@@ -3980,13 +4205,58 @@ mod tests {
             },
         ];
 
-        let addresses = merge_vm_address_catalog(&owned, &account_entries);
+        let addresses = merge_vm_address_catalog(&owned, &account_entries, 2);
         assert_eq!(
             addresses,
             vec![
                 format_contract_address(&vm_primary),
                 format_contract_address(&vm_secondary),
                 format_contract_address(&funded_receiving),
+            ]
+        );
+    }
+
+    #[test]
+    fn merge_vm_address_catalog_hides_ungenerated_vm_gap_keys() {
+        let vm_primary = [1u8; 20];
+        let vm_gap = [2u8; 20];
+        let funded_gap = [3u8; 20];
+
+        let owned = vec![
+            WalletOwnedPkh {
+                pkh: vm_primary,
+                hex_address: format_contract_address(&vm_primary),
+                key_type: KeyType::VmAccount,
+                key_index: 0,
+            },
+            WalletOwnedPkh {
+                pkh: vm_gap,
+                hex_address: format_contract_address(&vm_gap),
+                key_type: KeyType::VmAccount,
+                key_index: 1,
+            },
+            WalletOwnedPkh {
+                pkh: funded_gap,
+                hex_address: format_contract_address(&funded_gap),
+                key_type: KeyType::VmAccount,
+                key_index: 2,
+            },
+        ];
+        let account_entries = vec![WalletAccountStateEntry {
+            pkh: funded_gap,
+            hex_address: format_contract_address(&funded_gap),
+            balance: 25,
+            nonce: 1,
+            key_type: KeyType::VmAccount,
+            key_index: 2,
+        }];
+
+        let addresses = merge_vm_address_catalog(&owned, &account_entries, 1);
+        assert_eq!(
+            addresses,
+            vec![
+                format_contract_address(&vm_primary),
+                format_contract_address(&funded_gap),
             ]
         );
     }

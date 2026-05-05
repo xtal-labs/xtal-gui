@@ -697,6 +697,11 @@ function AppContent() {
       openModal("wallet-change-password");
     };
 
+    (window as any).openWalletMultisig = () => {
+      setActiveTab("wallet");
+      openModal("wallet-multisig");
+    };
+
     // Import wallet from native menu
     (window as any).openWalletImportMnemonic = () => {
       setActiveTab("wallet");
@@ -733,6 +738,7 @@ function AppContent() {
       delete (window as any).openWalletCreate;
       delete (window as any).openWalletLoad;
       delete (window as any).openWalletChangePassword;
+      delete (window as any).openWalletMultisig;
       delete (window as any).openWalletImportMnemonic;
       delete (window as any).openWalletImportKey;
       delete (window as any).openWalletImportFile;

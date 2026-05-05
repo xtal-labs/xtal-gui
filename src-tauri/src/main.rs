@@ -87,6 +87,12 @@ fn update_wallet_menu(app: &AppHandle, wallet_loaded: bool, available_wallets: &
             }
         }
 
+        if let Some(item) = find_menu_item_recursive(&menu, "create_multisig_address_menu") {
+            if let Some(menu_item) = item.as_menuitem() {
+                let _ = menu_item.set_enabled(wallet_loaded);
+            }
+        }
+
         if let Some(item) = find_menu_item_recursive(&menu, "load_wallet_menu") {
             if let Some(submenu) = item.as_submenu() {
                 debug!(
@@ -370,6 +376,15 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                 .separator()
                 .item(
                     &MenuItemBuilder::with_id(
+                        "create_multisig_address_menu",
+                        "Create Multisig Address...",
+                    )
+                    .enabled(false)
+                    .build(app)?,
+                )
+                .separator()
+                .item(
+                    &MenuItemBuilder::with_id(
                         "change_wallet_password",
                         "Change Wallet Password...",
                     )
@@ -466,6 +481,11 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                     "change_wallet_password" => {
                         if let Err(e) = window.eval("window.openWalletChangePassword?.()") {
                             error!("Failed to eval openWalletChangePassword: {}", e);
+                        }
+                    }
+                    "create_multisig_address_menu" => {
+                        if let Err(e) = window.eval("window.openWalletMultisig?.()") {
+                            error!("Failed to eval openWalletMultisig: {}", e);
                         }
                     }
                     "import_mnemonic" => {
@@ -684,6 +704,8 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_wallet_mnemonic,
             // Wallet commands (addresses & transactions)
             commands::generate_address,
+            commands::create_multisig_address,
+            commands::get_multisig_addresses,
             commands::get_addresses,
             commands::send_transaction,
             commands::get_transaction_history,

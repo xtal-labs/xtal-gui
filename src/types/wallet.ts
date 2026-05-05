@@ -24,6 +24,28 @@ export interface Address {
   used: boolean;
 }
 
+export interface MultisigAddressResult {
+  address: string;
+  scriptHash: string;
+  redeemScript: string;
+  threshold: number;
+  publicKeys: string[];
+  label?: string;
+  saved: boolean;
+  type: "p2sh_multisig";
+}
+
+export interface MultisigAddressInfo {
+  address: string;
+  scriptHash: string;
+  redeemScript: string;
+  threshold?: number;
+  publicKeys: string[];
+  label?: string;
+  createdAt: number;
+  type: "p2sh_multisig";
+}
+
 /**
  * Maturity status for coinbase/withdrawal transactions
  */

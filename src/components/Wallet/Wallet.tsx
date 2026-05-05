@@ -18,6 +18,7 @@ import {
   FileText,
   ArrowUpFromLine,
   ArrowDownToLine,
+  ShieldCheck,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -45,6 +46,7 @@ import type {
   WalletStatus,
   TransactionHistoryResponse,
   SignerImportResult,
+  MultisigAddressInfo,
 } from "@/types";
 import { MnemonicInput } from "@/components/common/MnemonicInput";
 import { SendModal } from "./SendModal";
@@ -53,6 +55,7 @@ import { VmSendModal } from "./VmSendModal";
 import { VmReceiveModal } from "./VmReceiveModal";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
+import { MultisigModal } from "./MultisigModal";
 
 // Modal IDs for wallet operations (triggered by menu or buttons)
 const MODAL_WALLET_LOAD = "wallet-load";
@@ -66,6 +69,7 @@ const MODAL_VM_SEND = "wallet-vm-send";
 const MODAL_VM_RECEIVE = "wallet-vm-receive";
 const MODAL_DEPOSIT = "wallet-deposit";
 const MODAL_WITHDRAW = "wallet-withdraw";
+const MODAL_MULTISIG = "wallet-multisig";
 
 // Sub-tab types for the wallet view
 type WalletSubTab = "utxo" | "vm";
@@ -126,6 +130,7 @@ export default function Wallet() {
   const showImportFileModal = activeModal === MODAL_WALLET_IMPORT_FILE;
   const showDepositModal = activeModal === MODAL_DEPOSIT;
   const showWithdrawModal = activeModal === MODAL_WITHDRAW;
+  const showMultisigModal = activeModal === MODAL_MULTISIG;
   // For load modal, the wallet name is passed as modalData
   const selectedWalletFromMenu = showLoadModal ? (modalData as string | null) : null;
   const bridgeActionGlowClass = [
@@ -266,18 +271,25 @@ export default function Wallet() {
     setIsLoading(true);
     setError(null);
     try {
-      const [balanceResult, addressesResult, txResult] = await Promise.all([
+      const [balanceResult, addressesResult, multisigResult, txResult] = await Promise.all([
         tauriCommand<WalletBalance>("get_wallet_balance"),
         tauriCommand<string[]>("get_addresses", { limit: 20 }),
+        tauriCommand<MultisigAddressInfo[]>("get_multisig_addresses"),
         tauriCommand<TransactionHistoryResponse>("get_transaction_history", { limit: PAGE_SIZE, offset: 0 }),
       ]);
 
       setBalance(balanceResult);
       // Convert string[] to Address[]
+      const multisigLabels = new Map(
+        multisigResult.map((script) => [
+          script.address,
+          script.label?.trim() || `Multisig ${script.threshold ?? ""}`.trim(),
+        ])
+      );
       const addrs: Address[] = addressesResult.map((addr, i) => ({
         address: addr,
         index: i,
-        label: i === 0 ? "Primary" : undefined,
+        label: multisigLabels.get(addr) ?? (i === 0 ? "Primary" : undefined),
         used: false,
       }));
       setAddresses(addrs);
@@ -740,8 +752,10 @@ export default function Wallet() {
     setError(null);
     try {
       await tauriCommand("change_password", {
-        currentPassword,
-        newPassword,
+        request: {
+          currentPassword,
+          newPassword,
+        },
       });
       closeModal();
       resetChangePasswordForm();
@@ -836,10 +850,16 @@ export default function Wallet() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-base font-heading tracking-wide">ADDRESSES</CardTitle>
-            <Button variant="ghost" size="sm" onClick={() => openModal(MODAL_RECEIVE)}>
-              <Plus className="h-4 w-4 mr-1" />
-              New Address
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" onClick={() => openModal(MODAL_MULTISIG)}>
+                <ShieldCheck className="h-4 w-4 mr-1" />
+                Multisig
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => openModal(MODAL_RECEIVE)}>
+                <Plus className="h-4 w-4 mr-1" />
+                New Address
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -1977,6 +1997,13 @@ export default function Wallet() {
         onClose={closeModal}
         addresses={addresses}
         onAddressGenerated={refreshWalletData}
+      />
+
+      {/* Multisig Modal */}
+      <MultisigModal
+        isOpen={showMultisigModal}
+        onClose={closeModal}
+        onAddressCreated={refreshWalletData}
       />
 
       {/* VM Send Modal */}
