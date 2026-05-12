@@ -150,6 +150,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           releaseId: ${{ needs.prepare.outputs.release_id }}
+          beforeBuildCommand: npm install
           args: --target ${{ matrix.target }}
 
   publish:
