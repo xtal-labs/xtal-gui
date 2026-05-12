@@ -172,7 +172,7 @@ jobs:
           RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
         with:
           script: |
-            github.rest.repos.updateRelease({
+            await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
               release_id: process.env.RELEASE_ID,
