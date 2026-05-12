@@ -5,7 +5,7 @@ import { invoke } from '@tauri-apps/api/core';
 export type WizardStep =
   | 'welcome'
   | 'network'
-  | 'node-type'
+  // 'node-type' removed temporarily - can be re-added later
   | 'wallet-choice'
   | 'wallet-create'
   | 'mnemonic'
@@ -56,7 +56,7 @@ export interface WizardState {
 const CREATE_STEP_ORDER: WizardStep[] = [
   'welcome',
   'network',
-  'node-type',
+  // 'node-type' removed temporarily
   'wallet-choice',
   'wallet-create',
   'mnemonic',
@@ -66,7 +66,7 @@ const CREATE_STEP_ORDER: WizardStep[] = [
 const IMPORT_STEP_ORDER: WizardStep[] = [
   'welcome',
   'network',
-  'node-type',
+  // 'node-type' removed temporarily
   'wallet-choice',
   'wallet-import-mnemonic',
   'wallet-import-password',
@@ -137,7 +137,8 @@ export function useSetupWizard() {
         ...s,
         network,
         dataDir: result.data_dir,
-        step: 'node-type',
+        // 'node-type' step removed - go directly to wallet-choice
+        step: 'wallet-choice' as WizardStep,
         isProcessing: false,
       }));
     } catch (e) {
@@ -145,6 +146,8 @@ export function useSetupWizard() {
     }
   }, [setError]);
 
+  // 'node-type' step removed temporarily - kept for later re-integration
+  // const selectNodeType is no longer called from the wizard flow
   const selectNodeType = useCallback(async (fruits: string[], archival: boolean, txIndex: boolean, syncMode: SyncModeOption) => {
     setState(s => ({ ...s, isProcessing: true, error: null }));
 
@@ -156,7 +159,7 @@ export function useSetupWizard() {
         archival,
         txIndex,
         syncMode,
-        step: 'wallet-choice',
+        step: 'wallet-choice' as WizardStep,
         isProcessing: false,
       }));
     } catch (e) {
@@ -300,9 +303,11 @@ export function useSetupWizard() {
 
   const getTotalSteps = useCallback(() => {
     if (state.walletChoice === 'skip') {
-      return 5; // welcome, network, node-type, wallet-choice, complete
+      // welcome, network, wallet-choice, complete (node-type removed)
+      return 4;
     }
-    return 7;
+    // node-type removed from flow
+    return 6;
   }, [state.walletChoice]);
 
   const canGoBack = useCallback(() => {

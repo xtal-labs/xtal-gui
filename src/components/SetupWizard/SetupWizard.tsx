@@ -9,7 +9,8 @@ import { CreateWalletStep } from './steps/CreateWalletStep';
 import { MnemonicStep } from './steps/MnemonicStep';
 import { MnemonicInputStep } from './steps/MnemonicInputStep';
 import { ImportPasswordStep } from './steps/ImportPasswordStep';
-import { NodeTypeStep } from './steps/NodeTypeStep';
+// NodeTypeStep removed from step flow temporarily - kept for later re-integration
+// import { NodeTypeStep } from './steps/NodeTypeStep';
 import { CompleteStep } from './steps/CompleteStep';
 import { useSetupWindowSizing } from './useSetupWindowSizing';
 
@@ -17,7 +18,7 @@ import { useSetupWindowSizing } from './useSetupWindowSizing';
 const STEP_LABELS: Record<WizardStep, string> = {
   'welcome': 'Welcome',
   'network': 'Network',
-  'node-type': 'Node Type',
+  // 'node-type': 'Node Type',  // removed temporarily
   'wallet-choice': 'Wallet',
   'wallet-create': 'Create',
   'mnemonic': 'Backup',
@@ -34,12 +35,12 @@ function ProgressIndicator({
   currentStep: WizardStep;
   walletChoice: string | null;
 }) {
-  // Determine which steps to show based on wallet choice
+  // Determine which steps to show based on wallet choice (node-type removed temporarily)
   const steps: WizardStep[] = walletChoice === 'skip'
-    ? ['welcome', 'network', 'node-type', 'wallet-choice', 'complete']
+    ? ['welcome', 'network', 'wallet-choice', 'complete']
     : walletChoice === 'import'
-    ? ['welcome', 'network', 'node-type', 'wallet-choice', 'wallet-import-mnemonic', 'wallet-import-password', 'complete']
-    : ['welcome', 'network', 'node-type', 'wallet-choice', 'wallet-create', 'mnemonic', 'complete'];
+    ? ['welcome', 'network', 'wallet-choice', 'wallet-import-mnemonic', 'wallet-import-password', 'complete']
+    : ['welcome', 'network', 'wallet-choice', 'wallet-create', 'mnemonic', 'complete'];
 
   const currentIndex = steps.indexOf(currentStep);
 
@@ -122,7 +123,8 @@ export function SetupWizard() {
   const mainRef = useRef<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
 
-  const wideStep = state.step === 'node-type' || state.step === 'complete';
+  // 'node-type' removed from flow temporarily
+  const wideStep = state.step === 'complete';
   const contentWidthClass = wideStep
     ? 'max-w-[42rem]'
     : state.step === 'mnemonic' || state.step === 'wallet-import-mnemonic'
@@ -182,13 +184,14 @@ export function SetupWizard() {
             isProcessing={state.isProcessing}
           />
         );
-      case 'node-type':
-        return (
-          <NodeTypeStep
-            onSelect={actions.selectNodeType}
-            isProcessing={state.isProcessing}
-          />
-        );
+      // 'node-type' step removed temporarily - kept for later re-integration
+      // case 'node-type':
+      //   return (
+      //     <NodeTypeStep
+      //       onSelect={actions.selectNodeType}
+      //       isProcessing={state.isProcessing}
+      //     />
+      //   );
       case 'wallet-choice':
         return (
           <WalletStep
