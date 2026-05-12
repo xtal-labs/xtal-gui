@@ -628,6 +628,8 @@ pub async fn get_transaction_detail_explorer(
         Some(MaturityStatus {
             is_immature: blocks_remaining > 0,
             blocks_until_mature: blocks_remaining,
+            kind: Some(tx_type.clone()),
+            phase: Some("locked".to_string()),
         })
     } else {
         None

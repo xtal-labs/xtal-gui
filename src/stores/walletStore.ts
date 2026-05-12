@@ -4,6 +4,7 @@ import type {
   WalletBalance,
   VmAccountBalance,
   Address,
+  VmAddress,
   Transaction,
   NetworkType,
 } from "@/types";
@@ -35,7 +36,7 @@ interface WalletState {
 
   // VM account state
   vmBalance: VmAccountBalance | null;
-  vmAddresses: string[];
+  vmAddresses: VmAddress[];
   vmTransactions: Transaction[];
   vmTransactionPagination: TransactionPagination;
 
@@ -55,7 +56,7 @@ interface WalletState {
   setPageLoading: (loading: boolean) => void;
   addTransaction: (transaction: Transaction) => void;
   setVmBalance: (balance: VmAccountBalance) => void;
-  setVmAddresses: (addresses: string[]) => void;
+  setVmAddresses: (addresses: VmAddress[]) => void;
   addVmAddress: (address: string) => void;
   setVmTransactionPage: (page: number, transactions: Transaction[], totalCount: number) => void;
   setVmPageLoading: (loading: boolean) => void;
@@ -97,7 +98,7 @@ const initialState = {
   pendingTxCount: 0,
   transactionPagination: initialPagination,
   vmBalance: null as VmAccountBalance | null,
-  vmAddresses: [] as string[],
+  vmAddresses: [] as VmAddress[],
   vmTransactions: [] as Transaction[],
   vmTransactionPagination: initialVmPagination,
   availableWallets: [],
@@ -168,7 +169,21 @@ export const useWalletStore = create<WalletState>((set) => ({
 
   addVmAddress: (address) =>
     set((state) => ({
-      vmAddresses: [...state.vmAddresses, address],
+      vmAddresses: state.vmAddresses.some((addr) => addr.address === address)
+        ? state.vmAddresses
+        : [
+            ...state.vmAddresses,
+            {
+              address,
+              index: state.vmAddresses.filter((addr) => addr.kind !== "account_state").length,
+              kind: "vm_account",
+              order: state.vmAddresses.length,
+              label:
+                state.vmAddresses.filter((addr) => addr.kind !== "account_state").length === 0
+                  ? "Primary"
+                  : undefined,
+            },
+          ],
     })),
 
   setVmTransactionPage: (page, transactions, totalCount) =>

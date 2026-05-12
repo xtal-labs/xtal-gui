@@ -134,6 +134,7 @@ export function Pagination({
     >
       {/* Previous button */}
       <button
+        type="button"
         onClick={() => handlePageChange(currentPage - 1)}
         disabled={currentPage === 1 || isLoading}
         className={arrowButton}
@@ -159,6 +160,7 @@ export function Pagination({
         const isActive = page === currentPage;
         return (
           <button
+            type="button"
             key={page}
             onClick={() => handlePageChange(page)}
             disabled={isLoading}
@@ -173,6 +175,7 @@ export function Pagination({
 
       {/* Next button */}
       <button
+        type="button"
         onClick={() => handlePageChange(currentPage + 1)}
         disabled={currentPage === totalPages || isLoading}
         className={arrowButton}

@@ -3,14 +3,56 @@
 //! This module handles wallet-specific GUI events via Tauri.
 //! Node-level events (blocks, mining, sync, peers) are handled via WebSocket.
 
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
+
+// =============================================================================
+// DIAGNOSTIC: Event emission rate counter (Phase 1 Investigation 2)
+// =============================================================================
+
+/// Global counter for Tauri event emissions (debug-only, stripped in release)
+#[cfg(debug_assertions)]
+static EVENT_DIAG_START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+#[cfg(debug_assertions)]
+static EVENT_DIAG_COUNT: AtomicU64 = AtomicU64::new(0);
+#[cfg(debug_assertions)]
+static EVENT_DIAG_LAST_LOG: std::sync::OnceLock<std::sync::Mutex<std::time::Instant>> =
+    std::sync::OnceLock::new();
+
+/// Diagnostic helper: log event emission rate every 10 seconds
+#[cfg(debug_assertions)]
+fn diag_log_event_rate(event_type: &str) {
+    EVENT_DIAG_START.get_or_init(Instant::now);
+    EVENT_DIAG_LAST_LOG.get_or_init(|| std::sync::Mutex::new(Instant::now()));
+
+    let count = EVENT_DIAG_COUNT.fetch_add(1, Ordering::Relaxed);
+
+    if let Some(last_log) = EVENT_DIAG_LAST_LOG.get() {
+        let mut last_log = last_log.lock().unwrap();
+        if last_log.elapsed().as_secs() >= 10 {
+            let elapsed = EVENT_DIAG_START.get().unwrap().elapsed();
+            info!(
+                "[EVENT-DIAG] {}s elapsed | total_events={} | rate={:.2}/s | last_type={}",
+                elapsed.as_secs(),
+                count + 1,
+                (count as f64 + 1.0) / elapsed.as_secs_f64(),
+                event_type
+            );
+            *last_log = Instant::now();
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn diag_log_event_rate(_event_type: &str) {}
 use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 
-use xtal::address_format::format_utxo_address;
+use xtal::address_format::{format_utxo_address, parse_address_input};
 use xtal::blockchain::events::BlockchainEvent;
 use xtal::crypto::hash_public_key;
 use xtal::fruit::codec::Encode;
@@ -81,6 +123,13 @@ pub async fn run_event_broadcaster(
     // Get wallet database for pending transaction cleanup
     let wallet_db = services.wallet.as_ref().and_then(|w| w.database());
 
+    // Start diagnostic timer
+    #[cfg(debug_assertions)]
+    {
+        EVENT_DIAG_START.get_or_init(Instant::now);
+        info!("[EVENT-DIAG] Tauri event emission monitoring started");
+    }
+
     debug!("Event broadcaster started");
 
     loop {
@@ -148,6 +197,7 @@ fn handle_blockchain_event(
                 added_count: added_blocks.len(),
             };
 
+            diag_log_event_rate("ChainReorg");
             if let Err(e) = app.emit("gui-event", &event) {
                 error!("Failed to emit chain reorg event: {}", e);
             }
@@ -211,6 +261,14 @@ fn handle_blockchain_event(
 
         BlockchainEvent::BlockRemoved { .. } => {
             // Handled via ChainReorganized
+        }
+
+        BlockchainEvent::FruitAdded {
+            epoch: _,
+            fruit_hash: _,
+            tx_hashes,
+        } => {
+            debug!("Fruit added with {} transactions", tx_hashes.len());
         }
     }
 }
@@ -283,6 +341,7 @@ pub fn emit_wallet_loaded(app: &AppHandle, name: &str) {
     let event = GuiEvent::WalletLoaded {
         name: name.to_string(),
     };
+    diag_log_event_rate("WalletLoaded");
     if let Err(e) = app.emit("gui-event", &event) {
         error!("Failed to emit wallet loaded event: {}", e);
     }
@@ -290,6 +349,7 @@ pub fn emit_wallet_loaded(app: &AppHandle, name: &str) {
 
 /// Emit a wallet unloaded event
 pub fn emit_wallet_unloaded(app: &AppHandle) {
+    diag_log_event_rate("WalletUnloaded");
     if let Err(e) = app.emit("gui-event", &GuiEvent::WalletUnloaded) {
         error!("Failed to emit wallet unloaded event: {}", e);
     }
@@ -371,6 +431,7 @@ fn handle_transaction_added(
             hex::encode(&tx_hash[..8])
         );
 
+        diag_log_event_rate("IncomingTransaction");
         if let Err(e) = app.emit("gui-event", &event) {
             error!("Failed to emit incoming transaction event: {}", e);
         }
@@ -453,6 +514,7 @@ fn handle_transaction_added(
                     hex::encode(&tx_hash[..8])
                 );
 
+                diag_log_event_rate("OutgoingTransaction");
                 if let Err(e) = app.emit("gui-event", &event) {
                     error!("Failed to emit outgoing transaction event: {}", e);
                 }
@@ -546,6 +608,14 @@ pub(crate) fn get_wallet_pkh_set(
 
     if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet.current_wallet_id()) {
         let queries = WalletQueries::new(db.connection());
+        if let Ok(Some(record)) = queries.get_wallet(&wallet_id) {
+            if let Some(address) = record.validator_address() {
+                if let Ok(pkh) = parse_address_input(&address) {
+                    pkhs.insert(pkh);
+                }
+            }
+        }
+
         if let Ok(all_keys) = queries.get_public_keys(&wallet_id, None) {
             for key in all_keys {
                 let Ok(pk_bytes) = hex::decode(&key.public_key_hex) else {
@@ -590,6 +660,10 @@ pub(crate) fn get_wallet_pkh_set(
         for (_, _, _, vk) in change {
             pkhs.insert(hash_public_key(&vk));
         }
+    }
+
+    if let Ok((_, vk)) = wallet.with_wallet(|w| w.get_validator_staking_public_key()) {
+        pkhs.insert(hash_public_key(&vk));
     }
 
     if let Ok(vm_accounts) = wallet.with_wallet(|w| w.get_all_vm_account_addresses()) {

@@ -2,6 +2,8 @@ import { ArrowRight, Box } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import { getFruitColor } from "@/lib/fruitColors";
 import type { CachedContract } from "@/types/contract";
 
 interface ContractCardProps {
@@ -69,11 +71,25 @@ export function ContractCard({ contract, onOpen }: ContractCardProps) {
           <Badge variant="default" shape="chamfered">
             {contract.methodCount} methods
           </Badge>
-          {contract.fruitType && (
-            <Badge variant="fruit" shape="chamfered">
-              {contract.fruitType}
-            </Badge>
-          )}
+          {contract.fruitType && (() => {
+            const colors = getFruitColor(contract.fruitType);
+            return (
+              <Badge
+                shape="chamfered"
+                className={cn(
+                  "bg-gradient-to-br",
+                  colors.bg,
+                  colors.border
+                )}
+                style={{
+                  boxShadow: `0 0 8px 0 ${colors.glow.replace("shadow-", "")}`,
+                }}
+              >
+                <span className={colors.icon}>{colors.emoji}</span>
+                {contract.fruitType}
+              </Badge>
+            );
+          })()}
           {contract.source === "builtin" && (
             <Badge variant="info" shape="chamfered">
               Built-in

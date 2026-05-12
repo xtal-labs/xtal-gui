@@ -2,6 +2,7 @@ import { Download, Send, Pickaxe, Lock, Unlock, FileCode, ArrowRightLeft, LogOut
 import { AmountDisplay } from "./AmountDisplay";
 import { Badge } from "@/components/ui/badge";
 import { formatTimeAgo, cn } from "@/lib/utils";
+import { getMaturityDisplay } from "@/lib/maturity";
 import type { Transaction } from "@/types";
 
 interface TransactionRowProps {
@@ -93,6 +94,7 @@ export function TransactionRow({ transaction, onClick, isSelected, walletType, s
   const { icon: Icon, color, bg } = getTransactionIcon(transaction.txType, transaction.amount);
   const label = getTransactionLabel(transaction.txType, transaction.amount, walletType);
   const executionBadge = getExecutionStatusBadge(transaction.executionStatus);
+  const maturityDisplay = getMaturityDisplay(transaction.maturityStatus);
 
   // Suppress VM execution status badge on UTXO surface — UTXO records
   // lack VM receipt data, so "pending_execution" gets stuck indefinitely.
@@ -140,11 +142,10 @@ export function TransactionRow({ transaction, onClick, isSelected, walletType, s
         <p className="text-xs text-foreground-muted font-mono">
           {transaction.confirmations === 0 ? (
             <span className="text-warning">Pending</span>
-          ) : (transaction.txType === "coinbase" || transaction.txType === "vm_withdrawal") &&
-            transaction.maturityStatus?.isImmature ? (
+          ) : maturityDisplay ? (
             <span className="text-warning flex items-center gap-1">
               <Clock className="h-3 w-3" />
-              Immature ({transaction.maturityStatus.blocksUntilMature})
+              {maturityDisplay.label}
             </span>
           ) : (
             `${transaction.confirmations} conf`

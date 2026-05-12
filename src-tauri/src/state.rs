@@ -5,6 +5,7 @@
 //! - `AppState`: Full state during normal operation (node running)
 //! - `SharedStartupStatus`: Mutable startup status with progress tracking
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -70,8 +71,8 @@ pub struct AppState {
     /// Data directory path
     pub data_dir: PathBuf,
 
-    /// Wallet sync service (started when wallet loads, stopped on unload)
-    pub wallet_sync: Mutex<Option<Arc<WalletSyncService>>>,
+    /// Wallet sync services keyed by wallet id.
+    pub wallet_sync: Mutex<HashMap<String, Arc<WalletSyncService>>>,
 
     /// Local ABI cache for contract discovery
     pub abi_cache: Mutex<AbiCache>,
@@ -121,7 +122,7 @@ impl AppState {
             api_port,
             network,
             data_dir,
-            wallet_sync: Mutex::new(None),
+            wallet_sync: Mutex::new(HashMap::new()),
             abi_cache: Mutex::new(abi_cache),
             ipfs_client,
         }

@@ -1,11 +1,13 @@
 import { useEffect, useRef, type DependencyList, type RefObject } from 'react';
 import { LogicalSize, currentMonitor, getCurrentWindow, primaryMonitor } from '@tauri-apps/api/window';
 
-const MIN_SETUP_WINDOW_WIDTH = 800;
-const MIN_SETUP_WINDOW_HEIGHT = 600;
+const MIN_USABLE_SETUP_WINDOW_WIDTH = 640;
+const MIN_USABLE_SETUP_WINDOW_HEIGHT = 480;
+const ABSOLUTE_MIN_SETUP_WINDOW_WIDTH = 480;
+const ABSOLUTE_MIN_SETUP_WINDOW_HEIGHT = 400;
 const MAX_WORKAREA_WIDTH_RATIO = 0.9;
 const MAX_WORKAREA_HEIGHT_RATIO = 0.92;
-const EXTRA_HORIZONTAL_MARGIN = 64;
+const EXTRA_HORIZONTAL_MARGIN = 32;
 const RESIZE_EPSILON = 8;
 const MANUAL_RESIZE_GRACE_MS = 400;
 const PROGRAMMATIC_RESIZE_GRACE_MS = 400;
@@ -18,7 +20,8 @@ interface UseSetupWindowSizingOptions {
   dependencies: DependencyList;
 }
 
-function clamp(value: number, min: number, max: number): number {
+function clampToBounds(value: number, preferredMin: number, max: number): number {
+  const min = Math.min(preferredMin, max);
   return Math.min(Math.max(value, min), max);
 }
 
@@ -38,11 +41,11 @@ async function getMonitorBounds() {
 
   return {
     maxWidth: Math.max(
-      MIN_SETUP_WINDOW_WIDTH,
+      ABSOLUTE_MIN_SETUP_WINDOW_WIDTH,
       Math.floor(workAreaWidth * MAX_WORKAREA_WIDTH_RATIO),
     ),
     maxHeight: Math.max(
-      MIN_SETUP_WINDOW_HEIGHT,
+      ABSOLUTE_MIN_SETUP_WINDOW_HEIGHT,
       Math.floor(workAreaHeight * MAX_WORKAREA_HEIGHT_RATIO),
     ),
   };
@@ -109,8 +112,8 @@ export function useSetupWindowSizing({
           contentHeight,
         );
 
-        const targetWidth = clamp(desiredWidth, MIN_SETUP_WINDOW_WIDTH, bounds.maxWidth);
-        const targetHeight = clamp(desiredHeight, MIN_SETUP_WINDOW_HEIGHT, bounds.maxHeight);
+        const targetWidth = clampToBounds(desiredWidth, MIN_USABLE_SETUP_WINDOW_WIDTH, bounds.maxWidth);
+        const targetHeight = clampToBounds(desiredHeight, MIN_USABLE_SETUP_WINDOW_HEIGHT, bounds.maxHeight);
         const lastRequested = lastRequestedSizeRef.current;
 
         if (

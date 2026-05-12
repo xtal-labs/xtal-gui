@@ -9,7 +9,7 @@ const ScrollArea = React.forwardRef<HTMLDivElement, ScrollAreaProps>(
       <div
         ref={ref}
         className={cn(
-          "relative w-full overflow-y-auto overscroll-contain chamfered-border-wrap",
+          "relative w-full overflow-auto overscroll-contain chamfered-border-wrap",
           className
         )}
         {...props}

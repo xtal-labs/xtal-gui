@@ -17,7 +17,6 @@ import { GasSettings, type GasConfig } from "@/components/common/GasSettings";
 import { ParamInput } from "./ParamInput";
 import { ResultDisplay } from "./ResultDisplay";
 import { cn, getXtalInputError, isValidXtalInput, parseXtalToShards } from "@/lib/utils";
-import { encodeParamHex } from "@/lib/contractQuery";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { useUiStore, useGatewayStore, useWalletStore } from "@/stores";
 import type { AbiMethod, QueryResult } from "@/types/contract";
@@ -74,17 +73,33 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
     setParamValues((prev) => ({ ...prev, [name]: value }));
   };
 
-  const encodeCallData = (): string => {
-    // Build hex-encoded call data: selector + packed params
-    const selector = method.selector.map((b) => b.toString(16).padStart(2, "0")).join("");
-    let data = selector;
-
-    for (const param of method.params) {
-      const val = paramValues[param.name] || "";
-      data += encodeParamHex(param.type, val);
+  // Encode calldata using the Rust backend's SDK-delegated encoder
+  const encodeCallData = async (): Promise<string> => {
+    if (method.params.length === 0) {
+      return "";
     }
 
-    return data;
+    // For raw encoding with a single bytes param, pass through as-is
+    if (method.encoding === "raw" && method.params.length === 1 && method.params[0].type === "bytes") {
+      return (paramValues[method.params[0].name] || "").replace(/^0x/, "");
+    }
+
+    const params = method.params.map((param) => ({
+      name: param.name,
+      type: param.type,
+      value: paramValues[param.name] || "",
+    }));
+
+    const result = await tauriCommand<{ data: string; param_results: typeof params }>(
+      "encode_contract_calldata",
+      {
+        contractAddress,
+        methodName: method.name,
+        params,
+      },
+    );
+
+    return result.data;
   };
 
   const handleQuery = async () => {
@@ -94,16 +109,10 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
     try {
       let data: string | undefined;
 
-      if (method.encoding === "raw" && method.params.length === 1 && method.params[0].type === "bytes") {
-        // Raw encoding: selector + raw bytes
-        const selector = method.selector.map((b) => b.toString(16).padStart(2, "0")).join("");
-        const rawHex = (paramValues[method.params[0].name] || "").replace(/^0x/, "");
-        data = selector + rawHex;
-      } else if (method.params.length > 0) {
-        data = encodeCallData();
+      if (method.params.length > 0) {
+        data = await encodeCallData();
       } else {
-        // No params: just the selector
-        data = method.selector.map((b) => b.toString(16).padStart(2, "0")).join("");
+        data = "";
       }
 
       const result = await tauriCommand<QueryResult>("query_contract", {
@@ -146,14 +155,10 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
     try {
       let data: string | undefined;
 
-      if (method.encoding === "raw" && method.params.length === 1 && method.params[0].type === "bytes") {
-        const selector = method.selector.map((b) => b.toString(16).padStart(2, "0")).join("");
-        const rawHex = (paramValues[method.params[0].name] || "").replace(/^0x/, "");
-        data = selector + rawHex;
-      } else if (method.params.length > 0) {
-        data = encodeCallData();
+      if (method.params.length > 0) {
+        data = await encodeCallData();
       } else {
-        data = method.selector.map((b) => b.toString(16).padStart(2, "0")).join("");
+        data = "";
       }
 
       const effectiveGasLimit = parseInt(gasLimit) || gasConfig?.defaultGasLimit || 100_000;

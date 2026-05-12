@@ -26,7 +26,6 @@ import {
   parseXtalToShards,
 } from "@/lib/utils";
 import { parseAddressInput } from "@/lib/address";
-import { buildCallData } from "@/lib/contractQuery";
 import { tauriCommand } from "@/hooks";
 import { useUiStore, useWalletStore } from "@/stores";
 import type { CageConfig } from "@/types/contract";
@@ -42,10 +41,8 @@ type WithdrawStep = "form" | "confirm" | "sending" | "success" | "error";
 
 interface SendResult {
   txid: string;
-  fee: number;
+  fee: string; // shard value as string to avoid JS precision loss
 }
-
-const CAGE_WITHDRAW_SELECTOR = [1, 0, 0, 0];
 
 export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }: WithdrawModalProps) {
   const { addToast } = useUiStore();
@@ -101,7 +98,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
     }
   }, [isOpen]);
 
-  // Derived values
+  // Derived values — parseXtalToShards used for display only, not sent to backend
   const parsedAmountShards = parseXtalToShards(amount);
   const amountShards = parsedAmountShards ?? 0;
   const amountError = getXtalInputError(amount);
@@ -147,7 +144,6 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
       setError("Please enter a valid Base58Check UTXO address");
       return;
     }
-
     if (!cageConfig?.address) {
       setError("CAGE contract not yet loaded. Please wait a moment and try again.");
       return;
@@ -157,16 +153,21 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
     setError(null);
 
     try {
-      // Encode CAGE withdraw calldata: selector + recipient (utxo_address) + amount (u64)
-      const data = buildCallData(CAGE_WITHDRAW_SELECTOR, [
-        { type: "utxo_address", value: recipient.trim() },
-        { type: "u64", value: String(amountShards) },
-      ]);
+      // Encode calldata via the Rust backend's SDK-delegated encoder.
+      // Pass raw strings — Rust handles all numeric parsing to avoid JS precision loss.
+      const encodeResult = await tauriCommand<{ data: string }>("encode_contract_calldata", {
+        contractAddress: cageConfig.address,
+        methodName: "withdraw",
+        params: [
+          { name: "recipient", type: "utxo_address", value: recipient.trim() },
+          { name: "amount", type: "u64", value: amount },
+        ],
+      });
 
       const result = await tauriCommand<SendResult>("call_contract", {
-        contractAddress: cageConfig?.address ?? "",
+        contractAddress: cageConfig.address,
         method: "withdraw",
-        data,
+        data: encodeResult.data,
         gasLimit: effectiveGasLimit,
         gasPrice: effectiveGasPrice,
         password,
@@ -221,8 +222,8 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4 relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
         {/* Decorative crystal facet overlay — accent (VM source) to primary (UTXO destination) */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div

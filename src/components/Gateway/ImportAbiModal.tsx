@@ -12,6 +12,9 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { useUiStore, useGatewayStore } from "@/stores";
+import { getFruitColor } from "@/lib/fruitColors";
+
+const FRUIT_TYPES = ["Apple", "Orange", "Pear", "Grape", "Peach", "Pineapple", "Strawberry", "Kiwi", "Watermelon"];
 
 interface ImportAbiModalProps {
   isOpen: boolean;
@@ -101,8 +104,8 @@ export function ImportAbiModal({ isOpen, onClose, prefillAddress }: ImportAbiMod
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4 relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
             className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-accent/50 to-transparent"
@@ -212,12 +215,29 @@ export function ImportAbiModal({ isOpen, onClose, prefillAddress }: ImportAbiMod
                 <label className="text-sm font-heading tracking-wide text-foreground-secondary">
                   FRUIT SHARD
                 </label>
-                <Input
-                  value={fruitType}
-                  onChange={(e) => setFruitType(e.target.value)}
-                  placeholder="Apple"
-                  className="font-mono text-sm"
-                />
+                <div className="flex flex-wrap gap-2">
+                  {FRUIT_TYPES.map((ft) => {
+                    const colors = getFruitColor(ft);
+                    const isSelected = fruitType === ft;
+                    return (
+                      <button
+                        key={ft}
+                        onClick={() => setFruitType(ft)}
+                        className={cn(
+                          "px-3 py-1.5 chamfered-sm text-xs font-heading tracking-wide transition-all duration-300",
+                          "bg-gradient-to-br border",
+                          colors.bg,
+                          colors.border,
+                          isSelected
+                            ? cn(colors.glow, "shadow-lg", "text-foreground")
+                            : "opacity-70 text-foreground-muted hover:opacity-100"
+                        )}
+                      >
+                        {colors.emoji} {ft}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {error && (

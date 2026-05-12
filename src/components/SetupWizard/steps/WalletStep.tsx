@@ -40,7 +40,7 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
   return (
     <div className="animate-[fade-in-up_0.4s_ease-out]">
       {/* Header */}
-      <div className="text-center mb-8">
+      <div className="text-center mb-5 sm:mb-8 max-h-[560px]:mb-3">
         <h2 className="text-2xl font-light mb-2">Set Up Your Wallet</h2>
         <p className="text-muted-foreground">
           A wallet stores your XTAL and allows you to send transactions on{' '}
@@ -49,7 +49,7 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
       </div>
 
       {/* Options */}
-      <div className="space-y-3">
+      <div className="space-y-3 max-h-[560px]:space-y-2">
         {WALLET_OPTIONS.map((option, index) => {
           const Icon = option.icon;
 
@@ -59,7 +59,7 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
               onClick={() => !option.disabled && onSelect(option.id)}
               disabled={option.disabled}
               className={`
-                group w-full chamfered p-5 text-left transition-all duration-300
+                group w-full chamfered p-4 sm:p-5 max-h-[560px]:p-3 text-left transition-all duration-300
                 border relative overflow-hidden
                 ${option.disabled
                   ? 'border-border/50 bg-card/30 opacity-60 cursor-not-allowed'
@@ -70,10 +70,10 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
                 animationDelay: `${index * 80}ms`,
               }}
             >
-              <div className="flex items-center gap-4">
+              <div className="flex items-center gap-3 sm:gap-4">
                 {/* Icon container */}
                 <div className={`
-                  w-12 h-12 chamfered-sm flex items-center justify-center flex-shrink-0
+                  w-10 h-10 sm:w-12 sm:h-12 chamfered-sm flex items-center justify-center flex-shrink-0
                   ${option.disabled
                     ? 'bg-muted/10'
                     : option.recommended
@@ -97,7 +97,7 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground mt-0.5">
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
                     {option.disabled ? option.disabledReason : option.description}
                   </p>
                 </div>
@@ -121,7 +121,7 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
       </div>
 
       {/* Info */}
-      <div className="mt-6 chamfered-sm p-4 bg-accent/5 border border-accent/20">
+      <div className="mt-4 sm:mt-6 max-h-[560px]:mt-3 chamfered-sm p-3 sm:p-4 bg-accent/5 border border-accent/20">
         <p className="text-sm text-muted-foreground">
           <span className="text-accent">Tip:</span>{' '}
           Your wallet is encrypted and stored locally. Always back up your recovery phrase securely.

@@ -106,7 +106,8 @@ export interface ValidatorEarnings {
 export interface ValidatorBalanceInfo {
   validatorAddress: string;
   availableBalance: number;  // UTXO balance (unstaked, available to stake)
-  matureStake: number;       // Mature staked XTAL available to unstake
+  withdrawableStake?: number; // Staked XTAL available to unstake
+  matureStake: number;       // Backward-compatible alias for withdrawableStake
   pendingStake: number;      // Immature stake not yet effective
   totalStake: number;        // Mature + pending stake
   pendingUnstake: number;    // Pending unstake (locked)
@@ -126,12 +127,24 @@ export interface FruitProductionStats {
   expectedStems: number;
   expectedTimeSecs: number;
   winProbability: number;
+  networkStakeUnits: number;
 
   // Reference difficulty (for comparison)
   referenceDifficultyBits: number;
 
   // Personalized stats (when validator address is provided)
   personalExpectedTimeSecs?: number;
+}
+
+/** Session-only per-epoch difficulty snapshot for a fruit type */
+export interface FruitDifficultyHistoryPoint {
+  epoch: number;
+  timestamp: number;
+  difficultyBits: number;
+  referenceDifficultyBits: number;
+  expectedTimeSecs: number;
+  expectedStems: number;
+  networkStakeUnits: number;
 }
 
 /** A fruit produced by the local validator during this session */

@@ -43,10 +43,10 @@ import type {
   WalletBalance,
   VmAccountBalance,
   Address,
+  VmAddress,
   WalletStatus,
   TransactionHistoryResponse,
   SignerImportResult,
-  MultisigAddressInfo,
 } from "@/types";
 import { MnemonicInput } from "@/components/common/MnemonicInput";
 import { SendModal } from "./SendModal";
@@ -271,28 +271,14 @@ export default function Wallet() {
     setIsLoading(true);
     setError(null);
     try {
-      const [balanceResult, addressesResult, multisigResult, txResult] = await Promise.all([
+      const [balanceResult, addressesResult, txResult] = await Promise.all([
         tauriCommand<WalletBalance>("get_wallet_balance"),
-        tauriCommand<string[]>("get_addresses", { limit: 20 }),
-        tauriCommand<MultisigAddressInfo[]>("get_multisig_addresses"),
+        tauriCommand<Address[]>("get_addresses", { limit: 20 }),
         tauriCommand<TransactionHistoryResponse>("get_transaction_history", { limit: PAGE_SIZE, offset: 0 }),
       ]);
 
       setBalance(balanceResult);
-      // Convert string[] to Address[]
-      const multisigLabels = new Map(
-        multisigResult.map((script) => [
-          script.address,
-          script.label?.trim() || `Multisig ${script.threshold ?? ""}`.trim(),
-        ])
-      );
-      const addrs: Address[] = addressesResult.map((addr, i) => ({
-        address: addr,
-        index: i,
-        label: multisigLabels.get(addr) ?? (i === 0 ? "Primary" : undefined),
-        used: false,
-      }));
-      setAddresses(addrs);
+      setAddresses(addressesResult);
       setTransactionPage(1, txResult.transactions, txResult.totalCount);
 
       // Also refresh VM data if on VM tab
@@ -317,7 +303,7 @@ export default function Wallet() {
     try {
       const [vmBalanceResult, vmAddrsResult, txResult] = await Promise.all([
         tauriCommand<VmAccountBalance>("get_vm_account_balance"),
-        tauriCommand<string[]>("get_vm_addresses"),
+        tauriCommand<VmAddress[]>("get_vm_addresses"),
         tauriCommand<TransactionHistoryResponse>("get_vm_transaction_history", { limit: PAGE_SIZE, offset: 0 }),
       ]);
 
@@ -872,13 +858,24 @@ export default function Wallet() {
               {addresses.map((addr) => (
                 <div
                   key={addr.address}
-                  className="flex items-center justify-between py-2 px-3 chamfered-sm bg-muted/50"
+                  className={cn(
+                    "flex items-center justify-between py-2 px-3 chamfered-sm bg-muted/50",
+                    addr.kind === "validator" && "validator-address-row"
+                  )}
                 >
                   <div className="flex items-center gap-2">
+                    {addr.kind === "validator" && (
+                      <ShieldCheck className="h-3.5 w-3.5 text-primary" />
+                    )}
                     <HashDisplay hash={addr.address} truncate={false} showTooltip={false} />
                     {addr.label && (
                       <Badge variant="outline" shape="chamfered" className="text-xs">
                         {addr.label}
+                      </Badge>
+                    )}
+                    {addr.kind === "validator" && (
+                      <Badge variant="secondary" shape="chamfered" className="text-xs">
+                        Validator
                       </Badge>
                     )}
                   </div>
@@ -984,16 +981,16 @@ export default function Wallet() {
             </p>
           ) : (
             <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {vmAddresses.map((addr, i) => (
+              {vmAddresses.map((addr) => (
                 <div
-                  key={addr}
+                  key={addr.address}
                   className="flex items-center justify-between py-2 px-3 chamfered-sm bg-muted/50"
                 >
                   <div className="flex items-center gap-2 min-w-0">
-                    <HashDisplay hash={addr} truncate={false} showTooltip={false} />
-                    {i === 0 && (
+                    <HashDisplay hash={addr.address} truncate={false} showTooltip={false} />
+                    {addr.label && (
                       <Badge variant="outline" shape="chamfered" className="text-xs shrink-0">
-                        Primary
+                        {addr.label}
                       </Badge>
                     )}
                   </div>
@@ -1214,8 +1211,8 @@ export default function Wallet() {
 
       {/* Load Wallet Modal - simple confirmation, no password required */}
       {showLoadModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <Card variant="crystalline" className="w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">LOAD WALLET</CardTitle>
@@ -1254,9 +1251,9 @@ export default function Wallet() {
 
       {/* Create Wallet Modal - always rendered regardless of wallet state */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 overflow-y-auto py-4 text-foreground">
+        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
           <Card variant="crystalline" className={cn(
-            "w-full mx-4",
+            "w-full max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto",
             createdMnemonic ? "max-w-lg" : "max-w-md"
           )}>
             {createdMnemonic ? (
@@ -1387,8 +1384,8 @@ export default function Wallet() {
 
       {/* Import Wallet Modal */}
       {showImportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-          <Card variant="crystalline" className="w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
+          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">
@@ -1714,8 +1711,8 @@ export default function Wallet() {
 
       {/* Import Wallet from File Modal */}
       {showImportFileModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-          <Card variant="crystalline" className="w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
+          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">
@@ -1871,8 +1868,8 @@ export default function Wallet() {
       )}
 
       {showChangePasswordModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-          <Card variant="crystalline" className="w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
+          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">CHANGE PASSWORD</CardTitle>

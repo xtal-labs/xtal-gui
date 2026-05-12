@@ -65,11 +65,11 @@ export function RecoveryPhraseDisplay({
   return (
     <div className="animate-[fade-in-up_0.4s_ease-out]">
       {/* Warning banner */}
-      <div className="chamfered-sm p-3 mb-3 bg-warning/10 border border-warning/30 flex items-start gap-3">
+      <div className="chamfered-sm p-3 max-h-[560px]:p-2 mb-3 bg-warning/10 border border-warning/30 flex items-start gap-3">
         <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
         <div className="text-sm">
           <p className="text-warning font-medium mb-1">Important Security Warning</p>
-          <ul className="text-warning/80 space-y-1 list-disc list-inside">
+          <ul className="text-warning/80 space-y-1 max-h-[560px]:space-y-0.5 list-disc list-inside">
             <li>Never share these words with anyone</li>
             <li>Never enter them on any website</li>
             <li>Store them in a secure, offline location</li>
@@ -78,13 +78,13 @@ export function RecoveryPhraseDisplay({
       </div>
 
       {/* Mnemonic grid */}
-      <div className="chamfered-border-wrap mb-4">
-        <div className="chamfered p-4 bg-card">
-          <div className="grid grid-cols-3 gap-2">
+      <div className="chamfered-border-wrap mb-4 max-h-[560px]:mb-3">
+        <div className="chamfered p-3 sm:p-4 max-h-[560px]:p-2 bg-card">
+          <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-2 max-h-[560px]:gap-1.5">
             {mnemonic.map((word, index) => (
               <div
                 key={index}
-                className="chamfered-sm px-3 py-2 bg-background border border-border/50 flex items-center gap-2 group hover:border-accent/50 transition-colors"
+                className="chamfered-sm px-2 sm:px-3 py-2 max-h-[560px]:py-1.5 bg-background border border-border/50 flex items-center gap-2 group hover:border-accent/50 transition-colors"
                 style={{ animationDelay: `${index * 50}ms` }}
               >
                 <span className="text-xs text-foreground-muted w-5 text-right font-mono">
@@ -100,7 +100,7 @@ export function RecoveryPhraseDisplay({
           {/* Copy mnemonic button */}
           <button
             onClick={handleCopyMnemonic}
-            className="mt-3 w-full chamfered-sm py-2.5 border border-border hover:border-accent/50 flex items-center justify-center gap-2 transition-all hover:bg-accent/5"
+            className="mt-3 max-h-[560px]:mt-2 w-full chamfered-sm py-2 sm:py-2.5 border border-border hover:border-accent/50 flex items-center justify-center gap-2 transition-all hover:bg-accent/5"
           >
             {mnemonicCopied ? (
               <>
@@ -118,7 +118,7 @@ export function RecoveryPhraseDisplay({
       </div>
 
       {/* Master Public Key */}
-      <div className="chamfered-sm p-3 mb-3 bg-card/50 border border-border/50 flex items-center justify-between gap-3">
+      <div className="chamfered-sm p-3 max-h-[560px]:p-2 mb-3 bg-card/50 border border-border/50 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
           <Key className="w-4 h-4 text-accent flex-shrink-0" />
           <span className="text-xs font-heading text-foreground-muted uppercase tracking-wider flex-shrink-0">
@@ -147,7 +147,7 @@ export function RecoveryPhraseDisplay({
           {!seedRevealed ? (
             <button
               onClick={() => setSeedRevealed(true)}
-              className="w-full chamfered-sm p-3 border border-destructive/30 bg-destructive/5 flex items-center justify-between gap-3 hover:border-destructive/50 hover:bg-destructive/10 transition-all"
+              className="w-full chamfered-sm p-3 max-h-[560px]:p-2 border border-destructive/30 bg-destructive/5 flex items-center justify-between gap-3 hover:border-destructive/50 hover:bg-destructive/10 transition-all"
             >
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-destructive flex-shrink-0" />
@@ -241,7 +241,7 @@ export function RecoveryPhraseDisplay({
          onClick={onConfirm}
          disabled={!canContinue}
          className={`
-           w-full chamfered py-3 font-medium text-lg transition-all duration-300
+           w-full chamfered py-3 max-h-[560px]:py-2.5 font-medium text-base sm:text-lg transition-all duration-300
            flex items-center justify-center gap-3
            ${canContinue
               ? 'bg-gradient-to-r from-accent to-primary text-foreground hover:shadow-glow hover:scale-[1.01]'

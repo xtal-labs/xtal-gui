@@ -123,7 +123,7 @@ export function BootstrapScreen({
   const { configs: shardConfigs, visible: shardVisible } = useShardField();
 
   return (
-    <div className="relative h-screen w-screen bg-background hex-grid-bg overflow-hidden">
+    <div className="relative min-h-dvh min-w-[800px] bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients — primary/accent (healthy anticipation) */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"
@@ -166,7 +166,7 @@ export function BootstrapScreen({
       ))}
 
       {/* Card layer */}
-      <div className="absolute inset-0 flex items-center justify-center p-4">
+      <div className="absolute inset-0 flex items-start min-[900px]:items-center justify-center overflow-auto p-4">
         <div
           className="relative max-w-sm w-full"
           style={{ animation: "fade-in-up 0.6s ease-out 0.3s backwards" }}

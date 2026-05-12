@@ -1,8 +1,17 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from "react";
 import { Lock, AlertCircle, Timer, TrendingUp, TrendingDown, Info } from "lucide-react";
+import {
+  Area,
+  AreaChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { Switch } from "@/components/ui/switch";
 import { cn, shardsToXtal, formatDuration, formatNumber } from "@/lib/utils";
 import { FRUIT_COLORS } from "@/lib/fruitColors";
+import type { FruitDifficultyHistoryPoint } from "@/types";
 
 interface FruitCardProps {
   fruitType: string;
@@ -21,6 +30,7 @@ interface FruitCardProps {
   difficultyUp?: boolean;  // true = harder, false = easier
   // Info tooltip data
   targetIntervalSecs?: number;
+  difficultyHistory?: FruitDifficultyHistoryPoint[];
   maxSizeBytes?: number;
   maxFuel?: number;
 }
@@ -40,23 +50,84 @@ function FruitCard({
   difficultyChanged,
   difficultyUp,
   targetIntervalSecs,
+  difficultyHistory = [],
   maxSizeBytes,
   maxFuel,
 }: FruitCardProps) {
   const colors = FRUIT_COLORS[fruitType] || FRUIT_COLORS.Apple;
   const [showTooltip, setShowTooltip] = useState(false);
   const infoBtnRef = useRef<HTMLButtonElement>(null);
-  const [tooltipPos, setTooltipPos] = useState({ top: 0, left: 0 });
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const [tooltipPos, setTooltipPos] = useState({
+    top: 0,
+    left: 0,
+    width: 288,
+    maxHeight: 360,
+  });
 
   const updateTooltipPos = useCallback(() => {
-    if (infoBtnRef.current) {
+    if (infoBtnRef.current && typeof window !== "undefined") {
       const rect = infoBtnRef.current.getBoundingClientRect();
-      setTooltipPos({ top: rect.bottom + 8, left: rect.left });
+      const viewportPadding = 12;
+      const tooltipGap = 8;
+      const availableWidth = Math.max(0, window.innerWidth - viewportPadding * 2);
+      const availableHeight = Math.max(160, window.innerHeight - viewportPadding * 2);
+      const width = Math.min(288, availableWidth);
+      const measuredHeight = tooltipRef.current?.offsetHeight ?? 320;
+      const maxLeft = window.innerWidth - width - viewportPadding;
+      const spaceBelow = window.innerHeight - rect.bottom - tooltipGap - viewportPadding;
+      const spaceAbove = rect.top - tooltipGap - viewportPadding;
+      const openAbove = spaceBelow < measuredHeight && spaceAbove > spaceBelow;
+      const availableVerticalSpace = Math.max(160, Math.min(availableHeight, openAbove ? spaceAbove : spaceBelow));
+      const height = Math.min(measuredHeight, availableVerticalSpace);
+
+      let left = rect.left;
+      let top = openAbove ? rect.top - height - tooltipGap : rect.bottom + tooltipGap;
+
+      setTooltipPos({
+        top: Math.max(viewportPadding, top),
+        left: Math.max(viewportPadding, Math.min(left, maxLeft)),
+        width,
+        maxHeight: availableVerticalSpace,
+      });
     }
   }, []);
 
   // Use personal time when available, fall back to network time
   const displayTimeSecs = personalExpectedTimeSecs ?? expectedTimeSecs;
+  const difficultyChartId = `${fruitType.replace(/[^a-z0-9]/gi, "") || "fruit"}DifficultyGradient`;
+  const difficultyChartData = useMemo(
+    () =>
+      difficultyHistory.map((point) => ({
+        epoch: point.epoch,
+        difficultyBits: point.difficultyBits,
+        expectedTimeSecs: point.expectedTimeSecs,
+      })),
+    [difficultyHistory]
+  );
+  const latestDifficulty = difficultyHistory[difficultyHistory.length - 1];
+  const hasDifficultyTrend = difficultyChartData.length > 1;
+
+  useLayoutEffect(() => {
+    if (!showTooltip) return;
+
+    updateTooltipPos();
+    const frame = window.requestAnimationFrame(updateTooltipPos);
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [showTooltip, updateTooltipPos, difficultyChartData.length]);
+
+  useEffect(() => {
+    if (!showTooltip) return;
+
+    window.addEventListener("resize", updateTooltipPos);
+    window.addEventListener("scroll", updateTooltipPos, true);
+
+    return () => {
+      window.removeEventListener("resize", updateTooltipPos);
+      window.removeEventListener("scroll", updateTooltipPos, true);
+    };
+  }, [showTooltip, updateTooltipPos]);
 
   return (
     <>
@@ -94,6 +165,8 @@ function FruitCard({
               className="text-foreground-muted hover:text-foreground transition-colors"
               onMouseEnter={() => { updateTooltipPos(); setShowTooltip(true); }}
               onMouseLeave={() => setShowTooltip(false)}
+              onFocus={() => { updateTooltipPos(); setShowTooltip(true); }}
+              onBlur={() => setShowTooltip(false)}
               onClick={() => { updateTooltipPos(); setShowTooltip(!showTooltip); }}
               aria-label={`${fruitType} specifications`}
             >
@@ -184,8 +257,14 @@ function FruitCard({
     {/* Info tooltip — rendered outside the chamfered card so clip-path doesn't clip it */}
     {showTooltip && (
       <div
-        className="fixed z-50 w-52 animate-[fadeInDown_150ms_ease-out] overflow-hidden rounded-md bg-black/70 backdrop-blur-xl border border-white/[0.08] shadow-xl shadow-black/40"
-        style={{ top: tooltipPos.top, left: tooltipPos.left }}
+        ref={tooltipRef}
+        className="fixed z-50 animate-[fadeInDown_150ms_ease-out] overflow-y-auto overscroll-contain rounded-md bg-black/70 backdrop-blur-xl border border-white/[0.08] shadow-xl shadow-black/40"
+        style={{
+          top: tooltipPos.top,
+          left: tooltipPos.left,
+          width: tooltipPos.width,
+          maxHeight: tooltipPos.maxHeight,
+        }}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
       >
@@ -217,6 +296,17 @@ function FruitCard({
                 <span className="font-mono text-xs text-white/80">1 / {formatDuration(targetIntervalSecs)}</span>
               </div>
             )}
+            {latestDifficulty && (
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-1.5">
+                  <span className={cn("inline-block h-1 w-1 rounded-full", colors.icon.replace("text-", "bg-"))} />
+                  <span className="text-[11px] text-white/50 uppercase tracking-wider">Difficulty</span>
+                </div>
+                <span className="font-mono text-xs text-white/80">
+                  0x{latestDifficulty.difficultyBits.toString(16)}
+                </span>
+              </div>
+            )}
             {maxSizeBytes !== undefined && maxSizeBytes > 0 && (
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-1.5">
@@ -236,6 +326,72 @@ function FruitCard({
               </div>
             )}
           </div>
+
+          {latestDifficulty && (
+            <div className="pt-2 border-t border-white/[0.08]">
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-[11px] text-white/50 uppercase tracking-wider">Epoch Difficulty</span>
+                <span className="font-mono text-[11px] text-white/45">
+                  {difficultyChartData.length} epoch{difficultyChartData.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <div className="h-24 w-full">
+                {hasDifficultyTrend ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={difficultyChartData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
+                      <defs>
+                        <linearGradient id={difficultyChartId} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.28} />
+                          <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <XAxis
+                        dataKey="epoch"
+                        tick={{ fontSize: 10, fill: "rgba(255,255,255,0.45)" }}
+                        tickLine={false}
+                        axisLine={false}
+                        interval="preserveStartEnd"
+                      />
+                      <YAxis
+                        width={48}
+                        tick={{ fontSize: 10, fill: "rgba(255,255,255,0.45)" }}
+                        tickLine={false}
+                        axisLine={false}
+                        domain={["dataMin", "dataMax"]}
+                        tickFormatter={(value) => `0x${Number(value).toString(16)}`}
+                      />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: "rgba(0,0,0,0.88)",
+                          border: "1px solid rgba(255,255,255,0.12)",
+                          borderRadius: "6px",
+                          color: "rgba(255,255,255,0.86)",
+                          fontSize: "11px",
+                        }}
+                        labelStyle={{ color: "rgba(255,255,255,0.72)" }}
+                        labelFormatter={(label) => `Epoch ${label}`}
+                        formatter={(value) => [`0x${Number(value).toString(16)}`, "Difficulty"]}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="difficultyBits"
+                        stroke="hsl(var(--primary))"
+                        strokeWidth={1.8}
+                        fill={`url(#${difficultyChartId})`}
+                        isAnimationActive={false}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-sm border border-white/[0.08] bg-white/[0.03]">
+                    <span className="font-mono text-[11px] text-white/45">
+                      Epoch {latestDifficulty.epoch}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     )}

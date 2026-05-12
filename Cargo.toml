@@ -17,7 +17,7 @@ path = "src-tauri/src/main.rs"
 
 [dependencies]
 # Core xtal library
-xtal = { path = ".." }
+xtal = { git = "https://github.com/xtal-labs/xtal", branch = "main" }
 
 # Crypto (for VerifyingKey - already a transitive dep via xtal)
 ed25519-dalek = "2"

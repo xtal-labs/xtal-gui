@@ -339,10 +339,12 @@ export default function Mining() {
               <label className="text-sm font-medium">Mining Wallet</label>
               {isActive && miningWalletName ? (
                 // When mining is active, show the locked-in wallet (read-only)
-                <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-border bg-muted/30">
-                  <Wallet className="h-4 w-4 text-primary" />
-                  <span className="font-heading">{miningWalletName}</span>
-                  <Badge variant="secondary" className="ml-auto text-xs">Locked</Badge>
+                <div className="chamfered-sm-border-wrap">
+                  <div className="chamfered-sm flex items-center gap-2 px-3 py-2 bg-muted/30">
+                    <Wallet className="h-4 w-4 text-primary" />
+                    <span className="font-heading">{miningWalletName}</span>
+                    <Badge variant="secondary" className="ml-auto text-xs">Locked</Badge>
+                  </div>
                 </div>
               ) : walletLoaded && walletName ? (
                 <DropdownMenu>

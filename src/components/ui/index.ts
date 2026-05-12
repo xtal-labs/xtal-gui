@@ -15,6 +15,7 @@ export { Badge, badgeVariants, type BadgeProps } from "./badge";
 export { Progress, ProgressIndeterminate } from "./progress";
 export { Input, type InputProps } from "./input";
 export { Switch } from "./switch";
+export { ModalShell } from "./modal-shell";
 export {
   Tooltip,
   TooltipTrigger,

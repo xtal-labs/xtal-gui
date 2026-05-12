@@ -45,7 +45,7 @@ import {
 } from "./ValidatorModals";
 import { useValidatorStore, useUiStore } from "@/stores";
 import { tauriCommand, useTauriCommand } from "@/hooks";
-import { cn, shardsToXtal, formatDuration, formatNumber, formatTimeAgo, SHARDS_PER_XTAL, copyToClipboard } from "@/lib/utils";
+import { cn, shardsToXtal, formatDuration, formatNumber, formatTimeAgo, parseXtalToShards, copyToClipboard } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import type {
   FruitSpec,
@@ -61,6 +61,14 @@ import type {
   Transaction,
   TransactionHistoryResponse,
 } from "@/types";
+
+interface FeeEstimate {
+  fee: number;
+  txSize: number;
+  inputCount: number;
+  outputCount: number;
+  feeRate: number;
+}
 
 // ============================================================================
 // WalletCTACard Component
@@ -258,14 +266,20 @@ interface FruitProductionRatesProps {
 function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
   if (stats.length === 0 && !isLoading) return null;
 
+  const hasRows = stats.length > 0;
   const hasPersonalStats = stats.some((s) => s.personalExpectedTimeSecs != null);
 
   return (
     <Card variant="crystalline">
       <CardHeader>
-        <CardTitle className="text-base font-heading tracking-wide">
-          FRUIT PRODUCTION RATES
-        </CardTitle>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle className="text-base font-heading tracking-wide">
+            FRUIT PRODUCTION RATES
+          </CardTitle>
+          {isLoading && hasRows && (
+            <RefreshCw className="h-4 w-4 shrink-0 animate-spin text-foreground-muted" />
+          )}
+        </div>
         <CardDescription>
           {hasPersonalStats
             ? "Your expected production rates based on stake"
@@ -273,7 +287,7 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {isLoading && !hasRows ? (
           <div className="flex items-center justify-center py-4">
             <RefreshCw className="h-5 w-5 animate-spin text-foreground-muted" />
           </div>
@@ -359,7 +373,7 @@ export default function Validator() {
   const isRunning = useValidatorStore((state) => state.isRunning);
   const address = useValidatorStore((state) => state.address);
   const walletName = useValidatorStore((state) => state.walletName);
-  const matureStake = useValidatorStore((state) => state.matureStake);
+  const withdrawableStake = useValidatorStore((state) => state.withdrawableStake);
   const pendingStake = useValidatorStore((state) => state.pendingStake);
   const effectiveStake = useValidatorStore((state) => state.effectiveStake);
   const availableBalance = useValidatorStore((state) => state.availableBalance);
@@ -376,6 +390,7 @@ export default function Validator() {
   const refreshTrigger = useValidatorStore((state) => state.refreshTrigger);
   const recentFruits = useValidatorStore((state) => state.recentFruits);
   const wsProductionStats = useValidatorStore((state) => state.productionStats);
+  const fruitDifficultyHistory = useValidatorStore((state) => state.fruitDifficultyHistory);
   const setLoaded = useValidatorStore((state) => state.setLoaded);
   const setRunning = useValidatorStore((state) => state.setRunning);
   const setFruitSpecs = useValidatorStore((state) => state.setFruitSpecs);
@@ -417,6 +432,12 @@ export default function Validator() {
   const [personalProductionStats, setPersonalProductionStats] = useState<FruitProductionStats[]>([]);
   const [isLoadingProductionStats, setIsLoadingProductionStats] = useState(false);
   const [isFruitDetailOpen, setIsFruitDetailOpen] = useState(false);
+  const [stakeFeeEstimate, setStakeFeeEstimate] = useState<FeeEstimate | null>(null);
+  const [isStakeFeeEstimating, setIsStakeFeeEstimating] = useState(false);
+  const [stakeFeeEstimateError, setStakeFeeEstimateError] = useState<string | null>(null);
+  const [unstakeFeeEstimate, setUnstakeFeeEstimate] = useState<FeeEstimate | null>(null);
+  const [isUnstakeFeeEstimating, setIsUnstakeFeeEstimating] = useState(false);
+  const [unstakeFeeEstimateError, setUnstakeFeeEstimateError] = useState<string | null>(null);
   const lastEarningsFetchRef = useRef(0);
 
   const {
@@ -446,7 +467,8 @@ export default function Validator() {
   const productionStats = isLoaded && personalProductionStats.length > 0
     ? personalProductionStats
     : wsProductionStats;
-  const totalStake = matureStake + pendingStake;
+  const totalStake = withdrawableStake + pendingStake;
+  const parsedStakeAmount = parseXtalToShards(stakeAmount);
 
   // Modal state
   const showLoadModal = activeModal === MODAL_LOAD_VALIDATOR;
@@ -455,6 +477,101 @@ export default function Validator() {
   const showMnemonicModal = activeModal === MODAL_MNEMONIC_DISPLAY;
   const showStakeModal = activeModal === MODAL_STAKE;
   const showUnstakeModal = activeModal === MODAL_UNSTAKE;
+
+  useEffect(() => {
+    if (!showStakeModal || !address || parsedStakeAmount === null || parsedStakeAmount <= 0) {
+      setStakeFeeEstimate(null);
+      setIsStakeFeeEstimating(false);
+      setStakeFeeEstimateError(null);
+      return;
+    }
+
+    let isCurrent = true;
+    setIsStakeFeeEstimating(true);
+    setStakeFeeEstimateError(null);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await tauriCommand<FeeEstimate>("estimate_validator_stake_fee", {
+          address,
+          amount: parsedStakeAmount,
+        });
+        if (isCurrent) {
+          setStakeFeeEstimate(result);
+          setStakeFeeEstimateError(null);
+        }
+      } catch (err) {
+        if (isCurrent) {
+          setStakeFeeEstimate(null);
+          setStakeFeeEstimateError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (isCurrent) {
+          setIsStakeFeeEstimating(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(timer);
+    };
+  }, [showStakeModal, address, parsedStakeAmount]);
+
+  useEffect(() => {
+    if (!showUnstakeModal || !address || parsedStakeAmount === null || parsedStakeAmount <= 0) {
+      setUnstakeFeeEstimate(null);
+      setIsUnstakeFeeEstimating(false);
+      setUnstakeFeeEstimateError(null);
+      return;
+    }
+
+    let isCurrent = true;
+    setIsUnstakeFeeEstimating(true);
+    setUnstakeFeeEstimateError(null);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await tauriCommand<FeeEstimate>("estimate_validator_unstake_fee", {
+          address,
+          amount: parsedStakeAmount,
+        });
+        if (isCurrent) {
+          setUnstakeFeeEstimate(result);
+          setUnstakeFeeEstimateError(null);
+        }
+      } catch (err) {
+        if (isCurrent) {
+          setUnstakeFeeEstimate(null);
+          setUnstakeFeeEstimateError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (isCurrent) {
+          setIsUnstakeFeeEstimating(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(timer);
+    };
+  }, [showUnstakeModal, address, parsedStakeAmount]);
+
+  const canSubmitStake =
+    parsedStakeAmount !== null &&
+    parsedStakeAmount > 0 &&
+    stakeFeeEstimate !== null &&
+    !isStakeFeeEstimating &&
+    !stakeFeeEstimateError &&
+    parsedStakeAmount + stakeFeeEstimate.fee <= availableBalance;
+
+  const canSubmitUnstake =
+    parsedStakeAmount !== null &&
+    parsedStakeAmount > 0 &&
+    unstakeFeeEstimate !== null &&
+    !isUnstakeFeeEstimating &&
+    !unstakeFeeEstimateError;
 
   const refreshValidatorStatus = useCallback(async () => {
     if (!address) return;
@@ -522,7 +639,7 @@ export default function Validator() {
       const info = await tauriCommand<ValidatorBalanceInfo>("get_validator_balance_info", { address });
       setBalanceInfo(
         info.availableBalance,
-        info.matureStake,
+        info.withdrawableStake ?? info.matureStake,
         info.pendingStake,
         info.pendingUnstake,
         info.immatureBalance,
@@ -860,16 +977,19 @@ export default function Validator() {
   const handleStake = async () => {
     if (!address || !stakeAmount) return;
 
-    const amountXtal = parseFloat(stakeAmount);
-    if (isNaN(amountXtal) || amountXtal <= 0) {
+    const amountShards = parseXtalToShards(stakeAmount);
+    if (amountShards === null || amountShards <= 0) {
       setError("Please enter a valid amount");
       return;
     }
 
-    const amountShards = Math.floor(amountXtal * SHARDS_PER_XTAL);
+    if (!stakeFeeEstimate || stakeFeeEstimateError || isStakeFeeEstimating) {
+      setError(stakeFeeEstimateError || "Fee estimate is not ready yet");
+      return;
+    }
 
-    // Check if user has sufficient balance
-    if (amountShards > availableBalance) {
+    // Check if user has sufficient balance including the builder-estimated fee.
+    if (amountShards + stakeFeeEstimate.fee > availableBalance) {
       setError(`Insufficient balance. Available: ${shardsToXtal(availableBalance).toLocaleString()} XTAL`);
       return;
     }
@@ -886,7 +1006,7 @@ export default function Validator() {
       addToast({
         type: "stake",
         title: "Stake transaction submitted",
-        message: `Staking ${amountXtal} XTAL`,
+        message: `Staking ${stakeAmount.trim()} XTAL`,
         duration: 5000,
       });
 
@@ -908,17 +1028,14 @@ export default function Validator() {
   const handleUnstake = async () => {
     if (!address || !stakeAmount) return;
 
-    const amountXtal = parseFloat(stakeAmount);
-    if (isNaN(amountXtal) || amountXtal <= 0) {
+    const amountShards = parseXtalToShards(stakeAmount);
+    if (amountShards === null || amountShards <= 0) {
       setError("Please enter a valid amount");
       return;
     }
 
-    const amountShards = Math.floor(amountXtal * SHARDS_PER_XTAL);
-
-    // Check if user has sufficient stake
-    if (amountShards > matureStake) {
-      setError(`Insufficient mature stake. Available to unstake: ${shardsToXtal(matureStake).toLocaleString()} XTAL`);
+    if (!unstakeFeeEstimate || unstakeFeeEstimateError || isUnstakeFeeEstimating) {
+      setError(unstakeFeeEstimateError || "Fee estimate is not ready yet");
       return;
     }
 
@@ -934,7 +1051,7 @@ export default function Validator() {
       addToast({
         type: "unstake",
         title: "Unstake transaction submitted",
-        message: `Unstaking ${amountXtal} XTAL (locked for 1 epoch)`,
+        message: `Unstaking ${stakeAmount.trim()} XTAL (locked for 1 epoch)`,
         duration: 5000,
       });
 
@@ -1065,7 +1182,7 @@ export default function Validator() {
           {/* Stake Card - at top when validator is loaded */}
           <StakeCard
             totalStake={totalStake}
-            matureStake={matureStake}
+            withdrawableStake={withdrawableStake}
             activeStake={effectiveStake}
             pendingStake={pendingStake}
             availableBalance={availableBalance}
@@ -1122,6 +1239,7 @@ export default function Validator() {
                     difficultyChanged={difficultyChanged}
                     difficultyUp={difficultyUp}
                     targetIntervalSecs={stats?.targetIntervalSecs}
+                    difficultyHistory={fruitDifficultyHistory[prod.fruitType] ?? []}
                     maxSizeBytes={fruitSpecs.find((s) => s.fruitType === prod.fruitType)?.maxSizeBytes}
                     maxFuel={fruitSpecs.find((s) => s.fruitType === prod.fruitType)?.maxFuel}
                   />
@@ -1322,6 +1440,10 @@ export default function Validator() {
         totalStake={totalStake}
         effectiveStake={effectiveStake}
         pendingStake={pendingStake}
+        feeEstimate={stakeFeeEstimate}
+        isFeeEstimating={isStakeFeeEstimating}
+        feeEstimateError={stakeFeeEstimateError}
+        canSubmit={canSubmitStake}
         isLoading={isLoading}
         error={error}
         onClose={() => { closeModal(); setStakeAmount(""); setError(null); }}
@@ -1332,8 +1454,12 @@ export default function Validator() {
       <UnstakeModal
         show={showUnstakeModal}
         stakeAmount={stakeAmount}
-        matureStake={matureStake}
+        withdrawableStake={withdrawableStake}
         pendingUnstake={pendingUnstake}
+        feeEstimate={unstakeFeeEstimate}
+        isFeeEstimating={isUnstakeFeeEstimating}
+        feeEstimateError={unstakeFeeEstimateError}
+        canSubmit={canSubmitUnstake}
         isLoading={isLoading}
         error={error}
         onClose={() => { closeModal(); setStakeAmount(""); setError(null); }}

@@ -29,6 +29,7 @@ import { AmountDisplay } from "./AmountDisplay";
 import { HashDisplay } from "./HashDisplay";
 import { cn, formatTimeAgo } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
+import { getMaturityDisplay } from "@/lib/maturity";
 import type { TransactionDetail, UTXODetail, VMDetail } from "@/types";
 
 interface TransactionDetailPanelProps {
@@ -433,6 +434,7 @@ function UtxoDetailBody({
   style: ReturnType<typeof getTransactionStyle>;
 }) {
   const flowConfig = getFlowSectionConfig(detail.txType);
+  const maturityDisplay = getMaturityDisplay(utxoDetail.maturityStatus);
 
   return (
     <>
@@ -537,11 +539,10 @@ function UtxoDetailBody({
         </div>
       )}
 
-      {utxoDetail.maturityStatus?.isImmature && (
+      {maturityDisplay && (
         <div className="chamfered-sm border border-warning/30 bg-warning/10 px-4 py-3">
           <p className="text-xs text-warning">
-            Spendable in {utxoDetail.maturityStatus.blocksUntilMature.toLocaleString()} more leaf
-            blocks.
+            {maturityDisplay.detail}
           </p>
         </div>
       )}

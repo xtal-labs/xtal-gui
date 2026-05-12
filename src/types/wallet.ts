@@ -20,8 +20,18 @@ export interface WalletBalance {
 export interface Address {
   address: string;
   index: number;
+  kind?: "mining" | "receiving" | "change" | "multisig" | "validator";
+  order?: number;
   label?: string;
   used: boolean;
+}
+
+export interface VmAddress {
+  address: string;
+  index: number;
+  kind?: "vm_account" | "account_state";
+  order?: number;
+  label?: string;
 }
 
 export interface MultisigAddressResult {
@@ -54,6 +64,10 @@ export interface MaturityStatus {
   isImmature: boolean;
   /** Number of leaf blocks until maturity (0 if mature) */
   blocksUntilMature: number;
+  /** Semantic source of the maturity constraint */
+  kind?: "coinbase" | "vm_withdrawal" | "script_timelock" | "stake_activation" | "unstake_release";
+  /** Display phase for maturity/recognition state */
+  phase?: "locked" | "awaiting_epoch" | "mature";
 }
 
 export interface Transaction {
@@ -246,6 +260,7 @@ export interface SendRequest {
   toAddress: string;
   amount: number; // in shards
   fee?: number;
+  feeRate?: number; // shards per byte
   memo?: string;
   password: string; // Required for signing
 }

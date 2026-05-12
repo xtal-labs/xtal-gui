@@ -88,19 +88,22 @@ export default function BlockExplorer() {
     return Math.max(1, Math.ceil(totalBlocks / PAGE_SIZE));
   }, [stemHeight]);
 
-  const loadBlocks = useCallback(async () => {
-    const offset = (page - 1) * PAGE_SIZE;
+  const loadBlocks = useCallback(async (targetPage = page, resetAnimation = false) => {
+    const offset = (targetPage - 1) * PAGE_SIZE;
     const result = await fetchBlocks({ limit: PAGE_SIZE, offset });
     if (result) {
+      if (resetAnimation) {
+        resetSeen();
+      }
       setBlocks(result);
       hasLoadedRef.current = true;
     }
-  }, [fetchBlocks, page]);
+  }, [fetchBlocks, page, resetSeen]);
 
   useEffect(() => {
-    loadBlocks();
+    loadBlocks(page, true);
     fetchBestLeaf();
-  }, [loadBlocks, fetchBestLeaf]);
+  }, [loadBlocks, page, fetchBestLeaf]);
 
   // Debounced refetch when new blocks arrive or chain reorgs
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -113,7 +116,7 @@ export default function BlockExplorer() {
     }
 
     refreshTimerRef.current = setTimeout(() => {
-      loadBlocks();
+      loadBlocks(page);
       fetchBestLeaf();
       refreshTimerRef.current = null;
     }, 500);
@@ -123,17 +126,7 @@ export default function BlockExplorer() {
         clearTimeout(refreshTimerRef.current);
       }
     };
-  }, [refreshTrigger, loadBlocks, fetchBestLeaf]);
-
-  // Reset skeleton gate and animation tracking on page change
-  const prevPageRef = useRef(page);
-  useEffect(() => {
-    if (prevPageRef.current !== page) {
-      hasLoadedRef.current = false;
-      resetSeen();
-      prevPageRef.current = page;
-    }
-  }, [page, resetSeen]);
+  }, [refreshTrigger, loadBlocks, page, fetchBestLeaf]);
 
   useEffect(() => {
     if (page > totalPages) {
@@ -180,6 +173,8 @@ export default function BlockExplorer() {
   const handleOpenTxDetail = useCallback(
     async (txid: string, blockHash?: string) => {
       setSearchError(null);
+      setIsFruitDetailOpen(false);
+      resetFruitDetail();
       setIsTxDetailOpen(true);
       const detail = await fetchTxDetail({ txid, blockHash });
       if (!detail) {
@@ -187,12 +182,14 @@ export default function BlockExplorer() {
         setSearchError("Transaction not found.");
       }
     },
-    [fetchTxDetail]
+    [fetchTxDetail, resetFruitDetail]
   );
 
   const handleOpenFruitDetail = useCallback(
     async (fruitHash: string, blockHash: string) => {
       setSearchError(null);
+      setIsTxDetailOpen(false);
+      resetTxDetail();
       setIsFruitDetailOpen(true);
       const detail = await fetchFruitDetail({ hash: fruitHash, blockHash });
       if (!detail) {
@@ -200,7 +197,7 @@ export default function BlockExplorer() {
         setSearchError("Fruit not found.");
       }
     },
-    [fetchFruitDetail]
+    [fetchFruitDetail, resetTxDetail]
   );
 
   const handleSearch = async (event?: FormEvent) => {
@@ -214,6 +211,8 @@ export default function BlockExplorer() {
     resetBlockDetail();
     setIsTxDetailOpen(false);
     resetTxDetail();
+    setIsFruitDetailOpen(false);
+    resetFruitDetail();
 
     if (isNumeric(trimmed)) {
       const height = Number(trimmed);
@@ -270,19 +269,23 @@ export default function BlockExplorer() {
           onNavigateBlock={(hash) => handleOpenDetail(hash)}
         />
 
-        <TransactionDetailPanel
-          detail={txDetail}
-          isOpen={isTxDetailOpen}
-          onClose={handleCloseTxDetail}
-          isLoading={isTxDetailLoading}
-        />
+        {blockDetail?.blockType === "Leaf" && (
+          <TransactionDetailPanel
+            detail={txDetail}
+            isOpen={isTxDetailOpen}
+            onClose={handleCloseTxDetail}
+            isLoading={isTxDetailLoading}
+          />
+        )}
 
-        <FruitDetailPanel
-          detail={fruitDetail}
-          isOpen={isFruitDetailOpen}
-          onClose={handleCloseFruitDetail}
-          isLoading={isFruitDetailLoading}
-        />
+        {blockDetail?.blockType === "Stem" && (
+          <FruitDetailPanel
+            detail={fruitDetail}
+            isOpen={isFruitDetailOpen}
+            onClose={handleCloseFruitDetail}
+            isLoading={isFruitDetailLoading}
+          />
+        )}
       </div>
     );
   }
@@ -451,7 +454,7 @@ export default function BlockExplorer() {
 
           {isBlocksLoading && !hasLoadedRef.current ? (
             <div className="p-6 space-y-3">
-              {Array.from({ length: 6 }).map((_, idx) => (
+              {Array.from({ length: PAGE_SIZE }).map((_, idx) => (
                 <div
                   key={`skeleton-${idx}`}
                   className="h-10 w-full shimmer rounded-md"
@@ -470,7 +473,7 @@ export default function BlockExplorer() {
               <p className="font-heading">No blocks available yet</p>
             </div>
           ) : (
-            <div>
+            <div className={cn(isBlocksLoading && "opacity-60 transition-opacity")}>
               {animatedBlocks.map(({ block, isNew }) => (
                 <div
                   key={block.hash}

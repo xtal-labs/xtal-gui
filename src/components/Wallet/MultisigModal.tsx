@@ -168,8 +168,8 @@ export function MultisigModal({ isOpen, onClose, onAddressCreated }: MultisigMod
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 overflow-y-auto py-4">
-      <Card variant="crystalline" className="w-full max-w-xl mx-4 relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+      <Card variant="crystalline" className="w-full max-w-xl relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
             className="absolute top-0 left-0 w-44 h-44 bg-gradient-to-br from-primary/50 to-transparent"

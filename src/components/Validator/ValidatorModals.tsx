@@ -1,10 +1,11 @@
 import { Play, Plus, X, Eye, EyeOff, RefreshCw, AlertCircle, Minus, Download } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { CardContent, CardHeader, CardTitle, CardDescription, ModalShell } from "@/components/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { AmountDisplay } from "@/components/common";
 import { MnemonicInput } from "@/components/common/MnemonicInput";
 import { RecoveryPhraseDisplay } from "@/components/common/RecoveryPhraseDisplay";
-import { shardsToXtal } from "@/lib/utils";
+import { isValidXtalInput, shardsToXtal } from "@/lib/utils";
 import type { ValidatorWalletCreationResult } from "@/types";
 
 // Modal IDs
@@ -14,6 +15,14 @@ const MODAL_IMPORT_VALIDATOR = "validator-import";
 const MODAL_MNEMONIC_DISPLAY = "validator-mnemonic";
 const MODAL_STAKE = "validator-stake";
 const MODAL_UNSTAKE = "validator-unstake";
+
+interface FeeEstimate {
+  fee: number;
+  txSize: number;
+  inputCount: number;
+  outputCount: number;
+  feeRate: number;
+}
 
 // Load Validator Modal
 function LoadValidatorModal({
@@ -42,8 +51,7 @@ function LoadValidatorModal({
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-      <Card variant="crystalline" className="w-full max-w-md mx-4 ">
+    <ModalShell cardClassName="max-w-md">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="font-heading tracking-wide">START VALIDATOR</CardTitle>
@@ -92,8 +100,7 @@ function LoadValidatorModal({
             Start Validator
           </Button>
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -130,8 +137,7 @@ function CreateWalletModal({
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-      <Card variant="crystalline" className="w-full max-w-md mx-4 ">
+    <ModalShell cardClassName="max-w-md">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="font-heading tracking-wide">CREATE VALIDATOR WALLET</CardTitle>
@@ -221,8 +227,7 @@ function CreateWalletModal({
           </Button>
           </form>
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -239,8 +244,7 @@ function MnemonicModal({
   if (!show || !creationResult) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4">
+    <ModalShell cardClassName="max-w-lg">
         <CardContent className="pt-6">
           <RecoveryPhraseDisplay
             mnemonic={creationResult.mnemonic}
@@ -250,8 +254,7 @@ function MnemonicModal({
             showConfirmCheckbox={false}
           />
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -290,8 +293,7 @@ function ImportValidatorModal({
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4">
+    <ModalShell cardClassName="max-w-lg">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="font-heading tracking-wide">IMPORT VALIDATOR WALLET</CardTitle>
@@ -395,8 +397,7 @@ function ImportValidatorModal({
             </form>
           )}
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -408,6 +409,10 @@ function StakeModal({
   totalStake,
   effectiveStake,
   pendingStake,
+  feeEstimate,
+  isFeeEstimating,
+  feeEstimateError,
+  canSubmit,
   isLoading,
   error,
   onClose,
@@ -420,6 +425,10 @@ function StakeModal({
   totalStake: number;
   effectiveStake: number;
   pendingStake: number;
+  feeEstimate: FeeEstimate | null;
+  isFeeEstimating: boolean;
+  feeEstimateError: string | null;
+  canSubmit: boolean;
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
@@ -429,8 +438,7 @@ function StakeModal({
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-      <Card variant="crystalline" className="w-full max-w-md mx-4">
+    <ModalShell cardClassName="max-w-md">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="font-heading tracking-wide">STAKE XTAL</CardTitle>
@@ -454,12 +462,15 @@ function StakeModal({
               Amount (XTAL)
             </label>
             <Input
-              type="number"
-              placeholder="Enter amount"
+              type="text"
+              placeholder="0.00"
               value={stakeAmount}
-              onChange={(e) => onStakeAmountChange(e.target.value)}
-              min={0}
-              step={1}
+              onChange={(e) => {
+                if (isValidXtalInput(e.target.value)) {
+                  onStakeAmountChange(e.target.value);
+                }
+              }}
+              inputMode="decimal"
             />
           </div>
           <div className="text-sm text-foreground-muted bg-muted/50 p-3 chamfered-sm space-y-1">
@@ -469,11 +480,31 @@ function StakeModal({
             {pendingStake > 0 && (
               <p className="text-warning">Pending stake: <span className="font-mono">{shardsToXtal(pendingStake).toLocaleString()} XTAL</span></p>
             )}
+            <div className="h-px bg-border/60 my-2" />
+            <div className="flex items-center justify-between">
+              <span>Network fee:</span>
+              {isFeeEstimating ? (
+                <span>Estimating...</span>
+              ) : feeEstimate ? (
+                <AmountDisplay amount={feeEstimate.fee} size="sm" showSymbol />
+              ) : (
+                <span className="font-mono">-</span>
+              )}
+            </div>
+            {feeEstimate && (
+              <p>Estimated size: <span className="font-mono">{feeEstimate.txSize.toLocaleString()} bytes</span></p>
+            )}
+            {feeEstimateError && (
+              <p className="text-destructive flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {feeEstimateError}
+              </p>
+            )}
           </div>
           <Button
             className="w-full"
             onClick={onSubmit}
-            disabled={isLoading || !stakeAmount || availableBalance === 0}
+            disabled={isLoading || !stakeAmount || availableBalance === 0 || !canSubmit}
           >
             {isLoading ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -483,8 +514,7 @@ function StakeModal({
             Stake XTAL
           </Button>
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -492,8 +522,12 @@ function StakeModal({
 function UnstakeModal({
   show,
   stakeAmount,
-  matureStake,
+  withdrawableStake,
   pendingUnstake,
+  feeEstimate,
+  isFeeEstimating,
+  feeEstimateError,
+  canSubmit,
   isLoading,
   error,
   onClose,
@@ -502,8 +536,12 @@ function UnstakeModal({
 }: {
   show: boolean;
   stakeAmount: string;
-  matureStake: number;
+  withdrawableStake: number;
   pendingUnstake: number;
+  feeEstimate: FeeEstimate | null;
+  isFeeEstimating: boolean;
+  feeEstimateError: string | null;
+  canSubmit: boolean;
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
@@ -513,8 +551,7 @@ function UnstakeModal({
   if (!show) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 text-foreground">
-      <Card variant="crystalline" className="w-full max-w-md mx-4">
+    <ModalShell cardClassName="max-w-md">
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="font-heading tracking-wide">UNSTAKE XTAL</CardTitle>
@@ -544,26 +581,48 @@ function UnstakeModal({
               Amount (XTAL)
             </label>
             <Input
-              type="number"
-              placeholder="Enter amount"
+              type="text"
+              placeholder="0.00"
               value={stakeAmount}
-              onChange={(e) => onStakeAmountChange(e.target.value)}
-              min={0}
-              max={shardsToXtal(matureStake)}
-              step={1}
+              onChange={(e) => {
+                if (isValidXtalInput(e.target.value)) {
+                  onStakeAmountChange(e.target.value);
+                }
+              }}
+              inputMode="decimal"
             />
           </div>
           <div className="text-sm text-foreground-muted bg-muted/50 p-3 chamfered-sm space-y-1">
-            <p>Mature stake: <span className="font-mono font-semibold text-foreground">{shardsToXtal(matureStake).toLocaleString()} XTAL</span></p>
+            <p>Withdrawable stake: <span className="font-mono font-semibold text-foreground">{shardsToXtal(withdrawableStake).toLocaleString()} XTAL</span></p>
             {pendingUnstake > 0 && (
               <p className="text-warning">Pending unstake: <span className="font-mono">{shardsToXtal(pendingUnstake).toLocaleString()} XTAL</span></p>
+            )}
+            <div className="h-px bg-border/60 my-2" />
+            <div className="flex items-center justify-between">
+              <span>Network fee:</span>
+              {isFeeEstimating ? (
+                <span>Estimating...</span>
+              ) : feeEstimate ? (
+                <AmountDisplay amount={feeEstimate.fee} size="sm" showSymbol />
+              ) : (
+                <span className="font-mono">-</span>
+              )}
+            </div>
+            {feeEstimate && (
+              <p>Estimated size: <span className="font-mono">{feeEstimate.txSize.toLocaleString()} bytes</span></p>
+            )}
+            {feeEstimateError && (
+              <p className="text-destructive flex items-center gap-1">
+                <AlertCircle className="h-3 w-3" />
+                {feeEstimateError}
+              </p>
             )}
           </div>
           <Button
             variant="destructive"
             className="w-full"
             onClick={onSubmit}
-            disabled={isLoading || !stakeAmount || matureStake === 0}
+            disabled={isLoading || !stakeAmount || withdrawableStake === 0 || !canSubmit}
           >
             {isLoading ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -573,8 +632,7 @@ function UnstakeModal({
             Unstake XTAL
           </Button>
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }
 

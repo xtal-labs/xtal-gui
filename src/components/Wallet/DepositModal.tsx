@@ -134,8 +134,8 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
   const eligible = utxos.filter((u) => u.isEligible);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4 relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
         {/* Decorative crystal facet overlay — primary (UTXO source) to accent (VM destination) */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div

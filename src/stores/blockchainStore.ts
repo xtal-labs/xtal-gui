@@ -71,6 +71,36 @@ const initialState = {
   refreshTrigger: 0,
 };
 
+const syncProgressKeys: Array<keyof SyncProgress> = [
+  "phase",
+  "progressPercent",
+  "startedAt",
+  "headersReceived",
+  "targetHeaders",
+  "stemsPending",
+  "stemsComplete",
+  "leavesReceived",
+  "totalLeaves",
+  "currentEpoch",
+  "pivotHeight",
+  "stateRoot",
+  "downloadedChunks",
+  "totalChunks",
+  "blocksExecuted",
+  "targetHeight",
+  "itemsPerSecond",
+  "estimatedSecondsRemaining",
+  "bytesDownloaded",
+  "bytesTotal",
+  "failureReason",
+  "syncPeer",
+  "peerCount",
+];
+
+function isSameSyncProgress(a: SyncProgress, b: SyncProgress) {
+  return syncProgressKeys.every((key) => a[key] === b[key]);
+}
+
 export const useBlockchainStore = create<BlockchainState>((set) => ({
   ...initialState,
 
@@ -82,26 +112,59 @@ export const useBlockchainStore = create<BlockchainState>((set) => ({
 
   // Handle WebSocket blockchain_info message (snake_case)
   handleWsBlockchainInfo: (data) =>
-    set((state) => ({
-      ...state,
-      leafHeight: data.leaf_height,
-      stemHeight: data.height,
-      stemsSinceLastLeaf: data.stem_work_info?.stems_since_last_leaf ?? state.stemsSinceLastLeaf,
-      bestBlockHash: data.latest_leaf?.hash ?? state.bestBlockHash,
-    })),
+    set((state) => {
+      const stemsSinceLastLeaf =
+        data.stem_work_info?.stems_since_last_leaf ?? state.stemsSinceLastLeaf;
+      const bestBlockHash = data.latest_leaf?.hash ?? state.bestBlockHash;
+
+      if (
+        state.leafHeight === data.leaf_height &&
+        state.stemHeight === data.height &&
+        state.stemsSinceLastLeaf === stemsSinceLastLeaf &&
+        state.bestBlockHash === bestBlockHash
+      ) {
+        return state;
+      }
+
+      return {
+        leafHeight: data.leaf_height,
+        stemHeight: data.height,
+        stemsSinceLastLeaf,
+        bestBlockHash,
+      };
+    }),
 
   // Handle WebSocket stem_provider_info message (snake_case)
   handleWsStemProviderInfo: (data) =>
-    set((state) => ({
-      ...state,
-      stemsSinceLastLeaf: data.stems_since_last_leaf.length,
-      latestStemHash: data.latest_stem_hash ?? state.latestStemHash,
-    })),
+    set((state) => {
+      const stemsSinceLastLeaf = data.stems_since_last_leaf.length;
+      const latestStemHash = data.latest_stem_hash ?? state.latestStemHash;
+
+      if (
+        state.stemsSinceLastLeaf === stemsSinceLastLeaf &&
+        state.latestStemHash === latestStemHash
+      ) {
+        return state;
+      }
+
+      return {
+        stemsSinceLastLeaf,
+        latestStemHash,
+      };
+    }),
 
   setSyncProgress: (progress) =>
-    set({
-      syncProgress: progress,
-      isSynced: progress.phase === "Synced",
+    set((state) => {
+      const isSynced = progress.phase === "Synced";
+
+      if (state.isSynced === isSynced && isSameSyncProgress(state.syncProgress, progress)) {
+        return state;
+      }
+
+      return {
+        syncProgress: progress,
+        isSynced,
+      };
     }),
 
   triggerRefresh: () =>

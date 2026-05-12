@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
-import { encodeSelectorHex, decodeReturnValue, decodeU64 } from "@/lib/contractQuery";
+import { decodeReturnValue, decodeU64 } from "@/lib/contractQuery";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { useBlockchainStore } from "@/stores";
 import type { ContractAbi, AbiMethod, ParamType, QueryResult, DisplayFormat } from "@/types/contract";
@@ -149,10 +149,9 @@ export function useContractDashboard(
 // ---------------------------------------------------------------------------
 
 async function queryMethod(contractAddress: string, method: AbiMethod): Promise<QueryResult> {
-  const data = encodeSelectorHex(method.selector);
   return tauriCommand<QueryResult>("query_contract", {
     contractAddress,
     method: method.name,
-    data,
+    data: "",
   });
 }

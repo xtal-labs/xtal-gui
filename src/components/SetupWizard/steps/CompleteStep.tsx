@@ -42,31 +42,31 @@ export function CompleteStep({
   return (
     <div className="animate-[fade-in-up_0.4s_ease-out]">
       {/* Success icon */}
-      <div className="text-center mb-8">
+      <div className="text-center mb-5 sm:mb-8 max-h-[560px]:mb-3">
         <div className="relative inline-flex">
           {/* Glow effect */}
           <div className="absolute inset-0 bg-emerald-500 blur-2xl opacity-20 animate-pulse" />
 
           {/* Checkmark container */}
-          <div className="relative icon-hex w-20 h-20 bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
-            <div className="icon-hex w-16 h-16 bg-background flex items-center justify-center">
-              <Check className="w-8 h-8 text-emerald-400" strokeWidth={3} />
+          <div className="relative icon-hex w-16 h-16 sm:w-20 sm:h-20 max-h-[560px]:h-12 max-h-[560px]:w-12 bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
+            <div className="icon-hex w-12 h-12 sm:w-16 sm:h-16 max-h-[560px]:h-9 max-h-[560px]:w-9 bg-background flex items-center justify-center">
+              <Check className="w-6 h-6 sm:w-8 sm:h-8 max-h-[560px]:h-5 max-h-[560px]:w-5 text-emerald-400" strokeWidth={3} />
             </div>
           </div>
         </div>
 
-        <h2 className="text-2xl font-light mt-6 mb-2">Setup Complete!</h2>
+        <h2 className="text-xl sm:text-2xl font-light mt-4 sm:mt-6 max-h-[560px]:mt-3 mb-2">Setup Complete!</h2>
         <p className="text-muted-foreground">
           Your Crystal node is ready to launch
         </p>
       </div>
 
       {/* Configuration summary */}
-      <div className="chamfered-border-wrap mb-8">
+      <div className="chamfered-border-wrap mb-5 sm:mb-8 max-h-[560px]:mb-3">
       <div className="chamfered bg-card divide-y divide-border/50">
         {/* Network */}
-        <div className="p-4 flex items-center gap-4">
-          <div className="w-10 h-10 chamfered-sm bg-emerald-500/10 flex items-center justify-center">
+        <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center gap-3 sm:gap-4">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 chamfered-sm bg-emerald-500/10 flex items-center justify-center">
             <Globe className="w-5 h-5 text-emerald-400" />
           </div>
           <div className="flex-1 min-w-0">
@@ -77,8 +77,8 @@ export function CompleteStep({
         </div>
 
         {/* Node Type */}
-        <div className="p-4 flex items-center gap-4">
-          <div className="w-10 h-10 chamfered-sm bg-amber-500/10 flex items-center justify-center">
+        <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center gap-3 sm:gap-4">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 chamfered-sm bg-amber-500/10 flex items-center justify-center">
             {archival ? (
               <HardDrive className="w-5 h-5 text-amber-400" />
             ) : (
@@ -119,8 +119,8 @@ export function CompleteStep({
         </div>
 
         {/* Wallet */}
-        <div className="p-4 flex items-center gap-4">
-          <div className={`w-10 h-10 chamfered-sm flex items-center justify-center ${
+        <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center gap-3 sm:gap-4">
+          <div className={`w-9 h-9 sm:w-10 sm:h-10 chamfered-sm flex items-center justify-center ${
             walletName ? 'bg-emerald-500/10' : 'bg-muted/10'
           }`}>
             <Wallet className={`w-5 h-5 ${walletName ? 'text-emerald-400' : 'text-muted-foreground'}`} />
@@ -144,8 +144,8 @@ export function CompleteStep({
         </div>
 
         {/* Data Directory */}
-        <div className="p-4 flex items-center gap-4">
-          <div className="w-10 h-10 chamfered-sm bg-accent/10 flex items-center justify-center">
+        <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center gap-3 sm:gap-4">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 chamfered-sm bg-accent/10 flex items-center justify-center">
             <Folder className="w-5 h-5 text-accent" />
           </div>
           <div className="flex-1 min-w-0">
@@ -163,7 +163,7 @@ export function CompleteStep({
         onClick={onLaunch}
         disabled={isProcessing}
         className={`
-          group w-full chamfered py-5 font-medium text-lg transition-all duration-300
+          group w-full chamfered py-3 sm:py-5 max-h-[560px]:py-2.5 font-medium text-base sm:text-lg transition-all duration-300
           flex items-center justify-center gap-3
           ${isProcessing
             ? 'bg-muted/20 text-muted-foreground cursor-wait'
@@ -185,7 +185,7 @@ export function CompleteStep({
       </button>
 
       {/* Note */}
-      <p className="mt-6 text-center text-xs text-muted-foreground">
+      <p className="mt-4 sm:mt-6 max-h-[560px]:mt-3 text-center text-xs text-muted-foreground">
         The application will restart and connect to the {network?.name || 'network'}
       </p>
     </div>

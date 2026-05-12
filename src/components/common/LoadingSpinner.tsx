@@ -88,7 +88,7 @@ export function LoadingSpinner({ size = "md", className, variant = "crystal" }: 
 // Full page loading state with geometric design
 export function LoadingScreen({ message = "Loading..." }: { message?: string }) {
   return (
-    <div className="flex h-screen w-screen items-center justify-center bg-background hex-grid-bg">
+    <div className="flex min-h-dvh min-w-[800px] items-center justify-center overflow-auto bg-background hex-grid-bg p-4">
       <div className="relative flex flex-col items-center gap-6">
         {/* Crystal logo with loading animation */}
         <div className="relative">

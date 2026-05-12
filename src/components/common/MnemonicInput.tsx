@@ -97,9 +97,9 @@ export function MnemonicInput({
   return (
     <form onSubmit={handleSubmit}>
       {/* Mnemonic grid */}
-      <div className="chamfered-border-wrap mb-5">
-        <div className="chamfered p-4 bg-card">
-          <div className="grid grid-cols-3 gap-2">
+      <div className="chamfered-border-wrap mb-4 sm:mb-5 max-h-[560px]:mb-3">
+        <div className="chamfered p-3 sm:p-4 max-h-[560px]:p-2 bg-card">
+          <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-2 max-h-[560px]:gap-1.5">
             {words.map((word, index) => (
               <div
                 key={index}
@@ -122,7 +122,7 @@ export function MnemonicInput({
                   spellCheck={false}
                   disabled={isProcessing}
                   className={`
-                    w-full chamfered-sm px-2 py-2 bg-background border font-mono text-sm
+                    w-full chamfered-sm px-2 py-2 max-h-[560px]:py-1.5 bg-background border font-mono text-sm
                     transition-all focus:outline-none focus:ring-1 focus:ring-accent/50
                     ${word.trim()
                       ? 'border-accent/30 text-foreground'
@@ -138,14 +138,14 @@ export function MnemonicInput({
           </div>
 
           {/* Paste hint */}
-          <p className="mt-3 text-center text-xs text-foreground-muted">
+          <p className="mt-3 max-h-[560px]:mt-2 text-center text-xs text-foreground-muted">
             Tip: Paste your full 12-word phrase into any field to auto-fill all words
           </p>
         </div>
       </div>
 
       {/* Wallet Name */}
-      <div className="mb-6">
+      <div className="mb-4 sm:mb-6 max-h-[560px]:mb-3">
         <label className="block text-sm font-medium mb-2 text-foreground-muted">
           Wallet Name
         </label>
@@ -159,7 +159,7 @@ export function MnemonicInput({
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          className="w-full chamfered-sm px-4 py-3 bg-card border border-border transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+          className="w-full chamfered-sm px-4 py-3 max-h-[560px]:py-2 bg-card border border-border transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
           placeholder="default"
         />
       </div>
@@ -169,7 +169,7 @@ export function MnemonicInput({
         type="submit"
         disabled={!canSubmit}
         className={`
-          w-full chamfered py-4 font-medium text-lg transition-all duration-300
+          w-full chamfered py-3 sm:py-4 max-h-[560px]:py-2.5 font-medium text-base sm:text-lg transition-all duration-300
           flex items-center justify-center gap-3
           ${canSubmit
             ? 'bg-gradient-to-r from-accent to-primary text-primary-foreground hover:shadow-glow hover:scale-[1.01]'

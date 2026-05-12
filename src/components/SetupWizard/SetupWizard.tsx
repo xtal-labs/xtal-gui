@@ -44,43 +44,45 @@ function ProgressIndicator({
   const currentIndex = steps.indexOf(currentStep);
 
   return (
-    <div className="flex items-center justify-center gap-2">
-      {steps.map((step, index) => {
-        const isCompleted = index < currentIndex;
-        const isCurrent = index === currentIndex;
-        const isUpcoming = index > currentIndex;
+    <div className="max-w-full overflow-x-auto pb-1">
+      <div className="mx-auto flex min-w-max items-center justify-center gap-2 max-h-[560px]:gap-1.5">
+        {steps.map((step, index) => {
+          const isCompleted = index < currentIndex;
+          const isCurrent = index === currentIndex;
+          const isUpcoming = index > currentIndex;
 
-        return (
-          <div key={step} className="flex items-center">
-            {/* Step marker */}
-            <div className="relative">
-              {/* Diamond shape */}
-              <div
+          return (
+            <div key={step} className="flex items-center">
+              {/* Step marker */}
+              <div className="relative">
+                {/* Diamond shape */}
+                <div
+                    className={`
+                    w-3 h-3 rotate-45 transition-all duration-300
+                    ${isCompleted ? 'bg-success shadow-[0_0_12px_var(--success)]' : ''}
+                    ${isCurrent ? 'bg-accent shadow-[0_0_16px_var(--accent)] scale-125' : ''}
+                    ${isUpcoming ? 'bg-border opacity-40' : ''}
+                  `}
+                />
+                {/* Pulse effect for current */}
+                {isCurrent && (
+                  <div className="absolute inset-0 w-3 h-3 rotate-45 bg-accent animate-ping opacity-30" />
+                )}
+              </div>
+
+              {/* Connector line */}
+              {index < steps.length - 1 && (
+                <div
                   className={`
-                  w-3 h-3 rotate-45 transition-all duration-300
-                  ${isCompleted ? 'bg-success shadow-[0_0_12px_var(--success)]' : ''}
-                  ${isCurrent ? 'bg-accent shadow-[0_0_16px_var(--accent)] scale-125' : ''}
-                  ${isUpcoming ? 'bg-border opacity-40' : ''}
-                `}
-              />
-              {/* Pulse effect for current */}
-              {isCurrent && (
-                <div className="absolute inset-0 w-3 h-3 rotate-45 bg-accent animate-ping opacity-30" />
+                    w-8 h-0.5 mx-1 transition-all duration-500 max-h-[560px]:w-5
+                    ${index < currentIndex ? 'bg-success' : 'bg-border opacity-30'}
+                  `}
+                />
               )}
             </div>
-
-            {/* Connector line */}
-            {index < steps.length - 1 && (
-              <div
-                className={`
-                  w-8 h-0.5 mx-1 transition-all duration-500
-                  ${index < currentIndex ? 'bg-success' : 'bg-border opacity-30'}
-                `}
-              />
-            )}
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -93,12 +95,12 @@ function ErrorToast({ message, onClose }: { message: string; onClose: () => void
   }, [onClose]);
 
   return (
-    <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 animate-[fade-in-up_0.3s_ease-out]">
+    <div className="fixed bottom-3 left-1/2 z-50 w-[calc(100vw-1.5rem)] max-w-xl -translate-x-1/2 animate-[fade-in-up_0.3s_ease-out] sm:bottom-6">
       <div
         className="chamfered-border-wrap shadow-xl"
         style={{ '--_cb-color': 'rgb(239 68 68 / 0.3)' } as React.CSSProperties}
       >
-      <div className="chamfered bg-red-500/10 px-5 py-3 flex items-center gap-3 backdrop-blur-sm">
+      <div className="chamfered bg-red-500/10 px-4 py-3 flex items-center gap-3 backdrop-blur-sm">
         <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
         <span className="text-red-200 text-sm max-w-md">{message}</span>
         <button
@@ -246,7 +248,7 @@ export function SetupWizard() {
   };
 
   return (
-    <div className="relative h-screen max-h-screen overflow-hidden bg-background">
+    <div className="relative h-dvh min-h-[480px] min-w-[800px] overflow-hidden bg-background">
       {/* Crystalline background effect */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         {/* Radial gradient backdrop */}
@@ -277,10 +279,10 @@ export function SetupWizard() {
         {/* Header */}
         <header
           ref={headerRef}
-          className="shrink-0 px-4 py-3 sm:px-6 sm:py-4 flex items-center justify-between"
+          className="shrink-0 px-3 py-2.5 sm:px-6 sm:py-4 max-h-[560px]:py-2 flex items-center justify-between"
         >
           {/* Back button */}
-          <div className="w-24">
+          <div className="w-20 sm:w-24">
             {computed.canGoBack() && (
               <button
                 onClick={actions.goBack}
@@ -300,11 +302,11 @@ export function SetupWizard() {
           </div>
 
           {/* Spacer for symmetry */}
-          <div className="w-24" />
+          <div className="w-20 sm:w-24" />
         </header>
 
         {/* Progress indicator */}
-        <div ref={progressRef} className="shrink-0 px-4 pb-4 sm:px-6 sm:pb-6">
+        <div ref={progressRef} className="shrink-0 px-3 pb-3 sm:px-6 sm:pb-6 max-h-[560px]:pb-2">
           <ProgressIndicator
             currentStep={state.step}
             walletChoice={state.walletChoice}
@@ -314,11 +316,11 @@ export function SetupWizard() {
         {/* Main content */}
         <main
           ref={mainRef}
-          className="relative flex-1 min-h-0 px-4 pb-4 sm:px-6 sm:pb-6"
+          className="relative flex-1 min-h-0 px-3 pb-3 sm:px-6 sm:pb-6 max-h-[560px]:pb-2"
         >
-          <div className="mx-auto flex h-full w-full max-w-4xl items-center">
-            <ScrollArea ref={contentRef} className="w-full">
-              <div className={`mx-auto w-full ${contentWidthClass} pb-8`}>
+          <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl items-stretch min-[900px]:items-center">
+            <ScrollArea ref={contentRef} className="max-h-full w-full">
+              <div className={`mx-auto w-full ${contentWidthClass} pb-6 max-h-[560px]:pb-3`}>
                 {renderStep()}
               </div>
             </ScrollArea>

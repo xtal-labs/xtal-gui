@@ -58,7 +58,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-20">
+      <div className="flex items-center justify-center py-12 sm:py-20">
         <Loader2 className="w-8 h-8 animate-spin text-accent" />
       </div>
     );
@@ -67,7 +67,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
   return (
     <div className="animate-[fade-in-up_0.4s_ease-out]">
       {/* Header */}
-      <div className="text-center mb-8">
+      <div className="text-center mb-5 sm:mb-8 max-h-[560px]:mb-3">
         <h2 className="text-2xl font-light mb-2">Choose Your Network</h2>
         <p className="text-muted-foreground">
           Select which Crystal network to connect to
@@ -75,7 +75,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
       </div>
 
       {/* Network cards */}
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4 max-h-[560px]:space-y-2">
         {networks.map((network, index) => {
           const config = NETWORK_CONFIG[network.id] || NETWORK_CONFIG.mainnet;
           const Icon = config.icon;
@@ -88,7 +88,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
               onClick={() => handleSelect(network)}
               disabled={isProcessing}
               className={`
-                group w-full chamfered p-5 text-left transition-all duration-300
+                group w-full chamfered p-4 sm:p-5 max-h-[560px]:p-3 text-left transition-all duration-300
                 border-2 relative overflow-hidden
                 ${isSelected
                   ? 'border-accent bg-accent/5'
@@ -108,19 +108,19 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
                 `}
               />
 
-              <div className="relative flex items-center gap-4">
+              <div className="relative flex items-center gap-3 sm:gap-4">
                 {/* Icon */}
                 <div className={`
-                  icon-hex w-14 h-14 flex-shrink-0 flex items-center justify-center
+                  icon-hex w-12 h-12 sm:w-14 sm:h-14 max-h-[560px]:h-10 max-h-[560px]:w-10 flex-shrink-0 flex items-center justify-center
                   bg-gradient-to-br ${config.color}
                 `}>
-                  <div className="icon-hex w-12 h-12 bg-background flex items-center justify-center">
+                  <div className="icon-hex w-10 h-10 sm:w-12 sm:h-12 max-h-[560px]:h-8 max-h-[560px]:w-8 bg-background flex items-center justify-center">
                     {isProcessingThis ? (
-                      <Loader2 className="w-6 h-6 animate-spin text-accent" />
+                      <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-accent" />
                     ) : isSelected && !isProcessing ? (
-                      <Check className="w-6 h-6 text-success" />
+                      <Check className="w-5 h-5 sm:w-6 sm:h-6 text-success" />
                     ) : (
-                      <Icon className={`w-6 h-6 text-${config.accent}-400`} />
+                      <Icon className={`w-5 h-5 sm:w-6 sm:h-6 text-${config.accent}-400`} />
                     )}
                   </div>
                 </div>
@@ -128,7 +128,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
                 {/* Content */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <h3 className="font-medium text-lg">{network.name}</h3>
+                    <h3 className="font-medium text-base sm:text-lg">{network.name}</h3>
                     {network.id === 'mainnet' && (
                       <span className="text-[10px] uppercase tracking-wider px-2 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">
                         Production
@@ -140,7 +140,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
                       </span>
                     )}
                   </div>
-                  <p className="text-sm text-muted-foreground mt-0.5">
+                  <p className="text-xs sm:text-sm text-muted-foreground mt-0.5">
                     {network.description}
                   </p>
                 </div>
@@ -157,7 +157,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
       </div>
 
       {/* Info text */}
-      <p className="mt-6 text-center text-xs text-muted-foreground">
+      <p className="mt-4 sm:mt-6 max-h-[560px]:mt-3 text-center text-xs text-muted-foreground">
         Mainnet uses real XTAL tokens. Testnet and Regtest are for testing only.
       </p>
     </div>

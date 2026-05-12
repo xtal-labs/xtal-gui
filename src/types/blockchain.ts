@@ -176,18 +176,22 @@ interface BlockDetailBase {
   froot: string;
   merkleRoot: string;
   miner: string;
-  txCount: number;
-  fruitCount: number;
-  transactions: BlockTransactionSummary[];
 }
 
 export interface StemBlockDetail extends BlockDetailBase {
   blockType: "Stem";
+  fruitCount: number;
   fruits?: FruitSummary[];
+  txCount?: never;
+  transactions?: never;
 }
 
 export interface LeafBlockDetail extends BlockDetailBase {
   blockType: "Leaf";
+  txCount: number;
+  transactions: BlockTransactionSummary[];
+  fruitCount?: never;
+  fruits?: never;
 }
 
 export type BlockDetail = StemBlockDetail | LeafBlockDetail;

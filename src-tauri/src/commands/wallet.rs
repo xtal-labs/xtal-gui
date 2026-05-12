@@ -23,11 +23,13 @@ use xtal::interfaces::ChainDataProvider;
 use xtal::interfaces::UtxoData;
 use xtal::mempool::TransactionSource;
 use xtal::script::{
-    extract_pkh_from_script, multisig_script_pubkey, p2sh_script_hash, MAX_MULTISIG_KEYS,
+    extract_pkh_from_script, multisig_script_pubkey, p2sh_script_hash,
+    parse_stake_or_unstake_script, TimeLock, MAX_MULTISIG_KEYS,
 };
+use xtal::storage::types::UtxoEntry;
 use xtal::storage::UnifiedMPT;
 use xtal::transaction::builders::TransferBuilder;
-use xtal::transaction::receipt::TransactionReceipt;
+use xtal::transaction::receipt::{BlockReceipts, TransactionReceipt};
 use xtal::transaction::{
     ContractCallTransaction, CurrencyType, Transaction, TxOut, MAX_GAS_LIMIT, MIN_GAS_PRICE,
 };
@@ -39,7 +41,7 @@ use xtal::wallet::database::models::{
 };
 use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::sync::WalletSyncService;
-use xtal::wallet::{FeeStrategy, WalletManager};
+use xtal::wallet::{FeeStrategy, TransactionBuilder, WalletManager};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::commands::tx_detail_utils::{
@@ -125,6 +127,34 @@ pub struct MultisigAddressInfo {
     pub script_type: String,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct WalletAddressInfo {
+    pub address: String,
+    pub index: u32,
+    pub kind: String,
+    pub order: u32,
+    pub label: Option<String>,
+    pub used: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VmAddressInfo {
+    pub address: String,
+    pub index: u32,
+    pub kind: String,
+    pub order: u32,
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FeeEstimate {
+    pub fee: u64,
+    pub tx_size: usize,
+    pub input_count: usize,
+    pub output_count: usize,
+    pub fee_rate: u64,
+}
+
 /// Maturity status for coinbase/withdrawal transactions
 #[derive(Debug, Clone, Serialize)]
 pub struct MaturityStatus {
@@ -132,6 +162,12 @@ pub struct MaturityStatus {
     pub is_immature: bool,
     /// Number of leaf blocks until maturity (0 if mature)
     pub blocks_until_mature: u64,
+    /// Semantic source of the maturity constraint
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// Display phase for non-countdown states such as epoch refresh
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub phase: Option<String>,
 }
 
 /// Transaction summary for list view
@@ -150,6 +186,152 @@ pub struct TransactionSummary {
 
 fn tx_type_has_maturity(tx_type: &str) -> bool {
     matches!(tx_type, "coinbase" | "vm_withdrawal")
+}
+
+fn tx_type_requires_vm_receipt(tx_type: TransactionType) -> bool {
+    matches!(
+        tx_type,
+        TransactionType::ContractDeploy
+            | TransactionType::ContractCall
+            | TransactionType::AccountTransfer
+    )
+}
+
+fn maturity_status(kind: &str, phase: &str, blocks_until_mature: u64) -> MaturityStatus {
+    MaturityStatus {
+        is_immature: phase == "locked" && blocks_until_mature > 0,
+        blocks_until_mature,
+        kind: Some(kind.to_string()),
+        phase: Some(phase.to_string()),
+    }
+}
+
+fn combine_maturity_status(
+    current: Option<MaturityStatus>,
+    candidate: Option<MaturityStatus>,
+) -> Option<MaturityStatus> {
+    match (current, candidate) {
+        (None, next) => next,
+        (Some(existing), None) => Some(existing),
+        (Some(existing), Some(next)) => {
+            if next.is_immature && !existing.is_immature {
+                Some(next)
+            } else if existing.is_immature && !next.is_immature {
+                Some(existing)
+            } else if next.blocks_until_mature > existing.blocks_until_mature {
+                Some(next)
+            } else {
+                Some(existing)
+            }
+        }
+    }
+}
+
+fn lock_blocks_remaining(lock: &TimeLock, creation_height: u64, current_leaf_height: u64) -> u64 {
+    match lock {
+        TimeLock::None => 0,
+        TimeLock::Absolute(height) => height.saturating_sub(current_leaf_height),
+        TimeLock::Relative(lock) => {
+            let age = current_leaf_height.saturating_sub(creation_height);
+            lock.saturating_sub(age)
+        }
+    }
+}
+
+fn next_epoch_refresh_remaining(eligible_height: u64, current_leaf_height: u64) -> u64 {
+    let leaves_per_epoch = xtal::blockchain::constants::LEAVES_PER_EPOCH;
+    if leaves_per_epoch == 0 {
+        return 0;
+    }
+
+    let refresh_height = if eligible_height % leaves_per_epoch == 0 {
+        eligible_height
+    } else {
+        ((eligible_height / leaves_per_epoch) + 1) * leaves_per_epoch
+    };
+    refresh_height.saturating_sub(current_leaf_height)
+}
+
+fn maturity_status_for_utxo(utxo: &UtxoEntry, current_leaf_height: u64) -> Option<MaturityStatus> {
+    if utxo.is_coinbase {
+        let age = current_leaf_height.saturating_sub(utxo.creation_height);
+        let remaining = xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
+        return Some(maturity_status("coinbase", "locked", remaining));
+    }
+
+    if utxo.is_withdrawal {
+        let age = current_leaf_height.saturating_sub(utxo.creation_height);
+        let remaining = xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
+        return Some(maturity_status("vm_withdrawal", "locked", remaining));
+    }
+
+    let info = parse_stake_or_unstake_script(&utxo.script_pubkey)?;
+    let remaining = lock_blocks_remaining(&info.lock, utxo.creation_height, current_leaf_height);
+    if remaining > 0 {
+        let kind = if info.is_stake {
+            "stake_activation"
+        } else {
+            "unstake_release"
+        };
+        return Some(maturity_status(kind, "locked", remaining));
+    }
+
+    if info.is_stake {
+        let eligible_height = match info.lock {
+            TimeLock::Relative(lock) => utxo.creation_height.saturating_add(lock),
+            TimeLock::Absolute(height) => height,
+            TimeLock::None => utxo.creation_height,
+        };
+        let epoch_remaining = next_epoch_refresh_remaining(eligible_height, current_leaf_height);
+        if epoch_remaining > 0 {
+            return Some(maturity_status(
+                "stake_activation",
+                "awaiting_epoch",
+                epoch_remaining,
+            ));
+        }
+    }
+
+    None
+}
+
+fn utxo_belongs_to_pkhs(utxo: &UtxoEntry, wallet_pkhs: &HashSet<[u8; 20]>) -> bool {
+    extract_pkh_from_script(&utxo.script_pubkey)
+        .map(|pkh| wallet_pkhs.contains(&pkh))
+        .unwrap_or_else(|| {
+            parse_stake_or_unstake_script(&utxo.script_pubkey)
+                .map(|info| wallet_pkhs.contains(&info.owner))
+                .unwrap_or(false)
+        })
+}
+
+fn maturity_status_for_txid(
+    blockchain: &xtal::blockchain::Blockchain,
+    txid: &[u8; 32],
+    current_leaf_height: u64,
+    wallet_pkhs: Option<&HashSet<[u8; 20]>>,
+) -> Option<MaturityStatus> {
+    let mut status = None;
+    for index in 0u16..u16::MAX {
+        match blockchain.get_utxo(txid, index) {
+            Ok(Some(utxo)) => {
+                if wallet_pkhs
+                    .map(|pkhs| !utxo_belongs_to_pkhs(&utxo, pkhs))
+                    .unwrap_or(false)
+                {
+                    continue;
+                }
+                status = combine_maturity_status(
+                    status,
+                    maturity_status_for_utxo(&utxo, current_leaf_height),
+                );
+            }
+            Ok(None) if index > 64 => break,
+            Ok(None) => continue,
+            Err(_) => break,
+        }
+    }
+    status
 }
 
 /// Paginated transaction history response
@@ -345,21 +527,51 @@ fn merge_vm_address_catalog(
     owned_pkhs: &[WalletOwnedPkh],
     account_entries: &[WalletAccountStateEntry],
     next_vm_account_index: u32,
-) -> Vec<String> {
+) -> Vec<VmAddressInfo> {
     let mut addresses = Vec::new();
     let mut seen = HashSet::new();
+
+    let mut extra_entries = account_entries
+        .iter()
+        .filter(|entry| {
+            !(entry.key_type == KeyType::VmAccount && entry.key_index < next_vm_account_index)
+        })
+        .collect::<Vec<_>>();
+    extra_entries.sort_by(|a, b| {
+        a.key_type
+            .path_index()
+            .cmp(&b.key_type.path_index())
+            .then_with(|| a.key_index.cmp(&b.key_index))
+            .then_with(|| a.hex_address.cmp(&b.hex_address))
+    });
+
+    for entry in extra_entries {
+        if seen.insert(entry.pkh) {
+            addresses.push(VmAddressInfo {
+                address: entry.hex_address.clone(),
+                index: entry.key_index,
+                kind: "account_state".to_string(),
+                order: addresses.len() as u32,
+                label: None,
+            });
+        }
+    }
 
     for owned in owned_pkhs.iter().filter(|owned| {
         owned.key_type == KeyType::VmAccount && owned.key_index < next_vm_account_index
     }) {
         if seen.insert(owned.pkh) {
-            addresses.push(owned.hex_address.clone());
-        }
-    }
-
-    for entry in account_entries {
-        if seen.insert(entry.pkh) {
-            addresses.push(entry.hex_address.clone());
+            addresses.push(VmAddressInfo {
+                address: owned.hex_address.clone(),
+                index: owned.key_index,
+                kind: "vm_account".to_string(),
+                order: addresses.len() as u32,
+                label: if owned.key_index == 0 {
+                    Some("Primary".to_string())
+                } else {
+                    None
+                },
+            });
         }
     }
 
@@ -815,10 +1027,18 @@ pub async fn load_wallet(
         .as_ref()
         .ok_or("Wallet manager not available")?;
 
+    let previous_wallet_id = wallet.current_wallet_id();
+
     // Load wallet in view-only mode (uses pre-derived public keys from database)
     let record = wallet
         .load_wallet(&wallet_name)
         .map_err(|e| format!("Failed to load wallet: {}", e))?;
+
+    if let Some(previous_wallet_id) = previous_wallet_id {
+        if wallet.current_wallet_id().as_deref() != Some(previous_wallet_id.as_str()) {
+            stop_wallet_sync(&state, &previous_wallet_id);
+        }
+    }
 
     // Get primary address from pre-derived keys (no password needed)
     let primary_address = wallet
@@ -855,16 +1075,15 @@ pub async fn unload_wallet(
         .as_ref()
         .ok_or("Wallet manager not available")?;
 
-    // Stop wallet sync service before unloading
-    if let Ok(mut guard) = state.wallet_sync.lock() {
-        if let Some(sync) = guard.take() {
-            sync.stop();
-        }
-    }
+    let wallet_id = wallet.current_wallet_id();
 
     let result = wallet
         .unload_wallet()
         .map_err(|e| format!("Failed to unload wallet: {}", e))?;
+
+    if let Some(wallet_id) = wallet_id {
+        stop_wallet_sync(&state, &wallet_id);
+    }
 
     // Emit wallet unloaded event for toast notification
     emit_wallet_unloaded(&app);
@@ -980,59 +1199,45 @@ pub async fn get_wallet_balance(state: State<'_, AppState>) -> Result<WalletBala
     let db = wallet.database().ok_or("Wallet database not available")?;
     let queries = WalletQueries::new(db.connection());
 
-    // Get all public keys from database (no unlock required!)
-    let all_keys = queries
-        .get_public_keys(&wallet_id, None)
-        .map_err(|e| format!("Failed to get public keys: {}", e))?;
-
-    // Calculate balance from blockchain for each address
+    // Calculate balance from blockchain for each wallet-owned PKH. The PKH set
+    // includes validator staking keys, and outpoint de-duplication prevents the
+    // validator address from being counted twice when it is also in public_keys.
     let blockchain = state.services.blockchain();
     let current_leaf_height = blockchain.get_current_leaf_height();
     let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
 
     let mut total_balance = 0u64;
     let mut immature_balance = 0u64;
+    let mut seen_outpoints = HashSet::new();
 
-    for key in all_keys {
-        // Convert hex public key to VerifyingKey, then compute PKH
-        if let Ok(pk_bytes) = hex::decode(&key.public_key_hex) {
-            if pk_bytes.len() == 32 {
-                let pk_array: [u8; 32] = pk_bytes.try_into().unwrap_or([0u8; 32]);
-                if let Ok(vk) = VerifyingKey::from_bytes(&pk_array) {
-                    let pkh = hash_public_key(&vk);
+    for pkh in get_wallet_pkh_set(wallet)? {
+        let Ok(utxo_positions) = blockchain.get_utxos_by_address(&pkh) else {
+            continue;
+        };
 
-                    // Get UTXO positions for this address
-                    if let Ok(utxo_positions) = blockchain.get_utxos_by_address(&pkh) {
-                        // Fetch each UTXO to get the amount
-                        for pos in utxo_positions {
-                            if let Ok(Some(utxo)) =
-                                blockchain.get_utxo(&pos.tx_id, pos.output_index)
-                            {
-                                let amount = utxo.amount;
-                                total_balance = total_balance.saturating_add(amount);
+        for pos in utxo_positions {
+            if !seen_outpoints.insert((pos.tx_id, pos.output_index)) {
+                continue;
+            }
 
-                                // Check if immature (coinbase/withdrawal with insufficient confirmations)
-                                if utxo.is_coinbase || utxo.is_withdrawal {
-                                    let age =
-                                        current_leaf_height.saturating_sub(utxo.creation_height);
-                                    if age < maturity_required {
-                                        immature_balance = immature_balance.saturating_add(amount);
-                                    }
-                                } else if let Some(info) =
-                                    xtal::script::parse_stake_or_unstake_script(&utxo.script_pubkey)
-                                {
-                                    if !info.is_stake {
-                                        if let xtal::script::TimeLock::Relative(lock) = info.lock {
-                                            let age = current_leaf_height
-                                                .saturating_sub(utxo.creation_height);
-                                            if age < lock {
-                                                immature_balance =
-                                                    immature_balance.saturating_add(amount);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+            let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) else {
+                continue;
+            };
+
+            let amount = utxo.amount;
+            total_balance = total_balance.saturating_add(amount);
+
+            if utxo.is_coinbase || utxo.is_withdrawal {
+                let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                if age < maturity_required {
+                    immature_balance = immature_balance.saturating_add(amount);
+                }
+            } else if let Some(info) = parse_stake_or_unstake_script(&utxo.script_pubkey) {
+                if !info.is_stake {
+                    if let TimeLock::Relative(lock) = info.lock {
+                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                        if age < lock {
+                            immature_balance = immature_balance.saturating_add(amount);
                         }
                     }
                 }
@@ -1043,13 +1248,17 @@ pub async fn get_wallet_balance(state: State<'_, AppState>) -> Result<WalletBala
     // Get pending outgoing amount from wallet database (per-wallet)
     let pending_outgoing = queries.get_pending_outgoing_total(&wallet_id).unwrap_or(0);
 
-    // Spendable = total - immature - pending outgoing
-    let spendable = total_balance
-        .saturating_sub(immature_balance)
-        .saturating_sub(pending_outgoing);
+    // The displayed confirmed balance must match the UTXO pool that regular
+    // sends can actually select from. Pending outgoing remains reported
+    // separately, but mempool-spent outpoints are already excluded by the
+    // collector so they are not subtracted a second time here.
+    let send_spendable_balance: u64 = collect_spendable_wallet_utxos(&state, wallet)?
+        .iter()
+        .map(|utxo| utxo.output.amount)
+        .sum();
 
     Ok(WalletBalance {
-        confirmed: spendable,
+        confirmed: send_spendable_balance,
         pending: pending_outgoing,
         immature: immature_balance,
         total: total_balance,
@@ -1097,7 +1306,7 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
     let db = wallet.database().ok_or("Wallet database not available")?;
     let queries = WalletQueries::new(db.connection());
 
-    let all_keys = queries
+    let _ = queries
         .get_public_keys(&wallet_id, None)
         .map_err(|e| format!("Failed to get public keys: {}", e))?;
 
@@ -1106,21 +1315,9 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
     let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
 
     let mut utxos = Vec::new();
+    let mut seen_outpoints = HashSet::new();
 
-    for key in all_keys {
-        let pk_bytes = match hex::decode(&key.public_key_hex) {
-            Ok(b) if b.len() == 32 => b,
-            _ => continue,
-        };
-        let pk_array: [u8; 32] = match pk_bytes.try_into() {
-            Ok(a) => a,
-            Err(_) => continue,
-        };
-        let vk = match VerifyingKey::from_bytes(&pk_array) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let pkh = hash_public_key(&vk);
+    for pkh in get_wallet_pkh_set(wallet)? {
         let address = format_utxo_address(&pkh);
 
         let positions = match blockchain.get_utxos_by_address(&pkh) {
@@ -1129,6 +1326,10 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
         };
 
         for pos in positions {
+            if !seen_outpoints.insert((pos.tx_id, pos.output_index)) {
+                continue;
+            }
+
             let utxo = match blockchain.get_utxo(&pos.tx_id, pos.output_index) {
                 Ok(Some(u)) => u,
                 _ => continue,
@@ -1384,13 +1585,24 @@ pub async fn get_multisig_addresses(
 pub async fn get_addresses(
     state: State<'_, AppState>,
     _limit: Option<usize>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<WalletAddressInfo>, String> {
     let wallet = state
         .services
         .wallet
         .as_ref()
         .ok_or("Wallet not available")?;
     let wallet_id = wallet.current_wallet_id();
+    let validator_address_from_db =
+        if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet_id.as_ref()) {
+            let queries = WalletQueries::new(db.connection());
+            queries
+                .get_wallet(wallet_id)
+                .ok()
+                .flatten()
+                .and_then(|record| record.validator_address())
+        } else {
+            None
+        };
     let saved_script_addresses =
         if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet_id.as_ref()) {
             let queries = WalletQueries::new(db.connection());
@@ -1399,7 +1611,6 @@ pub async fn get_addresses(
                 .unwrap_or_default()
                 .into_iter()
                 .filter(|script| script.script_type == "p2sh_multisig")
-                .map(|script| script.address)
                 .collect::<Vec<_>>()
         } else {
             Vec::new()
@@ -1411,20 +1622,110 @@ pub async fn get_addresses(
             let receiving = w.get_all_receiving_addresses().unwrap_or_default();
             let change = w.get_all_change_addresses().unwrap_or_default();
 
-            let mut addresses: Vec<String> = mining_keys
-                .into_iter()
-                .map(|(_, _, verifying_key)| {
-                    let pkh = hash_public_key(&verifying_key);
-                    format_utxo_address(&pkh)
-                })
-                .chain(receiving.into_iter().map(|(_, _, addr, _)| addr))
-                .chain(change.into_iter().map(|(_, _, addr, _)| addr))
-                .collect();
+            let mut addresses: Vec<WalletAddressInfo> = Vec::new();
+            let mut seen = HashSet::new();
 
-            addresses.extend(saved_script_addresses);
+            let validator_address = validator_address_from_db.clone().or_else(|| {
+                w.get_validator_staking_public_key()
+                    .ok()
+                    .map(|(_, vk)| format_utxo_address(&hash_public_key(&vk)))
+            });
+            if let Some(address) = validator_address {
+                if seen.insert(address.clone()) {
+                    addresses.push(WalletAddressInfo {
+                        address,
+                        index: 0,
+                        kind: "validator".to_string(),
+                        order: addresses.len() as u32,
+                        label: Some("Primary".to_string()),
+                        used: false,
+                    });
+                }
+            }
 
-            addresses.sort();
-            addresses.dedup();
+            for (index, _, verifying_key) in mining_keys {
+                let pkh = hash_public_key(&verifying_key);
+                let address = format_utxo_address(&pkh);
+                if seen.insert(address.clone()) {
+                    addresses.push(WalletAddressInfo {
+                        address,
+                        index,
+                        kind: "mining".to_string(),
+                        order: addresses.len() as u32,
+                        label: if index == 0 && validator_address_from_db.is_none() {
+                            Some("Primary".to_string())
+                        } else {
+                            None
+                        },
+                        used: false,
+                    });
+                }
+            }
+
+            for (index, _, address, _) in change {
+                if seen.insert(address.clone()) {
+                    addresses.push(WalletAddressInfo {
+                        address,
+                        index,
+                        kind: "change".to_string(),
+                        order: addresses.len() as u32,
+                        label: None,
+                        used: false,
+                    });
+                }
+            }
+
+            let mut saved_script_addresses = saved_script_addresses;
+            saved_script_addresses.sort_by(|a, b| {
+                a.created_at
+                    .cmp(&b.created_at)
+                    .then_with(|| a.address.cmp(&b.address))
+            });
+            for (index, script) in saved_script_addresses.into_iter().enumerate() {
+                if seen.insert(script.address.clone()) {
+                    let fallback_label = script
+                        .threshold
+                        .map(|threshold| format!("Multisig {}", threshold))
+                        .unwrap_or_else(|| "Multisig".to_string());
+                    let label = script
+                        .label
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|label| !label.is_empty())
+                        .map(ToOwned::to_owned)
+                        .or(Some(fallback_label));
+                    addresses.push(WalletAddressInfo {
+                        address: script.address,
+                        index: index as u32,
+                        kind: "multisig".to_string(),
+                        order: addresses.len() as u32,
+                        label,
+                        used: false,
+                    });
+                }
+            }
+
+            for (index, _, address, _) in receiving {
+                if seen.insert(address.clone()) {
+                    addresses.push(WalletAddressInfo {
+                        address,
+                        index,
+                        kind: "receiving".to_string(),
+                        order: addresses.len() as u32,
+                        label: None,
+                        used: false,
+                    });
+                }
+            }
+
+            if !addresses
+                .iter()
+                .any(|address| address.label.as_deref() == Some("Primary"))
+            {
+                if let Some(first) = addresses.first_mut() {
+                    first.label = Some("Primary".to_string());
+                }
+            }
             Ok(addresses)
         })
         .map_err(|e| format!("Failed to get addresses: {}", e))
@@ -1434,6 +1735,149 @@ pub async fn get_addresses(
 // Transaction Operations
 // =============================================================================
 
+fn parse_send_recipient(to_address: &str) -> Result<[u8; 20], String> {
+    let recipient_bytes = hex::decode(to_address)
+        .map_err(|_| "Invalid address format: must be hex encoded".to_string())?;
+
+    if recipient_bytes.len() != 20 {
+        return Err("Invalid address: must be 20 bytes (40 hex characters)".to_string());
+    }
+
+    let mut recipient = [0u8; 20];
+    recipient.copy_from_slice(&recipient_bytes);
+    Ok(recipient)
+}
+
+fn collect_spendable_wallet_utxos(
+    state: &AppState,
+    wallet: &WalletManager,
+) -> Result<Vec<UtxoData>, String> {
+    let blockchain = state.services.blockchain();
+    let current_leaf_height = blockchain.get_current_leaf_height();
+    let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
+    let spent_outpoints = state.services.mempool().spent_outpoints();
+    let mut available_utxos = Vec::new();
+    let mut seen_outpoints = HashSet::new();
+
+    for pkh in get_wallet_pkh_set(wallet)? {
+        let Ok(positions) = blockchain.get_utxos_by_address(&pkh) else {
+            continue;
+        };
+
+        for pos in positions {
+            if !seen_outpoints.insert((pos.tx_id, pos.output_index)) {
+                continue;
+            }
+            if spent_outpoints.contains(&(pos.tx_id, pos.output_index)) {
+                continue;
+            }
+
+            let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) else {
+                continue;
+            };
+
+            if utxo.currency != CurrencyType::XTAL {
+                continue;
+            }
+
+            if utxo.is_coinbase || utxo.is_withdrawal {
+                let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                if age < maturity_required {
+                    continue;
+                }
+            }
+
+            if utxo.is_staking {
+                continue;
+            }
+
+            if let Some(info) = parse_stake_or_unstake_script(&utxo.script_pubkey) {
+                if info.is_stake {
+                    continue;
+                }
+
+                if lock_blocks_remaining(&info.lock, utxo.creation_height, current_leaf_height) > 0
+                {
+                    continue;
+                }
+            }
+
+            available_utxos.push(UtxoData {
+                outpoint: (pos.tx_id, pos.output_index),
+                output: TxOut {
+                    amount: utxo.amount,
+                    currency: utxo.currency,
+                    script_pubkey: utxo.script_pubkey.clone(),
+                },
+                creation_height: utxo.creation_height,
+                is_coinbase: utxo.is_coinbase,
+                is_withdrawal: utxo.is_withdrawal,
+                is_staking: utxo.is_staking,
+            });
+        }
+    }
+
+    Ok(available_utxos)
+}
+
+fn fee_strategy_from_request(
+    fee: Option<u64>,
+    fee_rate: Option<u64>,
+) -> Result<FeeStrategy, String> {
+    match (fee, fee_rate) {
+        (Some(_), Some(_)) => Err("Specify either a fixed fee or a fee rate, not both".to_string()),
+        (Some(f), None) => Ok(FeeStrategy::Fixed(f)),
+        (None, Some(rate)) if rate > 0 => Ok(FeeStrategy::PerByte(rate)),
+        (None, Some(_)) => Err("Fee rate must be greater than 0".to_string()),
+        (None, None) => Ok(FeeStrategy::PerByte(1000)),
+    }
+}
+
+/// Estimate the selected-input transaction fee for a wallet send.
+#[tauri::command]
+pub async fn estimate_send_transaction_fee(
+    state: State<'_, AppState>,
+    to_address: String,
+    amount: u64,
+    fee_rate: u64,
+) -> Result<FeeEstimate, String> {
+    if amount == 0 {
+        return Err("Amount must be greater than 0".to_string());
+    }
+    if fee_rate == 0 {
+        return Err("Fee rate must be greater than 0".to_string());
+    }
+
+    let wallet = state
+        .services
+        .wallet
+        .as_ref()
+        .ok_or("Wallet manager not available")?;
+    let recipient = parse_send_recipient(&to_address)?;
+    let available_utxos = collect_spendable_wallet_utxos(&state, wallet)?;
+
+    if available_utxos.is_empty() {
+        return Err("No UTXOs available for transaction".to_string());
+    }
+
+    let spent = state.services.mempool().spent_outpoints();
+    let estimate = TransactionBuilder::new()
+        .add_utxos(available_utxos)
+        .exclude_outpoints(spent)
+        .add_recipient(recipient, amount)
+        .fee_strategy(FeeStrategy::PerByte(fee_rate))
+        .estimate()
+        .map_err(|e| format!("Failed to estimate transaction fee: {}", e))?;
+
+    Ok(FeeEstimate {
+        fee: estimate.fee,
+        tx_size: estimate.tx_size,
+        input_count: estimate.selected_inputs.len(),
+        output_count: estimate.transaction.utxo_outputs().len(),
+        fee_rate,
+    })
+}
+
 /// Send a transaction (requires password for signing)
 #[tauri::command]
 pub async fn send_transaction(
@@ -1441,6 +1885,7 @@ pub async fn send_transaction(
     to_address: String,
     amount: u64,
     fee: Option<u64>,
+    fee_rate: Option<u64>,
     password: String,
 ) -> Result<SendResult, String> {
     let wallet = state
@@ -1454,159 +1899,20 @@ pub async fn send_transaction(
         .unlock_wallet(&password, Some(Duration::from_secs(30)))
         .map_err(|e| format!("Invalid password: {}", e))?;
 
-    let blockchain = state.services.blockchain();
     let mempool = state.services.mempool();
+    let blockchain = state.services.blockchain().clone();
+    let chain_provider = blockchain as std::sync::Arc<dyn ChainDataProvider>;
 
-    // Get maturity requirements for filtering immature UTXOs
-    let current_leaf_height = blockchain.get_current_leaf_height();
-    let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
-
-    // Validate recipient address (40 hex characters)
-    let recipient_bytes = hex::decode(&to_address)
-        .map_err(|_| "Invalid address format: must be hex encoded".to_string())?;
-
-    if recipient_bytes.len() != 20 {
-        return Err("Invalid address: must be 20 bytes (40 hex characters)".to_string());
-    }
-
-    let mut recipient = [0u8; 20];
-    recipient.copy_from_slice(&recipient_bytes);
-
-    // Collect UTXOs from wallet addresses
-    let mut available_utxos = Vec::new();
-
-    // Get mining addresses (where coinbase rewards go)
-    let mining = wallet
-        .with_wallet(|w| w.get_all_mining_keys_with_gap(true))
-        .map_err(|e| format!("Failed to get mining keys: {}", e))?;
-
-    for (_, _, vk) in &mining {
-        let pkh = hash_public_key(vk);
-        if let Ok(positions) = blockchain.get_utxos_by_address(&pkh) {
-            for pos in positions {
-                if let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) {
-                    // Skip immature coinbase/withdrawal UTXOs
-                    if utxo.is_coinbase || utxo.is_withdrawal {
-                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                        if age < maturity_required {
-                            continue;
-                        }
-                    }
-
-                    if utxo.currency == CurrencyType::XTAL {
-                        available_utxos.push(UtxoData {
-                            outpoint: (pos.tx_id, pos.output_index),
-                            output: TxOut {
-                                amount: utxo.amount,
-                                currency: utxo.currency,
-                                script_pubkey: utxo.script_pubkey.clone(),
-                            },
-                            creation_height: utxo.creation_height,
-                            is_coinbase: utxo.is_coinbase,
-                            is_withdrawal: utxo.is_withdrawal,
-                            is_staking: utxo.is_staking,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    // Get receiving addresses
-    let receiving = wallet
-        .with_wallet(|w| w.get_all_receiving_addresses_with_gap(true))
-        .map_err(|e| format!("Failed to get receiving addresses: {}", e))?;
-
-    for (_, _, _, vk) in &receiving {
-        let pkh = hash_public_key(vk);
-        if let Ok(positions) = blockchain.get_utxos_by_address(&pkh) {
-            for pos in positions {
-                if let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) {
-                    // Skip immature coinbase/withdrawal UTXOs
-                    if utxo.is_coinbase || utxo.is_withdrawal {
-                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                        if age < maturity_required {
-                            continue;
-                        }
-                    }
-
-                    if utxo.currency == CurrencyType::XTAL {
-                        available_utxos.push(UtxoData {
-                            outpoint: (pos.tx_id, pos.output_index),
-                            output: TxOut {
-                                amount: utxo.amount,
-                                currency: utxo.currency,
-                                script_pubkey: utxo.script_pubkey.clone(),
-                            },
-                            creation_height: utxo.creation_height,
-                            is_coinbase: utxo.is_coinbase,
-                            is_withdrawal: utxo.is_withdrawal,
-                            is_staking: utxo.is_staking,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    // Get change addresses
-    let change = wallet
-        .with_wallet(|w| w.get_all_change_addresses_with_gap(true))
-        .map_err(|e| format!("Failed to get change addresses: {}", e))?;
-
-    for (_, _, _, vk) in &change {
-        let pkh = hash_public_key(vk);
-        if let Ok(positions) = blockchain.get_utxos_by_address(&pkh) {
-            for pos in positions {
-                if let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) {
-                    // Skip immature coinbase/withdrawal UTXOs
-                    if utxo.is_coinbase || utxo.is_withdrawal {
-                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                        if age < maturity_required {
-                            continue;
-                        }
-                    }
-
-                    if utxo.currency == CurrencyType::XTAL {
-                        available_utxos.push(UtxoData {
-                            outpoint: (pos.tx_id, pos.output_index),
-                            output: TxOut {
-                                amount: utxo.amount,
-                                currency: utxo.currency,
-                                script_pubkey: utxo.script_pubkey.clone(),
-                            },
-                            creation_height: utxo.creation_height,
-                            is_coinbase: utxo.is_coinbase,
-                            is_withdrawal: utxo.is_withdrawal,
-                            is_staking: utxo.is_staking,
-                        });
-                    }
-                }
-            }
-        }
-    }
+    let recipient = parse_send_recipient(&to_address)?;
+    let available_utxos = collect_spendable_wallet_utxos(&state, wallet)?;
 
     if available_utxos.is_empty() {
         return Err("No UTXOs available for transaction".to_string());
     }
 
-    // Calculate total available
-    let total_available: u64 = available_utxos.iter().map(|u| u.output.amount).sum();
-
-    // Determine fee strategy
-    let fee_strategy = match fee {
-        Some(f) => FeeStrategy::Fixed(f),
-        None => FeeStrategy::PerByte(1000), // Default: 1000 shards per byte
-    };
-
-    // Estimate fee for validation
-    let estimated_fee = fee.unwrap_or(250_000); // ~250 bytes * 1000 shards
-    if amount + estimated_fee > total_available {
-        return Err(format!(
-            "Insufficient funds: need {} + {} fee, have {}",
-            amount, estimated_fee, total_available
-        ));
-    }
+    // Determine fee strategy. `fee` is kept for compatibility, while the GUI
+    // now sends a per-byte rate so the builder can price by selected UTXO size.
+    let fee_strategy = fee_strategy_from_request(fee, fee_rate)?;
 
     // Get outpoints already spent by pending mempool transactions
     let spent = mempool.spent_outpoints();
@@ -1614,7 +1920,7 @@ pub async fn send_transaction(
     // Build transaction
     let build_result = wallet
         .with_wallet(|w| {
-            w.create_transaction_builder(available_utxos)
+            w.create_transaction_builder(available_utxos, chain_provider)
                 .map(|builder| {
                     builder
                         .exclude_outpoints(spent)
@@ -1627,6 +1933,15 @@ pub async fn send_transaction(
         .map_err(|e| format!("Failed to build transaction: {}", e))?;
 
     let tx = build_result.transaction;
+    let total_input: u64 = build_result
+        .selected_inputs
+        .iter()
+        .map(|input| input.output.amount)
+        .sum();
+    let total_output: u64 = tx.utxo_outputs().iter().map(|output| output.amount).sum();
+    let actual_fee = total_input
+        .checked_sub(total_output)
+        .ok_or("Failed to calculate transaction fee: outputs exceed selected inputs")?;
 
     // Get txid
     let txid = tx
@@ -1662,7 +1977,7 @@ pub async fn send_transaction(
             raw_tx: tx.encode(),
             tx_type: TransactionType::Send,
             amount,
-            fee: Some(estimated_fee),
+            fee: Some(actual_fee),
             to_address: Some(to_address.clone()),
             memo: None,
             created_at: now,
@@ -1678,14 +1993,15 @@ pub async fn send_transaction(
         }
 
         // Track pending outgoing amount (amount + fee) per-wallet
-        if let Err(e) = queries.add_pending_outgoing(&wallet_id, amount + estimated_fee) {
+        if let Err(e) = queries.add_pending_outgoing(&wallet_id, amount.saturating_add(actual_fee))
+        {
             log::warn!("Failed to update pending outgoing total: {}", e);
         }
     }
 
     Ok(SendResult {
         txid: hex::encode(txid),
-        fee: estimated_fee,
+        fee: actual_fee,
     })
 }
 
@@ -1858,7 +2174,12 @@ pub async fn get_transaction_history(
                                 execution_status: ptx
                                     .execution_status
                                     .map(|status| status.as_str().to_string()),
-                                maturity_status: None,
+                                maturity_status: maturity_status_for_txid(
+                                    blockchain.as_ref(),
+                                    &ptx.txid,
+                                    current_leaf_height,
+                                    Some(&wallet_pkhs),
+                                ),
                             });
 
                             log::info!(
@@ -1906,7 +2227,12 @@ pub async fn get_transaction_history(
                         execution_status: ctx
                             .execution_status
                             .map(|status| status.as_str().to_string()),
-                        maturity_status: None,
+                        maturity_status: maturity_status_for_txid(
+                            blockchain.as_ref(),
+                            &ctx.txid,
+                            current_leaf_height,
+                            Some(&wallet_pkhs),
+                        ),
                     });
                 }
             }
@@ -1963,19 +2289,27 @@ pub async fn get_transaction_history(
                         ctx.amount as i64
                     };
 
-                    // Maturity status for coinbase/withdrawal
-                    let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
-                    let maturity_status = match ctx.tx_type {
-                        TransactionType::Coinbase | TransactionType::VmWithdrawal => {
+                    let maturity_status = maturity_status_for_txid(
+                        blockchain.as_ref(),
+                        &ctx.txid,
+                        current_leaf_height,
+                        Some(&wallet_pkhs),
+                    )
+                    .or_else(|| match ctx.tx_type {
+                        TransactionType::Coinbase => {
                             let age = current_leaf_height.saturating_sub(height);
-                            let blocks_remaining = maturity_required.saturating_sub(age);
-                            Some(MaturityStatus {
-                                is_immature: blocks_remaining > 0,
-                                blocks_until_mature: blocks_remaining,
-                            })
+                            let remaining =
+                                xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
+                            Some(maturity_status("coinbase", "locked", remaining))
+                        }
+                        TransactionType::VmWithdrawal => {
+                            let age = current_leaf_height.saturating_sub(height);
+                            let remaining =
+                                xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
+                            Some(maturity_status("vm_withdrawal", "locked", remaining))
                         }
                         _ => None,
-                    };
+                    });
 
                     transactions.push(TransactionSummary {
                         txid: hex::encode(ctx.txid),
@@ -2144,7 +2478,10 @@ pub async fn get_transaction_history(
         total_amount: u64,
         is_coinbase: bool,
         is_withdrawal: bool,
+        has_stake_output: bool,
+        has_unstake_output: bool,
         creation_height: u64,
+        maturity_status: Option<MaturityStatus>,
     }
     let mut collected_utxos: HashMap<[u8; 32], CollectedUtxoTx> = HashMap::new();
 
@@ -2152,14 +2489,38 @@ pub async fn get_transaction_history(
         if let Ok(utxo_positions) = blockchain.get_utxos_by_address(pkh) {
             for pos in utxo_positions {
                 if let Ok(Some(utxo_data)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) {
+                    let parsed_stake = parse_stake_or_unstake_script(&utxo_data.script_pubkey);
+                    let has_stake_output = parsed_stake
+                        .as_ref()
+                        .map(|info| info.is_stake)
+                        .unwrap_or(false);
+                    let has_unstake_output = parsed_stake
+                        .as_ref()
+                        .map(|info| !info.is_stake)
+                        .unwrap_or(false);
+                    let maturity_candidate =
+                        maturity_status_for_utxo(&utxo_data, current_leaf_height);
                     collected_utxos
                         .entry(pos.tx_id)
-                        .and_modify(|c| c.total_amount += utxo_data.amount)
+                        .and_modify(|c| {
+                            c.total_amount += utxo_data.amount;
+                            c.is_coinbase |= utxo_data.is_coinbase;
+                            c.is_withdrawal |= utxo_data.is_withdrawal;
+                            c.has_stake_output |= has_stake_output;
+                            c.has_unstake_output |= has_unstake_output;
+                            c.maturity_status = combine_maturity_status(
+                                c.maturity_status.take(),
+                                maturity_candidate.clone(),
+                            );
+                        })
                         .or_insert(CollectedUtxoTx {
                             total_amount: utxo_data.amount,
                             is_coinbase: utxo_data.is_coinbase,
                             is_withdrawal: utxo_data.is_withdrawal,
+                            has_stake_output,
+                            has_unstake_output,
                             creation_height: utxo_data.creation_height,
+                            maturity_status: maturity_candidate,
                         });
                 }
             }
@@ -2177,27 +2538,14 @@ pub async fn get_transaction_history(
         let confirmations = current_leaf_height.saturating_sub(info.creation_height) as u32 + 1;
 
         // Determine transaction type and maturity status
-        let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
         let (tx_type, maturity_status) = if info.is_coinbase {
-            let age = current_leaf_height.saturating_sub(info.creation_height);
-            let blocks_remaining = maturity_required.saturating_sub(age);
-            (
-                "coinbase".to_string(),
-                Some(MaturityStatus {
-                    is_immature: blocks_remaining > 0,
-                    blocks_until_mature: blocks_remaining,
-                }),
-            )
+            ("coinbase".to_string(), info.maturity_status.clone())
         } else if info.is_withdrawal {
-            let age = current_leaf_height.saturating_sub(info.creation_height);
-            let blocks_remaining = maturity_required.saturating_sub(age);
-            (
-                "vm_withdrawal".to_string(),
-                Some(MaturityStatus {
-                    is_immature: blocks_remaining > 0,
-                    blocks_until_mature: blocks_remaining,
-                }),
-            )
+            ("vm_withdrawal".to_string(), info.maturity_status.clone())
+        } else if info.has_unstake_output {
+            ("unstake".to_string(), info.maturity_status.clone())
+        } else if info.has_stake_output {
+            ("stake".to_string(), info.maturity_status.clone())
         } else {
             ("receive".to_string(), None)
         };
@@ -2285,12 +2633,14 @@ pub async fn get_transaction_history(
                 None => {
                     let record_tx_type = if info.is_coinbase {
                         TransactionType::Coinbase
+                    } else if info.is_withdrawal {
+                        TransactionType::VmWithdrawal
+                    } else if info.has_unstake_output {
+                        TransactionType::Unstake
+                    } else if info.has_stake_output {
+                        TransactionType::Stake
                     } else {
-                        if info.is_withdrawal {
-                            TransactionType::VmWithdrawal
-                        } else {
-                            TransactionType::Receive
-                        }
+                        TransactionType::Receive
                     };
 
                     let record = TransactionRecord {
@@ -2471,19 +2821,26 @@ pub async fn get_transaction_detail(
     if let Some(ref addr) = address {
         wallet_addresses.insert(addr.clone());
     }
-    // Calculate maturity status for coinbase/withdrawal transactions
-    let maturity_status = if tx_type_has_maturity(&tx_type) && block_height.is_some() {
-        let creation_height = block_height.unwrap();
-        let age = current_leaf_height.saturating_sub(creation_height);
-        let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
-        let blocks_remaining = maturity_required.saturating_sub(age);
-        Some(MaturityStatus {
-            is_immature: blocks_remaining > 0,
-            blocks_until_mature: blocks_remaining,
-        })
-    } else {
-        None
-    };
+    let wallet_pkhs_for_maturity: HashSet<[u8; 20]> = wallet_addresses
+        .iter()
+        .filter_map(|address| xtal::address_format::parse_address_input(address).ok())
+        .collect();
+    let maturity_status = maturity_status_for_txid(
+        blockchain.as_ref(),
+        &txid_bytes,
+        current_leaf_height,
+        Some(&wallet_pkhs_for_maturity),
+    )
+    .or_else(|| {
+        if tx_type_has_maturity(&tx_type) && block_height.is_some() {
+            let creation_height = block_height.unwrap();
+            let age = current_leaf_height.saturating_sub(creation_height);
+            let remaining = xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
+            Some(maturity_status(&tx_type, "locked", remaining))
+        } else {
+            None
+        }
+    });
 
     Ok(build_transaction_detail_response(
         txid,
@@ -2723,29 +3080,28 @@ fn decode_cage_withdrawal_call(
 
     let abi = cage_abi();
     let withdraw_method = abi.method("withdraw")?;
-    let selector: [u8; 4] = call_tx.data.get(..4)?.try_into().ok()?;
+    if withdraw_method.params.len() != 2 {
+        return None;
+    }
 
-    let resolved_method = match call_tx.method.as_str() {
-        "withdraw" => withdraw_method,
-        "invoke" => abi.method_by_selector(&selector)?,
+    let data = match call_tx.method.as_str() {
+        "withdraw" => call_tx.data.as_slice(),
+        "invoke" => {
+            let selector: [u8; 4] = call_tx.data.get(..4)?.try_into().ok()?;
+            let resolved_method = abi.method_by_selector(&selector)?;
+            if resolved_method.name != "withdraw" || selector != withdraw_method.selector {
+                return None;
+            }
+            call_tx.data.get(4..)?
+        }
         _ => return None,
     };
 
-    if resolved_method.name != "withdraw" || selector != withdraw_method.selector {
-        return None;
-    }
-
-    if resolved_method.params.len() != 2 {
-        return None;
-    }
-
-    let (requested_recipient, recipient_len) = decode_cage_withdrawal_recipient(
-        &resolved_method.params[0].param_type,
-        &call_tx.data[4..],
-    )?;
+    let (requested_recipient, recipient_len) =
+        decode_cage_withdrawal_recipient(&withdraw_method.params[0].param_type, data)?;
     let (requested_amount, _) = decode_abi_u64(
-        &resolved_method.params[1].param_type,
-        &call_tx.data[4 + recipient_len..],
+        &withdraw_method.params[1].param_type,
+        &data[recipient_len..],
     )?;
 
     Some(DecodedCageWithdrawalCall {
@@ -3205,7 +3561,29 @@ fn lookup_persisted_receipt(
     blockchain: &xtal::blockchain::Blockchain,
     txid: &[u8; 32],
 ) -> Option<TransactionReceipt> {
-    blockchain.get_receipt(txid).ok().flatten()
+    let receipt = blockchain.get_receipt(txid).ok().flatten()?;
+    let block_receipts = blockchain
+        .get_receipts_by_height(receipt.block_height)
+        .ok()
+        .flatten()?;
+
+    if block_receipts_contains_tx(&block_receipts, txid) {
+        Some(receipt)
+    } else {
+        log::debug!(
+            "Ignoring stale VM receipt for tx {} at non-canonical height {}",
+            hex::encode(txid),
+            receipt.block_height
+        );
+        None
+    }
+}
+
+fn block_receipts_contains_tx(block_receipts: &BlockReceipts, txid: &[u8; 32]) -> bool {
+    block_receipts
+        .receipts_by_fruit
+        .values()
+        .any(|receipts| receipts.iter().any(|receipt| receipt.tx_hash == *txid))
 }
 
 fn lookup_any_receipt(
@@ -3414,6 +3792,12 @@ fn get_wallet_addresses(
     // Primary: read public keys from database (works even when wallet is locked)
     if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet.current_wallet_id()) {
         let queries = WalletQueries::new(db.connection());
+        if let Ok(Some(record)) = queries.get_wallet(&wallet_id) {
+            if let Some(address) = record.validator_address() {
+                addresses.insert(address);
+            }
+        }
+
         if let Ok(all_keys) = queries.get_public_keys(&wallet_id, None) {
             for key in &all_keys {
                 // Use stored address if available
@@ -3456,6 +3840,12 @@ fn get_wallet_addresses(
                 addresses.insert(addr);
             }
         }
+
+        if let Ok((_, validator_vk)) = wallet.with_wallet(|w| w.get_validator_staking_public_key())
+        {
+            let pkh = hash_public_key(&validator_vk);
+            addresses.insert(format_utxo_address(&pkh));
+        }
     }
 
     Ok(addresses)
@@ -3497,18 +3887,21 @@ fn calculate_net_amount(
 // Wallet Sync
 // =============================================================================
 
-/// Start the wallet sync service to index incoming transactions (coinbase, receives).
-///
-/// Stops any previously running sync service, then creates a new one with the
-/// current wallet's addresses and starts it in the background.
-fn start_wallet_sync(state: &AppState, wallet: &WalletManager) {
-    // Stop any existing sync service
+/// Stop the wallet sync service for a specific wallet id.
+pub(crate) fn stop_wallet_sync(state: &AppState, wallet_id: &str) {
     if let Ok(mut guard) = state.wallet_sync.lock() {
-        if let Some(sync) = guard.take() {
+        if let Some(sync) = guard.remove(wallet_id) {
             sync.stop();
+            log::info!("Wallet sync service stopped for wallet {}", wallet_id);
         }
     }
+}
 
+/// Start the wallet sync service to index incoming transactions (coinbase, receives).
+///
+/// Replaces any existing sync service for the same wallet id, while allowing
+/// normal and validator wallet sync services to run at the same time.
+pub(crate) fn start_wallet_sync(state: &AppState, wallet: &WalletManager) {
     let blockchain = state.services.blockchain().clone();
     let (db, wallet_id) = match (wallet.database(), wallet.current_wallet_id()) {
         (Some(db), Some(id)) => (db, id),
@@ -3518,10 +3911,12 @@ fn start_wallet_sync(state: &AppState, wallet: &WalletManager) {
         }
     };
 
+    stop_wallet_sync(state, &wallet_id);
+
     let sync_service = match WalletSyncService::new(
         blockchain as std::sync::Arc<dyn ChainDataProvider>,
         db,
-        wallet_id,
+        wallet_id.clone(),
     ) {
         Ok(s) => std::sync::Arc::new(s),
         Err(e) => {
@@ -3553,7 +3948,7 @@ fn start_wallet_sync(state: &AppState, wallet: &WalletManager) {
 
     // Store for later cleanup on wallet unload
     if let Ok(mut guard) = state.wallet_sync.lock() {
-        *guard = Some(sync_service);
+        guard.insert(wallet_id, sync_service);
     }
 }
 
@@ -3711,15 +4106,27 @@ pub async fn get_vm_transaction_history(
         if seen_txids.contains(&record.txid) {
             continue;
         }
+        let canonical_receipt = lookup_persisted_receipt(blockchain.as_ref(), &record.txid);
         let (confirmations, timestamp) = if let Some((ts, height)) = record.confirmation {
+            if tx_type_requires_vm_receipt(record.tx_type) && canonical_receipt.is_none() {
+                let in_mempool = mempool.get_transaction_by_hash(&record.txid).is_some();
+                let in_active_stem = tx_in_active_stems(blockchain.as_ref(), &record.txid);
+                if !in_mempool && !in_active_stem {
+                    let _ = queries.remove_transaction(&record.txid);
+                    log::info!(
+                        "Cleaned up stale confirmed VM tx {} (receipt is no longer canonical)",
+                        hex::encode(record.txid)
+                    );
+                    continue;
+                }
+            }
             let confs = current_leaf_height.saturating_sub(height) as u32 + 1;
             (confs, ts as u64)
         } else {
             // Pending — check if still in mempool
             let in_mempool = mempool.get_transaction_by_hash(&record.txid).is_some();
             let in_active_stem = tx_in_active_stems(blockchain.as_ref(), &record.txid);
-            let persisted_receipt = lookup_persisted_receipt(blockchain.as_ref(), &record.txid);
-            if !in_mempool && !in_active_stem && persisted_receipt.is_none() {
+            if !in_mempool && !in_active_stem && canonical_receipt.is_none() {
                 // Not in mempool and not confirmed — dropped
                 let _ = queries.remove_transaction(&record.txid);
                 log::info!(
@@ -3728,7 +4135,7 @@ pub async fn get_vm_transaction_history(
                 );
                 continue;
             }
-            if let Some(receipt) = persisted_receipt {
+            if let Some(receipt) = canonical_receipt.as_ref() {
                 (
                     current_leaf_height.saturating_sub(receipt.block_height) as u32 + 1,
                     record.created_at as u64,
@@ -3753,8 +4160,13 @@ pub async fn get_vm_transaction_history(
             confirmations,
             timestamp,
             tx_type: record.tx_type.as_str().to_string(),
-            execution_status: lookup_any_receipt(blockchain.as_ref(), &record.txid)
+            execution_status: canonical_receipt
+                .as_ref()
                 .map(|receipt| execution_status_label(&receipt.status))
+                .or_else(|| {
+                    lookup_live_stem_receipt(blockchain.as_ref(), &record.txid)
+                        .map(|receipt| execution_status_label(&receipt.status))
+                })
                 .or_else(|| {
                     record
                         .execution_status
@@ -3808,7 +4220,7 @@ pub async fn generate_vm_address(state: State<'_, AppState>) -> Result<String, S
 /// Returns the union of persisted VM derivation-path addresses and any
 /// wallet-owned PKH that currently has account-state in the MPT.
 #[tauri::command]
-pub async fn get_vm_addresses(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+pub async fn get_vm_addresses(state: State<'_, AppState>) -> Result<Vec<VmAddressInfo>, String> {
     let wallet = state
         .services
         .wallet
@@ -4012,7 +4424,7 @@ mod tests {
     use xtal::config::SHARDS_PER_XTAL;
     use xtal::fruit::core::FruitType;
     use xtal::storage::{trie::RocksDBBackend as XtalRocksDbBackend, Storage};
-    use xtal::transaction::receipt::TxStatus;
+    use xtal::transaction::receipt::{BlockReceipts, TxStatus};
     use xtal::transaction::{AccountTransferTransaction, ContractCallTransaction};
     use xtal::vm::abi::AbiValue;
     use xtal::vm::PendingWithdrawal;
@@ -4095,26 +4507,19 @@ mod tests {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let recipient = [0x42; 20];
         let recipient_address = xtal::address::encode_pkh(&recipient);
-        let abi = cage_abi();
-        let mut data = abi
-            .method("withdraw")
-            .expect("bundled CAGE ABI includes withdraw")
-            .selector
-            .to_vec();
-        data.extend(
-            abi.encode_args(
+        let data = cage_abi()
+            .encode_args(
                 "withdraw",
                 &[
                     AbiValue::String(recipient_address.clone()),
                     AbiValue::U64(SHARDS_PER_XTAL),
                 ],
             )
-            .unwrap(),
-        );
+            .unwrap();
         let tx = Transaction::ContractCall(ContractCallTransaction {
             caller: signing_key.verifying_key(),
             contract_address: CAGE_CONTRACT_ADDRESS,
-            method: "invoke".to_string(),
+            method: "withdraw".to_string(),
             data,
             value: 0,
             gas_limit: 50_000,
@@ -4158,6 +4563,27 @@ mod tests {
             }
             other => panic!("expected cage withdrawal bridge, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn block_receipts_contains_tx_only_matches_present_receipts() {
+        let txid = [7u8; 32];
+        let mut block_receipts = BlockReceipts::new([3u8; 32], 42);
+        block_receipts.add_receipt(
+            FruitType::Apple,
+            TransactionReceipt::new(
+                txid,
+                [4u8; 32],
+                42,
+                FruitType::Apple,
+                0,
+                TxStatus::Pending,
+                1_000,
+            ),
+        );
+
+        assert!(block_receipts_contains_tx(&block_receipts, &txid));
+        assert!(!block_receipts_contains_tx(&block_receipts, &[8u8; 32]));
     }
 
     #[test]
@@ -4209,9 +4635,27 @@ mod tests {
         assert_eq!(
             addresses,
             vec![
-                format_contract_address(&vm_primary),
-                format_contract_address(&vm_secondary),
-                format_contract_address(&funded_receiving),
+                VmAddressInfo {
+                    address: format_contract_address(&funded_receiving),
+                    index: 4,
+                    kind: "account_state".to_string(),
+                    order: 0,
+                    label: None,
+                },
+                VmAddressInfo {
+                    address: format_contract_address(&vm_primary),
+                    index: 0,
+                    kind: "vm_account".to_string(),
+                    order: 1,
+                    label: Some("Primary".to_string()),
+                },
+                VmAddressInfo {
+                    address: format_contract_address(&vm_secondary),
+                    index: 1,
+                    kind: "vm_account".to_string(),
+                    order: 2,
+                    label: None,
+                },
             ]
         );
     }
@@ -4255,8 +4699,20 @@ mod tests {
         assert_eq!(
             addresses,
             vec![
-                format_contract_address(&vm_primary),
-                format_contract_address(&funded_gap),
+                VmAddressInfo {
+                    address: format_contract_address(&funded_gap),
+                    index: 2,
+                    kind: "account_state".to_string(),
+                    order: 0,
+                    label: None,
+                },
+                VmAddressInfo {
+                    address: format_contract_address(&vm_primary),
+                    index: 0,
+                    kind: "vm_account".to_string(),
+                    order: 1,
+                    label: Some("Primary".to_string()),
+                },
             ]
         );
     }

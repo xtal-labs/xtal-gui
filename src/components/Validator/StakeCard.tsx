@@ -6,7 +6,7 @@ import { shardsToXtal } from "@/lib/utils";
 
 interface StakeCardProps {
   totalStake: number;
-  matureStake: number;
+  withdrawableStake: number;
   activeStake: number;
   pendingStake: number;
   availableBalance: number;
@@ -22,7 +22,7 @@ const MASKED_VALUE = "••••••";
 
 function StakeCard({
   totalStake,
-  matureStake,
+  withdrawableStake,
   activeStake,
   pendingStake,
   availableBalance,
@@ -103,7 +103,7 @@ function StakeCard({
               variant="outline-crystalline"
               size="sm"
               onClick={onUnstake}
-              disabled={matureStake === 0}
+              disabled={withdrawableStake === 0}
               className="text-foreground"
             >
               <Minus className="h-4 w-4 mr-1" />

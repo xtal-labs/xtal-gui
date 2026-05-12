@@ -66,12 +66,12 @@ export default function Dashboard() {
   const { peerCount, inboundCount, outboundCount } = useNetworkStore();
   const {
     isRunning: isValidating,
-    matureStake,
+    withdrawableStake,
     pendingStake,
     totalFruitsProduced,
     address: validatorAddress,
   } = useValidatorStore();
-  const totalStake = matureStake + pendingStake;
+  const totalStake = withdrawableStake + pendingStake;
 
   // Leaf pulse animation state
   const [isLeafPulse, setIsLeafPulse] = useState(false);

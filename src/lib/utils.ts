@@ -10,12 +10,12 @@ export function cn(...inputs: ClassValue[]) {
 
 /**
  * Number of shards (minimum indivisible units) per 1 XTAL.
- * 1 XTAL = 100,000,000 shards (10^8)
+ * Keep this mirrored with xtal::config::SHARDS_PER_XTAL.
  */
-export const SHARDS_PER_XTAL = 100_000_000;
-export const XTAL_DECIMALS = 8;
+export const SHARDS_PER_XTAL = 1_000_000_000;
+export const XTAL_DECIMALS = String(SHARDS_PER_XTAL).length - 1;
 
-const XTAL_INPUT_PATTERN = /^\d*(?:\.\d{0,8})?$/;
+const XTAL_INPUT_PATTERN = new RegExp(`^\\d*(?:\\.\\d{0,${XTAL_DECIMALS}})?$`);
 
 /**
  * Convert shards to XTAL (raw number, not formatted)
@@ -26,14 +26,14 @@ export function shardsToXtal(shards: number | bigint): number {
 }
 
 /**
- * Format XTAL amounts (1 XTAL = 10^8 shards)
+ * Format XTAL amounts.
  */
 export function formatXtal(shards: number | bigint): string {
   const value = typeof shards === "bigint" ? Number(shards) : shards;
   const xtal = value / SHARDS_PER_XTAL;
 
   if (xtal === 0) return "0";
-  if (xtal < 0.00000001) return "< 0.00000001";
+  if (xtal < 1 / SHARDS_PER_XTAL) return `< ${(1 / SHARDS_PER_XTAL).toFixed(XTAL_DECIMALS)}`;
   if (xtal >= 1_000_000) {
     return `${(xtal / 1_000_000).toLocaleString(undefined, {
       minimumFractionDigits: 2,
@@ -49,7 +49,7 @@ export function formatXtal(shards: number | bigint): string {
 
   return xtal.toLocaleString(undefined, {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 8,
+    maximumFractionDigits: XTAL_DECIMALS,
   });
 }
 
@@ -59,23 +59,23 @@ export function formatXtal(shards: number | bigint): string {
 export function formatXtalFull(shards: number | bigint): string {
   const value = typeof shards === "bigint" ? Number(shards) : shards;
   const xtal = value / SHARDS_PER_XTAL;
-  // Always show 8 decimal places for full precision display
-  return xtal.toFixed(8);
+  return xtal.toFixed(XTAL_DECIMALS);
 }
 
 /**
  * Format a decimal number for input display, preventing exponential notation.
  */
-export function formatDecimalInput(value: number, decimals: number = 8): string {
+export function formatDecimalInput(value: number, decimals: number = XTAL_DECIMALS): string {
   if (value === 0) return "0";
   return value.toFixed(decimals).replace(/\.?0+$/, "");
 }
 
 /**
- * Check whether a user-entered XTAL amount is syntactically valid.
+ * Check whether a user-entered XTAL amount can be accepted into input state.
  */
 export function isValidXtalInput(value: string): boolean {
-  return XTAL_INPUT_PATTERN.test(value);
+  if (value !== value.trim()) return false;
+  return parseXtalToShards(value) !== null;
 }
 
 /**
@@ -100,9 +100,10 @@ export function parseXtalToShards(value: string): number | null {
 }
 
 export function getXtalInputError(value: string): string | null {
-  if (value.trim() === "") return null;
-  if (!isValidXtalInput(value.trim())) return `XTAL supports up to ${XTAL_DECIMALS} decimal places`;
-  if (parseXtalToShards(value) === null) return "Amount is too large";
+  const trimmed = value.trim();
+  if (trimmed === "") return null;
+  if (!XTAL_INPUT_PATTERN.test(trimmed)) return `XTAL supports up to ${XTAL_DECIMALS} decimal places`;
+  if (parseXtalToShards(trimmed) === null) return "Amount is too large";
   return null;
 }
 

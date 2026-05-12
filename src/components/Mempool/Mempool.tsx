@@ -4,7 +4,7 @@ import { Layers, Database, Activity, Cpu, ArrowUpDown, Copy, Check } from "lucid
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
+import { cn, SHARDS_PER_XTAL } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import { MempoolTransactionDetailPanel } from "./MempoolTransactionDetailPanel";
 
@@ -49,7 +49,7 @@ const formatAge = (secs: number): string => {
 };
 
 const formatFee = (fee: number): string => {
-  const xtal = fee / 1_000_000_000;
+  const xtal = fee / SHARDS_PER_XTAL;
   if (xtal < 0.0001) return `${fee.toLocaleString()} shards`;
   return `${xtal.toFixed(6)} XTAL`;
 };

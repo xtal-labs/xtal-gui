@@ -91,6 +91,7 @@ function CrystalLogo({ className, size = 32 }: { className?: string; size?: numb
 import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore } from "@/stores";
 import { useNodeWebSocket, useTauriEvent, type WebSocketMessage } from "@/hooks";
 import { tauriCommand } from "@/hooks/useTauriCommand";
+import { useDiagnosticMonitor, useRenderTracker } from "@/hooks/useDiagnosticMonitor";
 import type {
   BlockSummary,
   BootstrapPhase,
@@ -140,7 +141,65 @@ const navItems: NavItem[] = [
   { id: "settings", label: "Settings", icon: Settings },
 ];
 
+const SYNC_PROGRESS_UPDATE_INTERVAL_MS = 250;
+const BLOCK_REFRESH_INTERVAL_MS = 1_000;
+const EXPENSIVE_REFRESH_INTERVAL_MS = 2_000;
+
+function useThrottledCallback(callback: () => void, intervalMs: number) {
+  const callbackRef = useRef(callback);
+  const stateRef = useRef<{
+    lastRun: number;
+    timer: ReturnType<typeof setTimeout> | null;
+  }>({
+    lastRun: 0,
+    timer: null,
+  });
+
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  useEffect(() => {
+    return () => {
+      if (stateRef.current.timer) {
+        clearTimeout(stateRef.current.timer);
+      }
+    };
+  }, []);
+
+  return useCallback(
+    (force = false) => {
+      const run = () => {
+        stateRef.current.lastRun = Date.now();
+        stateRef.current.timer = null;
+        callbackRef.current();
+      };
+
+      const now = Date.now();
+      const elapsed = now - stateRef.current.lastRun;
+
+      if (force || elapsed >= intervalMs) {
+        if (stateRef.current.timer) {
+          clearTimeout(stateRef.current.timer);
+        }
+        run();
+        return;
+      }
+
+      if (!stateRef.current.timer) {
+        stateRef.current.timer = setTimeout(run, intervalMs - elapsed);
+      }
+    },
+    [intervalMs]
+  );
+}
+
 function AppContent() {
+  // ── Phase 1 Diagnostics ──
+  useDiagnosticMonitor();
+  const trackAppRender = useRenderTracker("AppContent");
+  useEffect(() => trackAppRender(), []);
+
   const activeTab = useUiStore((state) => state.activeTab);
   const setActiveTab = useUiStore((state) => state.setActiveTab);
   const needsSetup = useUiStore((state) => state.needsSetup);
@@ -182,6 +241,7 @@ function AppContent() {
   const triggerValidatorRefresh = useValidatorStore((state) => state.triggerRefresh);
   const setValidatorNetworkStats = useValidatorStore((state) => state.setNetworkStats);
   const setValidatorProductionStats = useValidatorStore((state) => state.setProductionStats);
+  const addValidatorProductionStatsSnapshot = useValidatorStore((state) => state.addProductionStatsSnapshot);
   const addProducedFruit = useValidatorStore((state) => state.addProducedFruit);
 
   // State for API port (needed for WebSocket connection)
@@ -196,6 +256,77 @@ function AppContent() {
   const [bootstrapPercent, setBootstrapPercent] = useState(0);
   const [startupStage, setStartupStage] = useState<StartupStage>("opening_database");
   const [bootstrapProgressPhase, setBootstrapProgressPhase] = useState<BootstrapPhase | null>(null);
+  const syncProgressRef = useRef(syncProgress);
+  const syncProgressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingSyncProgressRef = useRef<SyncProgress | null>(null);
+  const lastSyncProgressCommitRef = useRef(0);
+
+  useEffect(() => {
+    syncProgressRef.current = syncProgress;
+  }, [syncProgress]);
+
+  useEffect(() => {
+    return () => {
+      if (syncProgressTimerRef.current) {
+        clearTimeout(syncProgressTimerRef.current);
+      }
+    };
+  }, []);
+
+  const commitSyncProgress = useCallback(
+    (progress: SyncProgress) => {
+      lastSyncProgressCommitRef.current = Date.now();
+      pendingSyncProgressRef.current = null;
+      syncProgressRef.current = progress;
+      setSyncProgress(progress);
+    },
+    [setSyncProgress]
+  );
+
+  const scheduleSyncProgress = useCallback(
+    (progress: SyncProgress) => {
+      const current = syncProgressRef.current;
+      const isPhaseChange = progress.phase !== current.phase;
+      const isTerminal = progress.phase === "Synced" || progress.phase === "Failed";
+      const now = Date.now();
+      const elapsed = now - lastSyncProgressCommitRef.current;
+
+      if (isPhaseChange || isTerminal || elapsed >= SYNC_PROGRESS_UPDATE_INTERVAL_MS) {
+        if (syncProgressTimerRef.current) {
+          clearTimeout(syncProgressTimerRef.current);
+          syncProgressTimerRef.current = null;
+        }
+        commitSyncProgress(progress);
+        return;
+      }
+
+      pendingSyncProgressRef.current = progress;
+
+      if (!syncProgressTimerRef.current) {
+        syncProgressTimerRef.current = setTimeout(() => {
+          syncProgressTimerRef.current = null;
+          const pending = pendingSyncProgressRef.current;
+          if (pending) {
+            commitSyncProgress(pending);
+          }
+        }, SYNC_PROGRESS_UPDATE_INTERVAL_MS - elapsed);
+      }
+    },
+    [commitSyncProgress]
+  );
+
+  const requestBlockchainRefresh = useThrottledCallback(
+    triggerBlockchainRefresh,
+    BLOCK_REFRESH_INTERVAL_MS
+  );
+  const requestWalletRefresh = useThrottledCallback(
+    triggerWalletRefresh,
+    EXPENSIVE_REFRESH_INTERVAL_MS
+  );
+  const requestValidatorRefresh = useThrottledCallback(
+    triggerValidatorRefresh,
+    EXPENSIVE_REFRESH_INTERVAL_MS
+  );
 
   // Handle WebSocket messages
   const handleWebSocketMessage = useCallback(
@@ -260,17 +391,17 @@ function AppContent() {
           // Trigger wallet refresh if wallet is loaded
           // This updates balance and transactions after each new block
           if (walletIsLoaded) {
-            triggerWalletRefresh();
+            requestWalletRefresh();
           }
 
           // Trigger validator refresh if validator is loaded
           // This updates balance, production counts, and status after each new block
           if (validatorIsLoaded) {
-            triggerValidatorRefresh();
+            requestValidatorRefresh();
           }
 
           // Trigger blockchain refresh so explorer's paginated block list stays current
-          triggerBlockchainRefresh();
+          requestBlockchainRefresh();
           break;
         }
         case "mining_stats": {
@@ -312,7 +443,7 @@ function AppContent() {
             sync_peer?: string;
             peer_count?: number;
           };
-          setSyncProgress({
+          scheduleSyncProgress({
             phase: progress.phase as SyncProgress["phase"],
             progressPercent: progress.progress_percent ?? 0,
             startedAt: progress.started_at,
@@ -424,7 +555,7 @@ function AppContent() {
 
           // Trigger validator refresh to update production counts, balance, earnings
           if (validatorIsLoaded) {
-            triggerValidatorRefresh();
+            requestValidatorRefresh(true);
           }
           break;
         }
@@ -442,6 +573,7 @@ function AppContent() {
           });
           if (data.productionStats) {
             setValidatorProductionStats(data.productionStats);
+            addValidatorProductionStatsSnapshot(data.currentEpoch, data.productionStats);
           }
           break;
         }
@@ -454,7 +586,7 @@ function AppContent() {
           console.debug("[WebSocket] Unhandled message type:", msg.type);
       }
     },
-    [handleWsBlockchainInfo, handleWsStemProviderInfo, setMiningStats, setSyncProgress, setPeerCount, setPeers, addMinedBlock, addToast, validatorIsLoaded, triggerValidatorRefresh, setValidatorNetworkStats, setValidatorProductionStats, triggerBlockchainRefresh]
+    [handleWsBlockchainInfo, handleWsStemProviderInfo, setMiningStats, scheduleSyncProgress, setPeerCount, setPeers, addMinedBlock, addToast, walletIsLoaded, requestWalletRefresh, validatorIsLoaded, requestValidatorRefresh, setValidatorNetworkStats, setValidatorProductionStats, addValidatorProductionStatsSnapshot, requestBlockchainRefresh]
   );
 
   // Set up WebSocket connection
@@ -472,9 +604,9 @@ function AppContent() {
             duration: 4000,
           });
           // Rehydrate stale data after reconnection
-          triggerBlockchainRefresh();
-          if (walletIsLoaded) triggerWalletRefresh();
-          if (validatorIsLoaded) triggerValidatorRefresh();
+          requestBlockchainRefresh(true);
+          if (walletIsLoaded) requestWalletRefresh(true);
+          if (validatorIsLoaded) requestValidatorRefresh(true);
         }
         hasConnectedOnce.current = true;
       } else if (state === "disconnected" && hasConnectedOnce.current) {
@@ -520,15 +652,15 @@ function AppContent() {
       });
       // Trigger wallet refresh to update balance/tx list
       if (walletIsLoaded) {
-        triggerWalletRefresh();
+        requestWalletRefresh(true);
       }
     } else if (event.type === "OutgoingTransaction") {
       // Trigger wallet and validator refresh so outgoing tx appears immediately
       if (walletIsLoaded) {
-        triggerWalletRefresh();
+        requestWalletRefresh(true);
       }
       if (validatorIsLoaded) {
-        triggerValidatorRefresh();
+        requestValidatorRefresh(true);
       }
     } else if (event.type === "ChainReorg") {
       const { depth, removedCount, addedCount } = event.data;
@@ -540,12 +672,12 @@ function AppContent() {
       });
       // Trigger wallet refresh since balances may have changed
       if (walletIsLoaded) {
-        triggerWalletRefresh();
+        requestWalletRefresh(true);
       }
       // Trigger blockchain refresh so explorer drops reorged blocks
-      triggerBlockchainRefresh();
+      requestBlockchainRefresh(true);
     }
-  }, [setWalletLoaded, setWalletBalance, setWalletAddresses, setWalletTransactionPage, addToast, walletIsLoaded, triggerWalletRefresh, validatorIsLoaded, triggerValidatorRefresh, triggerBlockchainRefresh]);
+  }, [setWalletLoaded, setWalletBalance, setWalletAddresses, setWalletTransactionPage, addToast, walletIsLoaded, requestWalletRefresh, validatorIsLoaded, requestValidatorRefresh, requestBlockchainRefresh]);
 
   // Initialize app — polls get_startup_status while the node boots in the background
   useEffect(() => {
@@ -771,7 +903,7 @@ function AppContent() {
   // Show init failure card if initialization failed or timed out
   if (initError) {
     return (
-      <div className="h-screen w-screen bg-background hex-grid-bg flex items-center justify-center p-4">
+      <div className="min-h-dvh min-w-[800px] bg-background hex-grid-bg flex items-center justify-center overflow-auto p-4">
         <div className="max-w-md w-full">
           <div
             className="chamfered-lg p-[2px]"
@@ -837,12 +969,12 @@ function AppContent() {
   }
 
   return (
-    <div className="flex h-screen bg-background overflow-hidden">
+    <div className="flex h-dvh min-h-[480px] min-w-[800px] bg-background overflow-hidden">
       {/* Sidebar */}
       <aside
         className={cn(
           "flex flex-col border-r border-border bg-background-secondary",
-          "transition-all duration-300 ease-in-out",
+          "min-h-0 overflow-y-auto transition-all duration-300 ease-in-out",
           sidebarCollapsed ? "w-[64px]" : "w-[240px]"
         )}
       >
@@ -1021,8 +1153,8 @@ function AppContent() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto hex-grid-bg text-foreground">
-        <div className="relative h-full p-6">
+      <main className="min-w-0 flex-1 overflow-auto hex-grid-bg text-foreground">
+        <div className="relative min-h-full p-4 sm:p-6">
           {activeTab === "dashboard" && <Dashboard />}
           {activeTab === "mining" && (
             <Suspense fallback={<div className="p-4 text-muted-foreground">Loading...</div>}>

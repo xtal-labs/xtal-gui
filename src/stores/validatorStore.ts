@@ -3,6 +3,7 @@ import type {
   FruitSpec,
   FruitProduction,
   FruitProductionStats,
+  FruitDifficultyHistoryPoint,
   ProducedFruit,
   ValidatorInfo,
   ValidatorWalletSummary,
@@ -16,6 +17,7 @@ interface ValidatorState {
   isRunning: boolean;
   address: string | null;
   walletName: string | null;
+  withdrawableStake: number;
   matureStake: number;
   pendingStake: number;
   effectiveStake: number;
@@ -47,6 +49,7 @@ interface ValidatorState {
 
   // Production stats from WebSocket (global difficulty data)
   productionStats: FruitProductionStats[];
+  fruitDifficultyHistory: Record<string, FruitDifficultyHistoryPoint[]>;
 
   // Recently produced fruits (session-only, newest first)
   recentFruits: ProducedFruit[];
@@ -60,7 +63,7 @@ interface ValidatorState {
   setRunning: (running: boolean) => void;
   setBalanceInfo: (
     available: number,
-    matureStake: number,
+    withdrawableStake: number,
     pendingStake: number,
     pendingUnstake: number,
     immature: number,
@@ -74,6 +77,7 @@ interface ValidatorState {
   setTotalFruitsProduced: (count: number) => void;
   startSession: () => void;
   setProductionStats: (stats: FruitProductionStats[]) => void;
+  addProductionStatsSnapshot: (currentEpoch: number, stats: FruitProductionStats[]) => void;
   triggerRefresh: () => void;
   setAvailableValidatorWallets: (wallets: ValidatorWalletSummary[]) => void;
   setCreationResult: (result: ValidatorWalletCreationResult | null) => void;
@@ -85,6 +89,7 @@ const initialState = {
   isRunning: false,
   address: null as string | null,
   walletName: null as string | null,
+  withdrawableStake: 0,
   matureStake: 0,
   pendingStake: 0,
   effectiveStake: 0,
@@ -101,8 +106,11 @@ const initialState = {
   creationResult: null as ValidatorWalletCreationResult | null,
   recentFruits: [] as ProducedFruit[],
   productionStats: [] as FruitProductionStats[],
+  fruitDifficultyHistory: {} as Record<string, FruitDifficultyHistoryPoint[]>,
   refreshTrigger: 0,
 };
+
+const MAX_DIFFICULTY_HISTORY_POINTS = 96;
 
 export const useValidatorStore = create<ValidatorState>((set) => ({
   ...initialState,
@@ -117,6 +125,7 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
         ? {}
         : {
             isRunning: false,
+            withdrawableStake: 0,
             matureStake: 0,
             pendingStake: 0,
             effectiveStake: 0,
@@ -128,6 +137,7 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
             productions: {},
             sessionStartTime: null,
             recentFruits: [],
+            fruitDifficultyHistory: {},
             refreshTrigger: 0,
           }),
     }),
@@ -138,10 +148,11 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
       sessionStartTime: running && !state.sessionStartTime ? Date.now() : state.sessionStartTime,
     })),
 
-  setBalanceInfo: (available, matureStake, pendingStake, pendingUnstake, immature) =>
+  setBalanceInfo: (available, withdrawableStake, pendingStake, pendingUnstake, immature) =>
     set({
       availableBalance: available,
-      matureStake,
+      withdrawableStake,
+      matureStake: withdrawableStake,
       pendingStake,
       pendingUnstake,
       immatureBalance: immature,
@@ -193,6 +204,33 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
     })),
 
   setProductionStats: (stats) => set({ productionStats: stats }),
+
+  addProductionStatsSnapshot: (currentEpoch, stats) =>
+    set((state) => {
+      const timestamp = Date.now();
+      const fruitDifficultyHistory = { ...state.fruitDifficultyHistory };
+
+      for (const stat of stats) {
+        const point: FruitDifficultyHistoryPoint = {
+          epoch: currentEpoch,
+          timestamp,
+          difficultyBits: stat.currentDifficultyBits,
+          referenceDifficultyBits: stat.referenceDifficultyBits,
+          expectedTimeSecs: stat.expectedTimeSecs,
+          expectedStems: stat.expectedStems,
+          networkStakeUnits: stat.networkStakeUnits,
+        };
+        const existing = fruitDifficultyHistory[stat.fruitType] ?? [];
+        const next =
+          existing.length > 0 && existing[existing.length - 1].epoch === currentEpoch
+            ? [...existing.slice(0, -1), point]
+            : [...existing, point];
+
+        fruitDifficultyHistory[stat.fruitType] = next.slice(-MAX_DIFFICULTY_HISTORY_POINTS);
+      }
+
+      return { fruitDifficultyHistory };
+    }),
 
   triggerRefresh: () =>
     set((state) => ({

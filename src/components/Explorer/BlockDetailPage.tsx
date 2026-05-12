@@ -252,7 +252,7 @@ export function BlockDetailPage({
       />
 
       {/* Header bar */}
-      <div className="relative flex items-center justify-between gap-4">
+      <div className="relative flex items-center justify-between gap-4 pr-4 sm:pr-6">
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
@@ -366,8 +366,7 @@ export function BlockDetailPage({
         </CardContent>
       </Card>
 
-      {/* Fruits section (stem blocks only) */}
-      {detail.blockType === "Stem" && detail.fruits && detail.fruits.length > 0 && (
+      {detail.blockType === "Stem" ? (
         <CollapsibleSection
           title="FRUITS"
           icon={
@@ -375,126 +374,131 @@ export function BlockDetailPage({
               <Database className="h-3.5 w-3.5 text-crystal-fruit" />
             </div>
           }
-          count={detail.fruits.length}
+          count={detail.fruitCount}
           accentColor="text-crystal-fruit"
         >
-          {detail.fruits.map((fruit) => {
-            const color = getFruitColor(fruit.fruitType);
-            const canOpen = Boolean(onFruitClick);
-            return (
+          {!detail.fruits || detail.fruits.length === 0 ? (
+            <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
+              No fruits in this stem
+            </div>
+          ) : (
+            detail.fruits.map((fruit) => {
+              const color = getFruitColor(fruit.fruitType);
+              const canOpen = Boolean(onFruitClick);
+              return (
+                <button
+                  type="button"
+                  key={fruit.hash}
+                  className={cn(
+                    "w-full flex items-center justify-between gap-3 px-4 py-2.5",
+                    "chamfered-sm bg-muted/30 border border-border/40",
+                    canOpen
+                      ? "hover:bg-muted/50 transition-colors cursor-pointer"
+                      : "cursor-default"
+                  )}
+                  onClick={() => {
+                    if (onFruitClick) {
+                      onFruitClick(fruit.hash, detail.hash);
+                    }
+                  }}
+                >
+                  <div className="flex flex-col items-start gap-1 min-w-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Badge
+                        variant="outline"
+                        className={cn("text-[10px]", color.icon)}
+                      >
+                        {color.emoji} {fruit.fruitType}
+                      </Badge>
+                      <HashDisplay
+                        hash={fruit.hash}
+                        chars={12}
+                        copyable={false}
+                        showTooltip={false}
+                        className="text-xs min-w-0"
+                      />
+                    </div>
+                    <div className="flex items-center gap-1 pl-1">
+                      <span className="text-[10px] text-foreground-muted">by</span>
+                      <HashDisplay
+                        hash={fruit.validator}
+                        chars={8}
+                        copyable={false}
+                        showTooltip={false}
+                        className="text-[10px] text-foreground-muted min-w-0"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs text-foreground-muted shrink-0">
+                    {fruit.txCount != null && (
+                      <span className="font-mono">{fruit.txCount} tx</span>
+                    )}
+                    <span className="font-mono">
+                      {formatTimeAgo(fruit.timestamp)}
+                    </span>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </CollapsibleSection>
+      ) : (
+        <CollapsibleSection
+          title="TRANSACTIONS"
+          icon={
+            <div className={cn("icon-hex icon-hex-sm", style.bg)}>
+              <Layers className={cn("h-3.5 w-3.5", style.color)} />
+            </div>
+          }
+          count={detail.transactions.length}
+          accentColor={style.color}
+        >
+          {detail.transactions.length === 0 ? (
+            <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
+              No transactions in this block
+            </div>
+          ) : (
+            detail.transactions.map((tx) => (
               <button
                 type="button"
-                key={fruit.hash}
+                key={tx.txid}
                 className={cn(
                   "w-full flex items-center justify-between gap-3 px-4 py-2.5",
                   "chamfered-sm bg-muted/30 border border-border/40",
-                  canOpen
+                  onTransactionClick
                     ? "hover:bg-muted/50 transition-colors cursor-pointer"
                     : "cursor-default"
                 )}
                 onClick={() => {
-                  if (onFruitClick) {
-                    onFruitClick(fruit.hash, detail.hash);
+                  if (onTransactionClick) {
+                    onTransactionClick(tx.txid, detail.hash);
                   }
                 }}
               >
-                <div className="flex flex-col items-start gap-1 min-w-0">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <Badge
-                      variant="outline"
-                      className={cn("text-[10px]", color.icon)}
-                    >
-                      {color.emoji} {fruit.fruitType}
-                    </Badge>
-                    <HashDisplay
-                      hash={fruit.hash}
-                      chars={12}
-                      copyable={false}
-                      showTooltip={false}
-                      className="text-xs min-w-0"
-                    />
-                  </div>
-                  <div className="flex items-center gap-1 pl-1">
-                    <span className="text-[10px] text-foreground-muted">by</span>
-                    <HashDisplay
-                      hash={fruit.validator}
-                      chars={8}
-                      copyable={false}
-                      showTooltip={false}
-                      className="text-[10px] text-foreground-muted min-w-0"
-                    />
-                  </div>
+                <div className="flex items-center gap-2 min-w-0">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[10px] uppercase shrink-0",
+                      txTypeColors[tx.txType] || "text-foreground"
+                    )}
+                  >
+                    {tx.txType.replace(/_/g, " ")}
+                  </Badge>
+                  <HashDisplay
+                    hash={tx.txid}
+                    chars={14}
+                    className="text-xs min-w-0"
+                  />
                 </div>
-                <div className="flex items-center gap-3 text-xs text-foreground-muted shrink-0">
-                  {fruit.txCount != null && (
-                    <span className="font-mono">{fruit.txCount} tx</span>
-                  )}
-                  <span className="font-mono">
-                    {formatTimeAgo(fruit.timestamp)}
-                  </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  <AmountDisplay amount={tx.totalOutput} size="sm" showSymbol />
                 </div>
               </button>
-            );
-          })}
+            ))
+          )}
         </CollapsibleSection>
       )}
-
-      {/* Transactions section */}
-      <CollapsibleSection
-        title="TRANSACTIONS"
-        icon={
-          <div className={cn("icon-hex icon-hex-sm", style.bg)}>
-            <Layers className={cn("h-3.5 w-3.5", style.color)} />
-          </div>
-        }
-        count={detail.transactions.length}
-        accentColor={style.color}
-      >
-        {detail.transactions.length === 0 ? (
-          <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
-            No transactions in this block
-          </div>
-        ) : (
-          detail.transactions.map((tx) => (
-            <button
-              type="button"
-              key={tx.txid}
-              className={cn(
-                "w-full flex items-center justify-between gap-3 px-4 py-2.5",
-                "chamfered-sm bg-muted/30 border border-border/40",
-                onTransactionClick
-                  ? "hover:bg-muted/50 transition-colors cursor-pointer"
-                  : "cursor-default"
-              )}
-              onClick={() => {
-                if (onTransactionClick) {
-                  onTransactionClick(tx.txid, detail.hash);
-                }
-              }}
-            >
-              <div className="flex items-center gap-2 min-w-0">
-                <Badge
-                  variant="outline"
-                  className={cn(
-                    "text-[10px] uppercase shrink-0",
-                    txTypeColors[tx.txType] || "text-foreground"
-                  )}
-                >
-                  {tx.txType.replace(/_/g, " ")}
-                </Badge>
-                <HashDisplay
-                  hash={tx.txid}
-                  chars={14}
-                  className="text-xs min-w-0"
-                />
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <AmountDisplay amount={tx.totalOutput} size="sm" showSymbol />
-              </div>
-            </button>
-          ))
-        )}
-      </CollapsibleSection>
     </div>
   );
 }

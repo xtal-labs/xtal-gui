@@ -9,11 +9,12 @@ import { cn } from "@/lib/utils";
 import { formatVmAddress } from "@/lib/address";
 import { tauriCommand } from "@/hooks";
 import { useUiStore } from "@/stores";
+import type { VmAddress } from "@/types";
 
 interface VmReceiveModalProps {
   isOpen: boolean;
   onClose: () => void;
-  vmAddresses: string[];
+  vmAddresses: VmAddress[];
   onAddressGenerated: () => void;
 }
 
@@ -41,22 +42,47 @@ export function VmReceiveModal({
     return selectedAddress ? toDisplayAddress(selectedAddress) : null;
   }, [selectedAddress, toDisplayAddress]);
 
-  // Select the most recent address by default (last in array)
+  const selectAddress = useCallback((address: string) => {
+    setJustGenerated(null);
+    setSelectedAddress(address);
+  }, []);
+
+  const defaultAddress = useMemo(() => {
+    if (vmAddresses.length === 0) return null;
+    return (
+      vmAddresses.find((addr) => addr.label === "Primary")?.address ??
+      vmAddresses[vmAddresses.length - 1].address
+    );
+  }, [vmAddresses]);
+
+  // Pick a default only when needed. Refreshes replace the address array, so
+  // preserve the selected address as long as it still exists.
   useEffect(() => {
-    if (isOpen && vmAddresses.length > 0) {
-      if (justGenerated && vmAddresses.includes(justGenerated)) {
-        setSelectedAddress(justGenerated);
-        return;
-      }
-      // Show first address (primary) by default
-      setSelectedAddress(vmAddresses[0]);
+    if (!isOpen) return;
+
+    if (vmAddresses.length === 0) {
+      setSelectedAddress(null);
+      return;
     }
-  }, [isOpen, vmAddresses, justGenerated]);
+
+    if (justGenerated && vmAddresses.some((addr) => addr.address === justGenerated)) {
+      setSelectedAddress(justGenerated);
+      return;
+    }
+
+    setSelectedAddress((current) => {
+      if (current && vmAddresses.some((addr) => addr.address === current)) {
+        return current;
+      }
+      return defaultAddress;
+    });
+  }, [isOpen, vmAddresses, justGenerated, defaultAddress]);
 
   // Reset justGenerated when modal closes
   useEffect(() => {
     if (!isOpen) {
       setJustGenerated(null);
+      setSelectedAddress(null);
     }
   }, [isOpen]);
 
@@ -131,8 +157,8 @@ export function VmReceiveModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4 relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
         {/* Decorative elements */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
@@ -234,16 +260,16 @@ export function VmReceiveModal({
                 YOUR VM ADDRESSES
               </label>
               <div className="max-h-32 overflow-y-auto space-y-1 pr-1">
-                {vmAddresses.map((addr, i) => {
-                  const displayAddr = toDisplayAddress(addr);
+                {vmAddresses.map((addr) => {
+                  const displayAddr = toDisplayAddress(addr.address);
                   return (
                     <button
-                      key={addr}
+                      key={addr.address}
                       type="button"
-                      onClick={() => setSelectedAddress(addr)}
+                      onClick={() => selectAddress(addr.address)}
                       className={cn(
                         "w-full flex items-center justify-between p-2 chamfered-sm transition-all text-left",
-                        selectedAddress === addr
+                        selectedAddress === addr.address
                           ? "bg-accent/10 border border-accent"
                           : "bg-muted/30 border border-transparent hover:border-accent/30"
                       )}
@@ -257,7 +283,7 @@ export function VmReceiveModal({
                         className="text-[10px]"
                         diamond
                       >
-                        {i === 0 ? "Primary" : "Account"}
+                        {addr.label ?? "Account"}
                       </Badge>
                     </button>
                   );

@@ -54,10 +54,10 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
   };
 
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out] pb-8">
+    <div className="animate-[fade-in-up_0.4s_ease-out] pb-6 max-h-[560px]:pb-3">
       {/* Header */}
-      <div className="text-center mb-6">
-        <h2 className="text-2xl font-light mb-2">Choose Your Fruit Shards</h2>
+      <div className="text-center mb-4 sm:mb-6 max-h-[560px]:mb-3">
+        <h2 className="text-xl sm:text-2xl font-light mb-2">Choose Your Fruit Shards</h2>
         <p className="text-muted-foreground text-sm max-w-md mx-auto">
           Crystal's stem/leaf architecture lets you validate a subset of
           fruit shards while still participating in the network
@@ -65,7 +65,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
       </div>
 
       {/* Educational callout */}
-      <div className="chamfered-sm p-3 bg-accent/5 border border-accent/20 mb-6">
+      <div className="chamfered-sm p-3 max-h-[560px]:p-2 bg-accent/5 border border-accent/20 mb-4 sm:mb-6 max-h-[560px]:mb-3">
         <p className="text-xs text-muted-foreground leading-relaxed">
           <span className="text-accent">
             <Sprout className="w-3 h-3 inline -mt-0.5 mr-1" />
@@ -78,7 +78,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
       </div>
 
        {/* Preset buttons */}
-       <div className="flex gap-2 mb-4">
+       <div className="flex flex-col min-[520px]:flex-row gap-2 mb-4 max-h-[560px]:mb-3">
          <button
            onClick={selectAppleOnly}
            disabled={true}
@@ -110,7 +110,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
       </div>
 
       {/* Fruit grid */}
-      <div className="grid grid-cols-3 gap-2 mb-5">
+      <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-2 mb-4 sm:mb-5 max-h-[560px]:gap-1.5 max-h-[560px]:mb-3">
         {ALL_FRUITS.map((fruit, index) => {
           const colors = FRUIT_COLORS[fruit] || FRUIT_COLORS.Apple;
           const isSelected = selected.has(fruit);
@@ -122,7 +122,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
               onClick={() => toggleFruit(fruit)}
               disabled={isApple || isProcessing}
               className={`
-                group relative chamfered-sm p-3 transition-all duration-200
+                group relative chamfered-sm p-2 sm:p-3 max-h-[560px]:p-1.5 transition-all duration-200
                 border text-center
                 ${isSelected
                   ? `bg-gradient-to-br ${colors.bg} ${colors.border} shadow-md ${colors.glow}`
@@ -133,7 +133,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
               style={{ animationDelay: `${index * 50}ms` }}
             >
               {/* Fruit emoji */}
-              <span className="text-2xl block mb-1" role="img" aria-label={fruit}>
+              <span className="text-xl sm:text-2xl block mb-1 max-h-[560px]:text-lg max-h-[560px]:mb-0.5" role="img" aria-label={fruit}>
                 {colors.emoji}
               </span>
 
@@ -162,7 +162,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
 
       {/* Mining eligibility note */}
       {allSelected ? (
-        <div className="chamfered-sm p-3 bg-amber-500/5 border border-amber-500/20 mb-4">
+        <div className="chamfered-sm p-3 max-h-[560px]:p-2 bg-amber-500/5 border border-amber-500/20 mb-4 max-h-[560px]:mb-3">
           <p className="text-xs text-amber-400 flex items-center gap-1.5">
             <Pickaxe className="w-3.5 h-3.5 flex-shrink-0" />
             All shards selected — this node is eligible for PoW mining
@@ -176,9 +176,9 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
       )}
 
       {/* Toggle options */}
-      <div className="chamfered-sm bg-card/50 border border-border mb-4 divide-y divide-border/50">
+      <div className="chamfered-sm bg-card/50 border border-border mb-4 max-h-[560px]:mb-3 divide-y divide-border/50">
         {/* Transaction Index toggle */}
-        <div className="p-4 flex items-center justify-between gap-4">
+        <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
             <Search className={`w-5 h-5 flex-shrink-0 ${txIndex ? 'text-accent' : 'text-muted-foreground'}`} />
             <div className="min-w-0">
@@ -197,7 +197,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
       </div>
 
       {/* Advanced section — collapsible */}
-      <div className="mb-6">
+      <div className="mb-5 sm:mb-6 max-h-[560px]:mb-3">
         <button
           onClick={() => setShowAdvanced(!showAdvanced)}
           className="w-full chamfered-sm py-2.5 px-4 text-xs font-medium transition-all duration-200
@@ -218,13 +218,13 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
           {/* Sync Mode selector */}
           <div className="mb-3">
             <p className="text-xs uppercase tracking-wider text-muted-foreground mb-2 ml-1">Sync Mode</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-2">
                {/* Fast Sync */}
                <button
                  onClick={() => handleSyncModeChange('fast')}
                  disabled={true}
                  className={`
-                   chamfered-sm p-3 text-left transition-all duration-200 border
+                   chamfered-sm p-3 max-h-[560px]:p-2 text-left transition-all duration-200 border
                    opacity-50 cursor-not-allowed
                     bg-card/20 border-border
                  `}
@@ -246,7 +246,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
                 onClick={() => handleSyncModeChange('full')}
                 disabled={isProcessing}
                 className={`
-                  chamfered-sm p-3 text-left transition-all duration-200 border
+                  chamfered-sm p-3 max-h-[560px]:p-2 text-left transition-all duration-200 border
                   ${syncMode === 'full'
                     ? 'bg-amber-500/10 border-amber-500/40'
                     : 'bg-card/30 border-border hover:border-amber-500/20'
@@ -268,7 +268,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
 
           {/* Full sync info note */}
           {syncMode === 'full' && (
-            <div className="chamfered-sm p-3 bg-amber-500/5 border border-amber-500/20 mb-3 animate-[fade-in-up_0.2s_ease-out]">
+            <div className="chamfered-sm p-3 max-h-[560px]:p-2 bg-amber-500/5 border border-amber-500/20 mb-3 animate-[fade-in-up_0.2s_ease-out]">
               <p className="text-xs text-amber-300/90 flex items-start gap-1.5">
                 <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                 <span>
@@ -282,7 +282,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
 
           {/* Archival toggle */}
           <div className="chamfered-sm bg-card/50 border border-border">
-            <div className="p-4 flex items-center justify-between gap-4">
+            <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
                 <HardDrive className={`w-5 h-5 flex-shrink-0 ${archival ? 'text-accent' : 'text-muted-foreground'}`} />
                 <div className="min-w-0">
@@ -314,7 +314,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
         onClick={handleContinue}
         disabled={isProcessing}
         className={`
-          group w-full chamfered py-4 font-medium transition-all duration-300
+          group w-full chamfered py-3 sm:py-4 max-h-[560px]:py-2.5 font-medium transition-all duration-300
           flex items-center justify-center gap-2
           ${isProcessing
             ? 'bg-muted/20 text-muted-foreground cursor-wait'

@@ -53,6 +53,35 @@ const initialState = {
   bandwidth: initialBandwidth,
 };
 
+function arePeersEqual(a: Peer[], b: Peer[]) {
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i++) {
+    const prev = a[i];
+    const next = b[i];
+
+    if (
+      prev.id !== next.id ||
+      prev.address !== next.address ||
+      prev.port !== next.port ||
+      prev.direction !== next.direction ||
+      prev.state !== next.state ||
+      prev.version !== next.version ||
+      prev.userAgent !== next.userAgent ||
+      prev.latency !== next.latency ||
+      prev.connectedAt !== next.connectedAt ||
+      prev.lastSeen !== next.lastSeen ||
+      prev.bytesReceived !== next.bytesReceived ||
+      prev.bytesSent !== next.bytesSent ||
+      prev.bestHeight !== next.bestHeight
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export const useNetworkStore = create<NetworkState>((set) => ({
   ...initialState,
 
@@ -66,12 +95,18 @@ export const useNetworkStore = create<NetworkState>((set) => ({
     }),
 
   setPeers: (peers) =>
-    set({
-      peers,
-      peerCount: peers.length,
-      inboundCount: peers.filter((p) => p.direction === "Inbound").length,
-      outboundCount: peers.filter((p) => p.direction === "Outbound").length,
-      isConnected: peers.length > 0,
+    set((state) => {
+      if (arePeersEqual(state.peers, peers)) {
+        return state;
+      }
+
+      return {
+        peers,
+        peerCount: peers.length,
+        inboundCount: peers.filter((p) => p.direction === "Inbound").length,
+        outboundCount: peers.filter((p) => p.direction === "Outbound").length,
+        isConnected: peers.length > 0,
+      };
     }),
 
   updatePeer: (id, updates) =>
@@ -95,22 +130,45 @@ export const useNetworkStore = create<NetworkState>((set) => ({
     }),
 
   setPeerCount: (count, inbound, outbound) =>
-    set((state) => ({
-      peerCount: count,
-      inboundCount: inbound ?? state.inboundCount,
-      outboundCount: outbound ?? state.outboundCount,
-      isConnected: count > 0,
-      // Add to history
-      peerHistory: [
-        ...state.peerHistory,
-        {
-          timestamp: Date.now(),
-          totalPeers: count,
-          inbound: inbound ?? state.inboundCount,
-          outbound: outbound ?? state.outboundCount,
-        },
-      ].slice(-60), // Keep last minute at 1/sec
-    })),
+    set((state) => {
+      const inboundCount = inbound ?? state.inboundCount;
+      const outboundCount = outbound ?? state.outboundCount;
+      const lastPoint = state.peerHistory[state.peerHistory.length - 1];
+      const now = Date.now();
+      const countsUnchanged =
+        state.peerCount === count &&
+        state.inboundCount === inboundCount &&
+        state.outboundCount === outboundCount &&
+        state.isConnected === (count > 0);
+      const shouldAppendHistory =
+        !lastPoint ||
+        now - lastPoint.timestamp >= 1_000 ||
+        lastPoint.totalPeers !== count ||
+        lastPoint.inbound !== inboundCount ||
+        lastPoint.outbound !== outboundCount;
+
+      if (countsUnchanged && !shouldAppendHistory) {
+        return state;
+      }
+
+      return {
+        peerCount: count,
+        inboundCount,
+        outboundCount,
+        isConnected: count > 0,
+        peerHistory: shouldAppendHistory
+          ? [
+              ...state.peerHistory,
+              {
+                timestamp: now,
+                totalPeers: count,
+                inbound: inboundCount,
+                outbound: outboundCount,
+              },
+            ].slice(-60)
+          : state.peerHistory,
+      };
+    }),
 
   addHistoryPoint: (point) =>
     set((state) => ({

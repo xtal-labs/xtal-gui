@@ -380,130 +380,134 @@ export function BlockDetailPanel({
                 </CardContent>
               </Card>
 
-              {/* Fruits (stem only) */}
-              {detail.blockType === "Stem" && detail.fruits && detail.fruits.length > 0 && (
-                <CollapsibleSection title="FRUITS" count={detail.fruits.length}>
-                  {detail.fruits.map((fruit) => {
-                    const color = getFruitColor(fruit.fruitType);
-                    const canOpen = Boolean(onFruitClick);
-                    return (
-                      <button
-                        type="button"
-                        key={fruit.hash}
-                        className={cn(
-                          "w-full flex items-center justify-between gap-3 px-3 py-2",
-                          "chamfered-sm bg-muted/30 border border-border/40",
-                          canOpen
-                            ? "hover:bg-muted/50 transition-colors cursor-pointer"
-                            : "cursor-default"
-                        )}
-                        onClick={() => {
-                          if (onFruitClick) {
-                            onFruitClick(fruit.hash, detail.hash);
-                          }
-                        }}
-                      >
-                        <div className="flex flex-col items-start gap-1 min-w-0">
+              {detail.blockType === "Stem" ? (
+                <CollapsibleSection title="FRUITS" count={detail.fruitCount}>
+                  {!detail.fruits || detail.fruits.length === 0 ? (
+                    <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
+                      No fruits in this stem
+                    </div>
+                  ) : (
+                    detail.fruits.map((fruit) => {
+                      const color = getFruitColor(fruit.fruitType);
+                      const canOpen = Boolean(onFruitClick);
+                      return (
+                        <button
+                          type="button"
+                          key={fruit.hash}
+                          className={cn(
+                            "w-full flex items-center justify-between gap-3 px-3 py-2",
+                            "chamfered-sm bg-muted/30 border border-border/40",
+                            canOpen
+                              ? "hover:bg-muted/50 transition-colors cursor-pointer"
+                              : "cursor-default"
+                          )}
+                          onClick={() => {
+                            if (onFruitClick) {
+                              onFruitClick(fruit.hash, detail.hash);
+                            }
+                          }}
+                        >
+                          <div className="flex flex-col items-start gap-1 min-w-0">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Badge
+                                variant="outline"
+                                className={cn("text-[10px]", color.icon)}
+                              >
+                                {color.emoji} {fruit.fruitType}
+                              </Badge>
+                              <HashDisplay
+                                hash={fruit.hash}
+                                chars={8}
+                                copyable={false}
+                                showTooltip={false}
+                                className="text-xs min-w-0"
+                              />
+                            </div>
+                            <div className="flex items-center gap-1 pl-1">
+                              <span className="text-[10px] text-foreground-muted">by</span>
+                              <HashDisplay
+                                hash={fruit.validator}
+                                chars={6}
+                                copyable={false}
+                                showTooltip={false}
+                                className="text-[10px] text-foreground-muted min-w-0"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-foreground-muted shrink-0">
+                            {fruit.txCount != null && (
+                              <span className="font-mono">{fruit.txCount} tx</span>
+                            )}
+                            <span className="font-mono">{formatTimeAgo(fruit.timestamp)}</span>
+                          </div>
+                        </button>
+                      );
+                    })
+                  )}
+                </CollapsibleSection>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className={cn("icon-hex icon-hex-sm", style.bg)}>
+                        <Layers className={cn("h-4 w-4", style.color)} />
+                      </div>
+                      <h3 className="text-sm font-heading tracking-wide text-foreground">TRANSACTIONS</h3>
+                    </div>
+                    <Badge variant="outline" className="font-mono text-xs" shape="chamfered">
+                      {detail.transactions.length.toLocaleString()}
+                    </Badge>
+                  </div>
+
+                  {detail.transactions.length === 0 ? (
+                    <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
+                      No transactions in this block
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {detail.transactions.map((tx) => (
+                        <button
+                          type="button"
+                          key={tx.txid}
+                          className={cn(
+                            "w-full flex items-center justify-between gap-3 px-3 py-2",
+                            "chamfered-sm bg-muted/30 border border-border/40",
+                            onTransactionClick
+                              ? "hover:bg-muted/50 transition-colors cursor-pointer"
+                              : "cursor-default"
+                          )}
+                          onClick={() => {
+                            if (onTransactionClick) {
+                              onTransactionClick(tx.txid, detail.hash);
+                            }
+                          }}
+                        >
                           <div className="flex items-center gap-2 min-w-0">
                             <Badge
                               variant="outline"
-                              className={cn("text-[10px]", color.icon)}
+                              className={cn(
+                                "text-[10px] uppercase",
+                                txTypeColors[tx.txType] || "text-foreground"
+                              )}
                             >
-                              {color.emoji} {fruit.fruitType}
+                              {tx.txType.replace(/_/g, " ")}
                             </Badge>
                             <HashDisplay
-                              hash={fruit.hash}
-                              chars={8}
-                              copyable={false}
-                              showTooltip={false}
+                              hash={tx.txid}
+                              chars={10}
                               className="text-xs min-w-0"
                             />
                           </div>
-                          <div className="flex items-center gap-1 pl-1">
-                            <span className="text-[10px] text-foreground-muted">by</span>
-                            <HashDisplay
-                              hash={fruit.validator}
-                              chars={6}
-                              copyable={false}
-                              showTooltip={false}
-                              className="text-[10px] text-foreground-muted min-w-0"
-                            />
+                          <div className="flex items-center gap-2">
+                            <Database className="h-3.5 w-3.5 text-foreground-muted" />
+                            <AmountDisplay amount={tx.totalOutput} size="sm" showSymbol />
                           </div>
-                        </div>
-                        <div className="flex items-center gap-3 text-xs text-foreground-muted shrink-0">
-                          {fruit.txCount != null && (
-                            <span className="font-mono">{fruit.txCount} tx</span>
-                          )}
-                          <span className="font-mono">{formatTimeAgo(fruit.timestamp)}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </CollapsibleSection>
-              )}
-
-              {/* Transactions */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className={cn("icon-hex icon-hex-sm", style.bg)}>
-                      <Layers className={cn("h-4 w-4", style.color)} />
+                        </button>
+                      ))}
                     </div>
-                    <h3 className="text-sm font-heading tracking-wide text-foreground">TRANSACTIONS</h3>
-                  </div>
-                  <Badge variant="outline" className="font-mono text-xs" shape="chamfered">
-                    {detail.transactions.length.toLocaleString()}
-                  </Badge>
+                  )}
                 </div>
-
-                {detail.transactions.length === 0 ? (
-                  <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
-                    No transactions in this block
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {detail.transactions.map((tx) => (
-                      <button
-                        type="button"
-                        key={tx.txid}
-                        className={cn(
-                          "w-full flex items-center justify-between gap-3 px-3 py-2",
-                          "chamfered-sm bg-muted/30 border border-border/40",
-                          onTransactionClick
-                            ? "hover:bg-muted/50 transition-colors cursor-pointer"
-                            : "cursor-default"
-                        )}
-                        onClick={() => {
-                          if (onTransactionClick) {
-                            onTransactionClick(tx.txid, detail.hash);
-                          }
-                        }}
-                      >
-                        <div className="flex items-center gap-2 min-w-0">
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px] uppercase",
-                              txTypeColors[tx.txType] || "text-foreground"
-                            )}
-                          >
-                            {tx.txType.replace(/_/g, " ")}
-                          </Badge>
-                          <HashDisplay
-                            hash={tx.txid}
-                            chars={10}
-                            className="text-xs min-w-0"
-                          />
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Database className="h-3.5 w-3.5 text-foreground-muted" />
-                          <AmountDisplay amount={tx.totalOutput} size="sm" showSymbol />
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+              )}
             </>
           ) : (
             <div className="flex flex-col items-center justify-center h-64 gap-3">

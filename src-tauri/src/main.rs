@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use log::{debug, error, info, warn};
 use tauri::menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, LogicalSize, Manager};
 use tokio::runtime::Runtime;
 
 use xtal::blockchain::{BootstrapPhase, BootstrapProgress};
@@ -38,6 +38,78 @@ use config::{load_node_config, node_config_exists, node_config_path, GuiConfig};
 use state::{
     AppState, NodeHandleStore, SetupState, SharedStartupStatus, StartupErrorInfo, StartupStage,
 };
+
+const PREFERRED_WINDOW_WIDTH: f64 = 1200.0;
+const PREFERRED_WINDOW_HEIGHT: f64 = 800.0;
+const MIN_USABLE_WINDOW_WIDTH: f64 = 640.0;
+const MIN_USABLE_WINDOW_HEIGHT: f64 = 320.0;
+const MAX_WORKAREA_RATIO: f64 = 0.9;
+
+fn adaptive_window_dimension(preferred: f64, minimum: f64, work_area: f64) -> f64 {
+    let max_for_display = (work_area * MAX_WORKAREA_RATIO).floor();
+    // Clamp minimum to display size so we never force a window larger than the screen
+    let effective_min = minimum.min(max_for_display);
+    preferred.min(max_for_display).max(effective_min)
+}
+
+fn apply_adaptive_startup_window_size(app: &tauri::App) -> tauri::Result<()> {
+    let Some(window) = app.get_webview_window("main") else {
+        warn!("Main window not found; using configured startup window size");
+        return Ok(());
+    };
+
+    let monitor = match window.current_monitor() {
+        Ok(Some(monitor)) => Some(monitor),
+        Ok(None) => window.primary_monitor().unwrap_or_else(|err| {
+            warn!("Failed to detect primary monitor: {}", err);
+            None
+        }),
+        Err(err) => {
+            warn!("Failed to detect current monitor: {}", err);
+            window.primary_monitor().unwrap_or_else(|err| {
+                warn!("Failed to detect primary monitor: {}", err);
+                None
+            })
+        }
+    };
+
+    let Some(monitor) = monitor else {
+        warn!("No monitor detected; using configured startup window size");
+        return Ok(());
+    };
+
+    let scale_factor = monitor.scale_factor().max(1.0);
+    let work_area = monitor.work_area();
+    let work_area_width = work_area.size.width as f64 / scale_factor;
+    let work_area_height = work_area.size.height as f64 / scale_factor;
+
+    let target_width = adaptive_window_dimension(
+        PREFERRED_WINDOW_WIDTH,
+        MIN_USABLE_WINDOW_WIDTH,
+        work_area_width,
+    );
+    let target_height = adaptive_window_dimension(
+        PREFERRED_WINDOW_HEIGHT,
+        MIN_USABLE_WINDOW_HEIGHT,
+        work_area_height,
+    );
+
+    info!(
+        "Applying adaptive startup window size: {:.0}x{:.0} logical px (monitor work area: {:.0}x{:.0}, scale factor: {:.2})",
+        target_width, target_height, work_area_width, work_area_height, scale_factor
+    );
+
+    if let Err(err) = window.set_size(LogicalSize::new(target_width, target_height)) {
+        warn!("Failed to apply adaptive startup window size: {}", err);
+        return Ok(());
+    }
+
+    if let Err(err) = window.center() {
+        warn!("Failed to center startup window: {}", err);
+    }
+
+    Ok(())
+}
 
 // =============================================================================
 // Menu Helpers
@@ -231,6 +303,7 @@ fn run_setup_mode(context: tauri::Context) {
                 .build()?;
 
             app.set_menu(menu)?;
+            apply_adaptive_startup_window_size(app)?;
 
             // Handle minimal menu events
             app.on_menu_event(|_app_handle, event| {
@@ -442,6 +515,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                 .build()?;
 
             app.set_menu(menu)?;
+            apply_adaptive_startup_window_size(app)?;
 
             // Handle menu events
             app.on_menu_event(move |app_handle, event| {
@@ -707,6 +781,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::create_multisig_address,
             commands::get_multisig_addresses,
             commands::get_addresses,
+            commands::estimate_send_transaction_fee,
             commands::send_transaction,
             commands::get_transaction_history,
             commands::get_transaction_detail,
@@ -726,6 +801,8 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_validator_stake,
             commands::get_fruit_specifications,
             commands::get_eligible_fruits,
+            commands::estimate_validator_stake_fee,
+            commands::estimate_validator_unstake_fee,
             commands::validator_stake,
             commands::validator_unstake,
             commands::create_validator_wallet,

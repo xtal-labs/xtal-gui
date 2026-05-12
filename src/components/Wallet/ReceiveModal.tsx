@@ -42,25 +42,45 @@ export function ReceiveModal({
     return selectedAddress ? toDisplayAddress(selectedAddress) : null;
   }, [selectedAddress, toDisplayAddress]);
 
-  // Select the most recent address by default (highest index = most recently generated)
-  // But preserve selection if user manually selected or just generated one
+  const selectAddress = useCallback((address: string) => {
+    setJustGenerated(null);
+    setSelectedAddress(address);
+  }, []);
+
+  const defaultAddress = useMemo(() => {
+    if (addresses.length === 0) return null;
+    const receivingAddresses = addresses.filter((addr) => addr.kind === "receiving");
+    return receivingAddresses[receivingAddresses.length - 1]?.address ?? addresses[0].address;
+  }, [addresses]);
+
+  // Pick a default only when needed. Refreshes replace the address array, so
+  // preserve the selected address as long as it still exists.
   useEffect(() => {
-    if (isOpen && addresses.length > 0) {
-      // If we just generated an address, keep showing it
-      if (justGenerated && addresses.some(a => a.address === justGenerated)) {
-        setSelectedAddress(justGenerated);
-        return;
-      }
-      // Otherwise show the most recently generated (highest index)
-      const sortedByIndex = [...addresses].sort((a, b) => b.index - a.index);
-      setSelectedAddress(sortedByIndex[0]?.address || null);
+    if (!isOpen) return;
+
+    if (addresses.length === 0) {
+      setSelectedAddress(null);
+      return;
     }
-  }, [isOpen, addresses, justGenerated]);
+
+    if (justGenerated && addresses.some((addr) => addr.address === justGenerated)) {
+      setSelectedAddress(justGenerated);
+      return;
+    }
+
+    setSelectedAddress((current) => {
+      if (current && addresses.some((addr) => addr.address === current)) {
+        return current;
+      }
+      return defaultAddress;
+    });
+  }, [isOpen, addresses, justGenerated, defaultAddress]);
 
   // Reset justGenerated when modal closes
   useEffect(() => {
     if (!isOpen) {
       setJustGenerated(null);
+      setSelectedAddress(null);
     }
   }, [isOpen]);
 
@@ -135,8 +155,8 @@ export function ReceiveModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4 relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
         {/* Decorative elements */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
@@ -244,7 +264,7 @@ export function ReceiveModal({
                     <button
                       key={addr.address}
                       type="button"
-                      onClick={() => setSelectedAddress(addr.address)}
+                      onClick={() => selectAddress(addr.address)}
                       className={cn(
                         "w-full flex items-center justify-between p-2 chamfered-sm transition-all text-left",
                         selectedAddress === addr.address

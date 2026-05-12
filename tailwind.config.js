@@ -5,9 +5,9 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['Geist', 'system-ui', '-apple-system', 'sans-serif'],
+        sans: ['Chakra Petch', 'system-ui', 'sans-serif'],
         heading: ['Chakra Petch', 'system-ui', 'sans-serif'],
-        mono: ['Space Mono', 'Geist Mono', 'JetBrains Mono', 'monospace'],
+        mono: ['Chakra Petch', 'system-ui', 'sans-serif'],
       },
       colors: {
         background: 'hsl(var(--background))',

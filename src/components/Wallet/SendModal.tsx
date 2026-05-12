@@ -42,23 +42,30 @@ type SendStep = "form" | "confirm" | "sending" | "success" | "error";
 interface FeeOption {
   id: string;
   label: string;
-  description: string;
   rate: number; // shards per byte
   icon: typeof Zap;
 }
 
 const FEE_OPTIONS: FeeOption[] = [
-  { id: "economy", label: "Economy", description: "~30 min", rate: 500, icon: Clock },
-  { id: "standard", label: "Standard", description: "~10 min", rate: 1000, icon: Shield },
-  { id: "priority", label: "Priority", description: "~2 min", rate: 2000, icon: Zap },
+  { id: "economy", label: "Economy", rate: 500, icon: Clock },
+  { id: "standard", label: "Standard", rate: 1000, icon: Shield },
+  { id: "priority", label: "Priority", rate: 2000, icon: Zap },
 ];
 
-// Estimated transaction size for fee calculation
-const ESTIMATED_TX_SIZE = 250; // bytes
+const DEFAULT_CUSTOM_FEE_RATE_KB = "1000000";
+const ESTIMATE_RECIPIENT_HEX = "0000000000000000000000000000000000000000";
 
 interface SendResult {
   txid: string;
   fee: number;
+}
+
+interface SendFeeEstimate {
+  fee: number;
+  txSize: number;
+  inputCount: number;
+  outputCount: number;
+  feeRate: number;
 }
 
 export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
@@ -70,19 +77,32 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
   const [selectedFee, setSelectedFee] = useState<string>("standard");
+  const [customFeeRateKb, setCustomFeeRateKb] = useState(DEFAULT_CUSTOM_FEE_RATE_KB);
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [txResult, setTxResult] = useState<SendResult | null>(null);
+  const [feeEstimate, setFeeEstimate] = useState<SendFeeEstimate | null>(null);
+  const [isFeeEstimating, setIsFeeEstimating] = useState(false);
+  const [feeEstimateError, setFeeEstimateError] = useState<string | null>(null);
 
   // Derived values
   const parsedAmountShards = parseXtalToShards(amount);
   const amountShards = parsedAmountShards ?? 0;
   const amountError = getXtalInputError(amount);
   const feeOption = FEE_OPTIONS.find((f) => f.id === selectedFee) || FEE_OPTIONS[1];
-  const estimatedFee = feeOption.rate * ESTIMATED_TX_SIZE;
+  const customFeeRateKbNum = Number(customFeeRateKb);
+  const customFeeRateError =
+    selectedFee === "custom" && (!Number.isFinite(customFeeRateKbNum) || customFeeRateKbNum <= 0)
+      ? "Enter a fee rate greater than 0"
+      : null;
+  const feeRate =
+    selectedFee === "custom" && !customFeeRateError
+      ? Math.max(1, Math.ceil(customFeeRateKbNum / 1000))
+      : feeOption.rate;
+  const estimatedFee = feeEstimate?.fee ?? 0;
   const totalAmount = amountShards + estimatedFee;
-  const hasInsufficientFunds = totalAmount > maxBalance;
+  const hasInsufficientFunds = feeEstimate !== null && totalAmount > maxBalance;
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -92,10 +112,14 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
         setRecipient("");
         setAmount("");
         setSelectedFee("standard");
+        setCustomFeeRateKb(DEFAULT_CUSTOM_FEE_RATE_KB);
         setPassword("");
         setShowPassword(false);
         setError(null);
         setTxResult(null);
+        setFeeEstimate(null);
+        setIsFeeEstimating(false);
+        setFeeEstimateError(null);
       }, 200);
     }
   }, [isOpen]);
@@ -107,12 +131,65 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
     ? hexToBase58Address(parsedAddress.pkh) ?? recipient.trim()
     : recipient.trim();
 
+  useEffect(() => {
+    if (
+      !isOpen ||
+      amountShards <= 0 ||
+      amountError ||
+      customFeeRateError ||
+      feeRate <= 0
+    ) {
+      setFeeEstimate(null);
+      setIsFeeEstimating(false);
+      setFeeEstimateError(null);
+      return;
+    }
+
+    let isCurrent = true;
+    const estimateRecipient = recipientPkh || ESTIMATE_RECIPIENT_HEX;
+
+    setIsFeeEstimating(true);
+    setFeeEstimateError(null);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const result = await tauriCommand<SendFeeEstimate>("estimate_send_transaction_fee", {
+          toAddress: estimateRecipient,
+          amount: amountShards,
+          feeRate,
+        });
+        if (isCurrent) {
+          setFeeEstimate(result);
+          setFeeEstimateError(null);
+        }
+      } catch (err) {
+        if (isCurrent) {
+          setFeeEstimate(null);
+          setFeeEstimateError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (isCurrent) {
+          setIsFeeEstimating(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(timer);
+    };
+  }, [isOpen, amountShards, amountError, customFeeRateError, feeRate, recipientPkh]);
+
   const canProceed =
     recipient.length > 0 &&
     parsedAddress !== null &&
     amountShards > 0 &&
     !amountError &&
-    !hasInsufficientFunds;
+    feeEstimate !== null &&
+    !isFeeEstimating &&
+    !feeEstimateError &&
+    !hasInsufficientFunds &&
+    !customFeeRateError;
 
   const handleSend = async () => {
     if (!password) {
@@ -131,7 +208,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
       const result = await tauriCommand<SendResult>("send_transaction", {
         toAddress: recipientPkh, // Always send hex PKH to backend
         amount: parsedAmountShards,
-        fee: estimatedFee,
+        feeRate: feeRate,
         password: password,
       });
 
@@ -179,8 +256,8 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card variant="crystalline" className="w-full max-w-lg mx-4 relative overflow-hidden">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
+      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
         {/* Decorative crystal facet overlay */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
@@ -324,7 +401,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                 <label className="text-sm font-heading tracking-wide text-foreground-secondary">
                   NETWORK FEE
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-2 gap-2">
                   {FEE_OPTIONS.map((option) => (
                     <button
                       key={option.id}
@@ -348,10 +425,82 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                           {option.label.toUpperCase()}
                         </span>
                       </div>
-                      <p className="text-xs text-foreground-muted">{option.description}</p>
+                      <p className="text-[11px] text-foreground-muted font-mono mt-1">
+                        {(option.rate * 1000).toLocaleString()} shards/kB
+                      </p>
                     </button>
                   ))}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFee("custom")}
+                    className={cn(
+                      "p-3 chamfered-sm border transition-all text-left",
+                      selectedFee === "custom"
+                        ? "border-primary bg-primary/10"
+                        : "border-border hover:border-primary/50 bg-muted/30"
+                    )}
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <Zap
+                        className={cn(
+                          "h-3.5 w-3.5",
+                          selectedFee === "custom" ? "text-primary" : "text-foreground-muted"
+                        )}
+                      />
+                      <span className="text-xs font-heading tracking-wide">CUSTOM</span>
+                    </div>
+                    <p className="text-xs text-foreground-muted">Manual rate</p>
+                    <p className="text-[11px] text-foreground-muted font-mono mt-1">
+                      shards/kB
+                    </p>
+                  </button>
                 </div>
+                {selectedFee === "custom" && (
+                  <div className="space-y-1">
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1000}
+                      placeholder={DEFAULT_CUSTOM_FEE_RATE_KB}
+                      value={customFeeRateKb}
+                      onChange={(e) => setCustomFeeRateKb(e.target.value)}
+                      className="font-mono text-sm"
+                      error={!!customFeeRateError}
+                    />
+                    {customFeeRateError ? (
+                      <p className="text-xs text-destructive flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        {customFeeRateError}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-foreground-muted">
+                        Effective rate: {feeRate.toLocaleString()} shards/byte
+                      </p>
+                    )}
+                  </div>
+                )}
+                <div className="flex items-center justify-between text-xs text-foreground-muted">
+                  <span>Estimated fee:</span>
+                  {isFeeEstimating ? (
+                    <span>Estimating...</span>
+                  ) : feeEstimate ? (
+                    <AmountDisplay amount={estimatedFee} size="sm" showSymbol />
+                  ) : (
+                    <span>-</span>
+                  )}
+                </div>
+                {feeEstimate && (
+                  <div className="flex items-center justify-between text-xs text-foreground-muted">
+                    <span>Estimated size:</span>
+                    <span className="font-mono">{feeEstimate.txSize.toLocaleString()} bytes</span>
+                  </div>
+                )}
+                {feeEstimateError && (
+                  <p className="text-xs text-destructive flex items-center gap-1">
+                    <AlertCircle className="h-3 w-3" />
+                    {feeEstimateError}
+                  </p>
+                )}
               </div>
 
               {/* Insufficient funds warning */}
@@ -393,6 +542,12 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-foreground-muted font-heading">NETWORK FEE</span>
                   <AmountDisplay amount={estimatedFee} size="sm" showSymbol />
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-foreground-muted font-heading">FEE RATE</span>
+                  <span className="text-sm font-mono">
+                    {(feeRate * 1000).toLocaleString()} shards/kB
+                  </span>
                 </div>
                 <div className="h-px bg-border" />
                 <div className="flex items-center justify-between">

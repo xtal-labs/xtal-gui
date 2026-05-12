@@ -11,8 +11,12 @@ yarn-error.log*
 
 # Rust / Cargo (Tauri Backend)
 target/
+target-linux-*/
 src-tauri/target/
 **/*.rs.bk
+
+# Local Scripts
+scripts/
 
 # Environment / Secrets
 .env
@@ -26,4 +30,5 @@ src-tauri/target/
 .claude/
 
 # Tauri Specifics
+gen/schemas/
 src-tauri/gen/

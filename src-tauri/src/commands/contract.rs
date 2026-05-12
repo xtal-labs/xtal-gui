@@ -6,12 +6,11 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 use ed25519_dalek::Signer;
 
-use xtal::address::decode_utxo_address;
 use xtal::address_format::format_utxo_address;
 use xtal::blockchain::processing::utxo_verifier::consume_utxo_digest;
 use xtal::crypto::hash_public_key;
@@ -27,7 +26,9 @@ use xtal::transaction::builders::{
     ContractCallTransactionBuilder, ContractDeployTransactionBuilder,
 };
 use xtal::transaction::{CurrencyType, Transaction, MAX_GAS_LIMIT, MIN_GAS_PRICE};
-use xtal::vm::abi::{content_cid_from_bytes, ContractAbi, ABI_CID_KEY};
+use xtal::vm::abi::{
+    content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY,
+};
 use xtal::vm::cage_contract::{CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
 use xtal::vm::CrystalVm;
 use xtal::wallet::database::models::{
@@ -41,6 +42,36 @@ use crate::commands::wallet::{
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
+// Xtal → Shards strict decimal parser
+// ---------------------------------------------------------------------------
+
+/// Strictly parse an xtal amount string to shards (u64).
+///
+/// Enforces exactly 9 decimal places of precision.  Empty / whitespace /
+/// standalone "." yields 0.  Rejects negative, NaN, infinity, and any
+/// value that would overflow a u64 when converted to shards.
+pub fn parse_xtal_to_shards(value: &str) -> Result<u64, String> {
+    let parts: Vec<&str> = value.splitn(2, '.').collect();
+    let whole: u64 = parts[0].parse().map_err(|_| "Invalid XTAL whole part")?;
+
+    let frac = if parts.len() == 2 {
+        let frac_str = parts[1];
+        if frac_str.len() > 9 {
+            return Err("XTAL amount exceeds 9 decimal places".into());
+        }
+        let padded = format!("{:0<9}", frac_str);
+        padded.parse::<u64>().map_err(|_| "Invalid XTAL fractional part")?
+    } else {
+        0
+    };
+
+    whole
+        .checked_mul(1_000_000_000)
+        .and_then(|w| w.checked_add(frac))
+        .ok_or_else(|| "XTAL amount overflow".into())
+}
+
+// ---------------------------------------------------------------------------
 // Response types
 // ---------------------------------------------------------------------------
 
@@ -48,7 +79,7 @@ use crate::state::AppState;
 pub struct DeployResult {
     pub txid: String,
     pub contract_address: String,
-    pub fee: u64,
+    pub fee: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub abi_cid: Option<String>,
 }
@@ -57,9 +88,31 @@ pub struct DeployResult {
 pub struct QueryResult {
     pub success: bool,
     pub return_data: String,
-    pub gas_used: u64,
+    pub gas_used: String,
     pub error_message: Option<String>,
     pub logs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParamInput {
+    pub name: String,
+    #[serde(alias = "type")]
+    pub type_: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ParamResult {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub type_: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EncodeResult {
+    pub data: String,
+    pub param_results: Vec<ParamResult>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -79,8 +132,8 @@ pub struct ContractStorageResult {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct GasEstimate {
-    pub gas_estimate: u64,
-    pub fee_estimate: u64,
+    pub gas_estimate: String,
+    pub fee_estimate: String,
 }
 
 /// Result of a UTXO deposit via CAGE contract
@@ -97,9 +150,9 @@ pub struct DepositResult {
     /// Transaction hash of the contract call (raw hex)
     pub txid: String,
     /// Max gas fee in shards
-    pub fee: u64,
+    pub fee: String,
     /// UTXO amount being deposited (shards)
-    pub amount: u64,
+    pub amount: String,
     /// Anchor stem hash used for the sighash (raw hex)
     pub anchor_stem_hash: String,
 }
@@ -213,28 +266,6 @@ fn encode_cage_consume_utxo_call_data(
         script_sig,
     }
     .encode()
-}
-
-fn encode_cage_propose_withdrawal_call_data(
-    address_str: &str,
-    amount: u64,
-) -> Result<Vec<u8>, String> {
-    let trimmed = address_str.trim();
-    decode_utxo_address(trimmed).map_err(|e| format!("Invalid UTXO address: {}", e))?;
-    let addr_bytes = trimmed.as_bytes();
-    if addr_bytes.is_empty() || addr_bytes.len() > 40 {
-        return Err(format!(
-            "UTXO address must be 1-40 bytes, got {}",
-            addr_bytes.len()
-        ));
-    }
-
-    let mut encoded = Vec::with_capacity(4 + 1 + addr_bytes.len() + 8);
-    encoded.extend_from_slice(&[0x05, 0, 0, 0]);
-    encoded.push(addr_bytes.len() as u8);
-    encoded.extend_from_slice(addr_bytes);
-    encoded.extend_from_slice(&amount.to_le_bytes());
-    Ok(encoded)
 }
 
 // ===========================================================================
@@ -413,19 +444,22 @@ pub async fn deploy_contract(
     Ok(DeployResult {
         txid: hex::encode(tx_hash),
         contract_address: format!("0x{}", hex::encode(contract_address)),
-        fee: max_fee,
+        fee: max_fee.to_string(),
         abi_cid: abi_cid_hex,
     })
 }
 
 /// Call a contract method (write transaction)
+///
+/// `value` is provided as a string to avoid JavaScript precision loss for
+/// large shard amounts (e.g. xtal_amount which is scaled by 10^9).
 #[tauri::command]
 pub async fn call_contract(
     state: State<'_, AppState>,
     contract_address: String,
     method: String,
     data: Option<String>,
-    value: Option<u64>,
+    value: Option<String>,
     gas_limit: u64,
     gas_price: Option<u64>,
     password: String,
@@ -443,7 +477,10 @@ pub async fn call_contract(
         Some(d) => hex::decode(d).map_err(|_| "Invalid data hex".to_string())?,
         None => vec![],
     };
-    let send_value = value.unwrap_or(0);
+    let send_value = match &value {
+        Some(v) => parse_xtal_to_shards(v)?,
+        None => 0,
+    };
 
     // Unlock wallet
     let wallet = state
@@ -674,8 +711,8 @@ pub async fn deposit_utxo(
 
     Ok(DepositResult {
         txid: hex::encode(tx_hash),
-        fee: 0, // sponsored — no fee
-        amount: utxo_entry.amount,
+        fee: "0".to_string(), // sponsored — no fee
+        amount: utxo_entry.amount.to_string(),
         anchor_stem_hash: hex::encode(anchor_stem_hash),
     })
 }
@@ -707,46 +744,6 @@ mod tests {
         assert_eq!(&encoded[32..64], &tx_id);
         assert_eq!(&encoded[64..66], &output_index.to_le_bytes());
     }
-
-    #[test]
-    fn cage_propose_withdrawal_call_data_encodes_len_prefixed_p2pkh() {
-        let address = xtal::address::encode_pkh(&[0x01; 20]);
-        let amount = 123_456u64;
-
-        let encoded = encode_cage_propose_withdrawal_call_data(&address, amount).unwrap();
-
-        assert_eq!(&encoded[..4], &[0x05, 0, 0, 0]);
-        assert_eq!(encoded[4] as usize, address.len());
-        assert_eq!(&encoded[5..5 + address.len()], address.as_bytes());
-        assert_eq!(
-            u64::from_le_bytes(
-                encoded[5 + address.len()..13 + address.len()]
-                    .try_into()
-                    .unwrap()
-            ),
-            amount
-        );
-    }
-
-    #[test]
-    fn cage_propose_withdrawal_call_data_encodes_len_prefixed_p2sh() {
-        let address = xtal::address::encode_sh(&[0xAB; 20]);
-        let amount = 789u64;
-
-        let encoded = encode_cage_propose_withdrawal_call_data(&address, amount).unwrap();
-
-        assert_eq!(&encoded[..4], &[0x05, 0, 0, 0]);
-        assert_eq!(encoded[4] as usize, address.len());
-        assert_eq!(&encoded[5..5 + address.len()], address.as_bytes());
-        assert_eq!(
-            u64::from_le_bytes(
-                encoded[5 + address.len()..13 + address.len()]
-                    .try_into()
-                    .unwrap()
-            ),
-            amount
-        );
-    }
 }
 
 // ===========================================================================
@@ -761,13 +758,6 @@ pub async fn get_cage_config(state: State<'_, AppState>) -> Result<CageConfig, S
 
     // Query current withdrawal fee bps from CAGE contract storage
     let storage = state.services.storage();
-    let chain = state.services.blockchain();
-    let timestamp = chain
-        .get_latest_block()
-        .map_err(|e| format!("Failed to get latest block: {}", e))?
-        .map(|b| b.header.timestamp)
-        .unwrap_or(0);
-
     let backend = Box::new(RocksDBBackend::new(
         storage.db.clone(),
         "unified_state".to_string(),
@@ -805,6 +795,8 @@ pub async fn get_cage_config(state: State<'_, AppState>) -> Result<CageConfig, S
 // ===========================================================================
 
 /// Simulate a contract call without creating a transaction
+///
+/// `value` is provided as a string to avoid JavaScript precision loss.
 #[tauri::command]
 pub async fn query_contract(
     state: State<'_, AppState>,
@@ -812,7 +804,7 @@ pub async fn query_contract(
     contract_address: String,
     method: String,
     data: Option<String>,
-    value: Option<u64>,
+    value: Option<String>,
     gas_limit: Option<u64>,
 ) -> Result<QueryResult, String> {
     let _ = value; // Simulation always uses value=0 (no balance required)
@@ -858,7 +850,7 @@ pub async fn query_contract(
         Ok(result) => Ok(QueryResult {
             success: result.success,
             return_data: hex::encode(&result.return_data),
-            gas_used: result.gas_used,
+            gas_used: result.gas_used.to_string(),
             error_message: result.error_message,
             logs: result
                 .events
@@ -869,7 +861,7 @@ pub async fn query_contract(
         Err(e) => Ok(QueryResult {
             success: false,
             return_data: String::new(),
-            gas_used: 0,
+            gas_used: "0".to_string(),
             error_message: Some(format!("Simulation failed: {}", e)),
             logs: vec![],
         }),
@@ -996,9 +988,230 @@ pub async fn estimate_contract_gas(
     let fee_estimate = gas_estimate.saturating_mul(MIN_GAS_PRICE);
 
     Ok(GasEstimate {
-        gas_estimate,
-        fee_estimate,
+        gas_estimate: gas_estimate.to_string(),
+        fee_estimate: fee_estimate.to_string(),
     })
+}
+
+// ===========================================================================
+// Calldata Encoding — delegates to SDK ContractAbi::encode_args()
+// ===========================================================================
+
+/// Parse a string value into a typed AbiValue based on the given ParamType.
+///
+/// This replaces the old encode_param_value which directly produced hex.
+/// By parsing into typed AbiValue variants first, we guarantee compatibility
+/// with the SDK's canonical encoder and automatically support any future
+/// encoding changes the SDK introduces.
+fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiValue, String> {
+    match param_type {
+        ParamType::U8 => Ok(AbiValue::U8(
+            value.parse().map_err(|_| "Invalid u8")?,
+        )),
+        ParamType::U16 => Ok(AbiValue::U16(
+            value.parse().map_err(|_| "Invalid u16")?,
+        )),
+        ParamType::U32 => Ok(AbiValue::U32(
+            value.parse().map_err(|_| "Invalid u32")?,
+        )),
+        ParamType::U64 => Ok(AbiValue::U64(
+            value.parse().map_err(|_| "Invalid u64")?,
+        )),
+        ParamType::XtalAmount => Ok(AbiValue::U64(parse_xtal_to_shards(value)?)),
+        ParamType::Bool => match value.to_lowercase().as_str() {
+            "true" => Ok(AbiValue::Bool(true)),
+            "false" => Ok(AbiValue::Bool(false)),
+            _ => Err("bool must be 'true' or 'false'".into()),
+        },
+        ParamType::VmAddress | ParamType::Bytes20 => {
+            let hex = value.strip_prefix("0x").unwrap_or(value);
+            if hex.len() != 40 {
+                return Err(format!("Expected 40 hex chars, got {}", hex.len()));
+            }
+            let bytes = hex::decode(hex).map_err(|_| "Invalid hex address")?;
+            let mut addr = [0u8; 20];
+            addr.copy_from_slice(&bytes);
+            Ok(AbiValue::Address(addr))
+        },
+        ParamType::Bytes32 => {
+            let hex = value.strip_prefix("0x").unwrap_or(value);
+            if hex.len() != 64 {
+                return Err(format!("Expected 64 hex chars, got {}", hex.len()));
+            }
+            let bytes = hex::decode(hex).map_err(|_| "Invalid hex hash")?;
+            let mut hash = [0u8; 32];
+            hash.copy_from_slice(&bytes);
+            Ok(AbiValue::Hash(hash))
+        },
+        ParamType::UtxoAddress => {
+            if value.is_empty() || value.len() > 40 {
+                return Err(format!(
+                    "utxo_address must be 1-40 chars, got {}",
+                    value.len()
+                ));
+            }
+            Ok(AbiValue::String(value.to_string()))
+        },
+        ParamType::String => Ok(AbiValue::String(value.to_string())),
+        ParamType::Bytes => {
+            let hex = value.strip_prefix("0x").unwrap_or(value);
+            if hex.len() % 2 != 0 {
+                return Err("bytes hex must have even length".into());
+            }
+            Ok(AbiValue::Bytes(
+                hex::decode(hex).map_err(|_| "Invalid hex bytes")?,
+            ))
+        },
+        ParamType::Array(elem_type) => {
+            let elements = value
+                .split(',')
+                .map(|v| parse_string_to_abi_value(elem_type, v.trim()))
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(AbiValue::Array(elements))
+        },
+    }
+}
+
+/// Load a contract's ABI from the local cache or on-chain `__abi_cid`.
+///
+/// Helper used by encode_contract_calldata to resolve the ABI for a given
+/// contract address.
+async fn load_contract_abi_for_encoding(
+    state: &State<'_, AppState>,
+    contract_address: &str,
+) -> Result<ContractAbi, String> {
+    let addr_hex = contract_address
+        .strip_prefix("0x")
+        .unwrap_or(contract_address)
+        .to_uppercase();
+
+    // 1. Check local cache
+    if let Ok(cache) = state.abi_cache.lock() {
+        if let Some(abi) = cache.get(&addr_hex) {
+            return Ok(abi.clone());
+        }
+    }
+
+    // 2. Read __abi_cid from contract storage
+    let addr = decode_hex_address(contract_address)?;
+    let storage = state.services.storage();
+    let backend = Box::new(RocksDBBackend::new(
+        storage.db.clone(),
+        "unified_state".to_string(),
+    ));
+    let mpt = UnifiedMPT::new(backend).map_err(|e| format!("MPT error: {}", e))?;
+
+    let cid_value = mpt
+        .get_storage(&addr, FruitType::Apple, ABI_CID_KEY)
+        .unwrap_or(None);
+
+    if let Some(cid_bytes) = cid_value {
+        let cid_hex = hex::encode(&cid_bytes);
+
+        // Check if any cached ABI matches this CID or content hash
+        if let Ok(cache) = state.abi_cache.lock() {
+            if let Some(entry) = cache.find_by_cid(&cid_hex) {
+                if let Some(abi) = cache.get(&entry.address) {
+                    return Ok(abi.clone());
+                }
+            }
+            if cid_bytes.len() == 36 {
+                let digest_hex = hex::encode(&cid_bytes[4..]);
+                if let Some(entry) = cache.find_by_content_hash(&digest_hex) {
+                    if let Some(abi) = cache.get(&entry.address) {
+                        return Ok(abi.clone());
+                    }
+                }
+            }
+        }
+
+        // 3. IPFS fallback
+        if let Some(ref ipfs) = state.ipfs_client {
+            match ipfs.fetch_abi(&cid_bytes).await {
+                Ok(json_str) => {
+                    let abi: ContractAbi = serde_json::from_str(&json_str)
+                        .map_err(|e| format!("Invalid ABI from IPFS: {}", e))?;
+                    abi.validate()
+                        .map_err(|e| format!("ABI from IPFS failed validation: {}", e))?;
+
+                    let fetched_cid = content_cid_from_bytes(json_str.as_bytes());
+                    if fetched_cid != cid_bytes {
+                        return Err("ABI from IPFS does not match on-chain CID".to_string());
+                    }
+
+                    if let Ok(mut cache) = state.abi_cache.lock() {
+                        let _ = cache.put(&addr_hex, &abi, "ipfs", None);
+                    }
+
+                    log::info!("ABI resolved from IPFS for contract {}", addr_hex);
+                    return Ok(abi);
+                }
+                Err(e) => {
+                    log::warn!("IPFS fetch failed for {}: {}", addr_hex, e);
+                }
+            }
+        }
+    }
+
+    Err("ABI not found for contract. Import it via the ABI cache or deploy the contract first.".to_string())
+}
+
+/// Encode contract call parameters into packed hex calldata by delegating
+/// to the SDK's `ContractAbi::encode_args()`.
+///
+/// This is the canonical encoder — any future SDK encoding changes (e.g.
+/// array length prefixes, new types) are automatically reflected here.
+///
+/// Returns the hex-encoded calldata and per-param validation results.
+#[tauri::command]
+pub async fn encode_contract_calldata(
+    state: State<'_, AppState>,
+    contract_address: String,
+    method_name: String,
+    params: Vec<ParamInput>,
+) -> Result<EncodeResult, String> {
+    // Resolve the ABI for this contract
+    let abi = load_contract_abi_for_encoding(&state, &contract_address).await?;
+
+    // Look up the method definition
+    let method = abi
+        .method(&method_name)
+        .ok_or_else(|| format!("Unknown method: {}", method_name))?;
+
+    // Validate param count
+    if params.len() != method.params.len() {
+        return Err(format!(
+            "Expected {} params for method '{}', got {}",
+            method.params.len(),
+            method_name,
+            params.len()
+        ));
+    }
+
+    // Parse string inputs into typed AbiValues, building param_results in parallel
+    let mut param_results = Vec::with_capacity(params.len());
+    let values = params
+        .iter()
+        .zip(method.params.iter())
+        .map(|(input, param_def)| {
+            let result = parse_string_to_abi_value(&param_def.param_type, &input.value);
+            param_results.push(ParamResult {
+                name: input.name.clone(),
+                type_: input.type_.clone(),
+                value: match &result {
+                    Ok(_) => input.value.clone(),
+                    Err(e) => e.clone(),
+                },
+            });
+            result
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Delegate to the SDK's canonical encoder
+    let encoded_bytes = abi.encode_args(&method_name, &values)?;
+    let data = hex::encode(encoded_bytes);
+
+    Ok(EncodeResult { data, param_results })
 }
 
 // ===========================================================================

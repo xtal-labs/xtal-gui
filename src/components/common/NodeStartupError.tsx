@@ -230,7 +230,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
   };
 
   return (
-    <div className="relative h-screen w-screen bg-background hex-grid-bg overflow-hidden">
+    <div className="relative min-h-dvh min-w-[800px] bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients with slow pulse */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"
@@ -273,7 +273,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
       ))}
 
       {/* Card layer — no scroll, flex-fit */}
-      <div className="absolute inset-0 flex items-center justify-center p-4">
+      <div className="absolute inset-0 flex items-start min-[900px]:items-center justify-center overflow-auto p-4">
         <div
           className="relative max-w-md w-full max-h-full flex flex-col"
           style={{ animation: "fade-in-up 0.6s ease-out 0.3s backwards" }}

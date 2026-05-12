@@ -32,7 +32,7 @@ export class ErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="h-screen w-screen bg-background flex items-center justify-center p-4">
+        <div className="min-h-dvh min-w-[800px] bg-background flex items-center justify-center overflow-auto p-4">
           <div className="max-w-md w-full">
             {/* Outer border */}
             <div
