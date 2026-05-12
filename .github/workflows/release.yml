@@ -68,11 +68,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Configure git auth
+        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/xtal-labs/".insteadOf "https://github.com/xtal-labs/"
+
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
           node-version: lts/*
           cache: npm
+
+      - name: Install frontend dependencies
+        run: npm install
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -140,12 +146,6 @@ jobs:
       #       --wait
       #     xcrun stapler staple target/${{ matrix.target }}/release/${{ matrix.binary }}
 
-      - name: Install frontend dependencies
-        run: npm install
-
-      - name: Configure git auth
-        run: |
-          git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/xtal-labs/".insteadOf "https://github.com/xtal-labs/"
 
       - name: Build and upload
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5
