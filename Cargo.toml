@@ -8,8 +8,6 @@ license = "MIT"
 default-run = "crystal-gui"
 build = "src-tauri/build.rs"
 
-[lints]
-workspace = true
 
 [[bin]]
 name = "crystal-gui"
