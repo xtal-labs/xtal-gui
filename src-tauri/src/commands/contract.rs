@@ -26,9 +26,7 @@ use xtal::transaction::builders::{
     ContractCallTransactionBuilder, ContractDeployTransactionBuilder,
 };
 use xtal::transaction::{CurrencyType, Transaction, MAX_GAS_LIMIT, MIN_GAS_PRICE};
-use xtal::vm::abi::{
-    content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY,
-};
+use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
 use xtal::vm::cage_contract::{CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
 use xtal::vm::CrystalVm;
 use xtal::wallet::database::models::{
@@ -60,7 +58,9 @@ pub fn parse_xtal_to_shards(value: &str) -> Result<u64, String> {
             return Err("XTAL amount exceeds 9 decimal places".into());
         }
         let padded = format!("{:0<9}", frac_str);
-        padded.parse::<u64>().map_err(|_| "Invalid XTAL fractional part")?
+        padded
+            .parse::<u64>()
+            .map_err(|_| "Invalid XTAL fractional part")?
     } else {
         0
     };
@@ -1005,18 +1005,10 @@ pub async fn estimate_contract_gas(
 /// encoding changes the SDK introduces.
 fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiValue, String> {
     match param_type {
-        ParamType::U8 => Ok(AbiValue::U8(
-            value.parse().map_err(|_| "Invalid u8")?,
-        )),
-        ParamType::U16 => Ok(AbiValue::U16(
-            value.parse().map_err(|_| "Invalid u16")?,
-        )),
-        ParamType::U32 => Ok(AbiValue::U32(
-            value.parse().map_err(|_| "Invalid u32")?,
-        )),
-        ParamType::U64 => Ok(AbiValue::U64(
-            value.parse().map_err(|_| "Invalid u64")?,
-        )),
+        ParamType::U8 => Ok(AbiValue::U8(value.parse().map_err(|_| "Invalid u8")?)),
+        ParamType::U16 => Ok(AbiValue::U16(value.parse().map_err(|_| "Invalid u16")?)),
+        ParamType::U32 => Ok(AbiValue::U32(value.parse().map_err(|_| "Invalid u32")?)),
+        ParamType::U64 => Ok(AbiValue::U64(value.parse().map_err(|_| "Invalid u64")?)),
         ParamType::XtalAmount => Ok(AbiValue::U64(parse_xtal_to_shards(value)?)),
         ParamType::Bool => match value.to_lowercase().as_str() {
             "true" => Ok(AbiValue::Bool(true)),
@@ -1032,7 +1024,7 @@ fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiV
             let mut addr = [0u8; 20];
             addr.copy_from_slice(&bytes);
             Ok(AbiValue::Address(addr))
-        },
+        }
         ParamType::Bytes32 => {
             let hex = value.strip_prefix("0x").unwrap_or(value);
             if hex.len() != 64 {
@@ -1042,7 +1034,7 @@ fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiV
             let mut hash = [0u8; 32];
             hash.copy_from_slice(&bytes);
             Ok(AbiValue::Hash(hash))
-        },
+        }
         ParamType::UtxoAddress => {
             if value.is_empty() || value.len() > 40 {
                 return Err(format!(
@@ -1051,7 +1043,7 @@ fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiV
                 ));
             }
             Ok(AbiValue::String(value.to_string()))
-        },
+        }
         ParamType::String => Ok(AbiValue::String(value.to_string())),
         ParamType::Bytes => {
             let hex = value.strip_prefix("0x").unwrap_or(value);
@@ -1061,14 +1053,14 @@ fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiV
             Ok(AbiValue::Bytes(
                 hex::decode(hex).map_err(|_| "Invalid hex bytes")?,
             ))
-        },
+        }
         ParamType::Array(elem_type) => {
             let elements = value
                 .split(',')
                 .map(|v| parse_string_to_abi_value(elem_type, v.trim()))
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(AbiValue::Array(elements))
-        },
+        }
     }
 }
 
@@ -1153,7 +1145,10 @@ async fn load_contract_abi_for_encoding(
         }
     }
 
-    Err("ABI not found for contract. Import it via the ABI cache or deploy the contract first.".to_string())
+    Err(
+        "ABI not found for contract. Import it via the ABI cache or deploy the contract first."
+            .to_string(),
+    )
 }
 
 /// Encode contract call parameters into packed hex calldata by delegating
@@ -1211,7 +1206,10 @@ pub async fn encode_contract_calldata(
     let encoded_bytes = abi.encode_args(&method_name, &values)?;
     let data = hex::encode(encoded_bytes);
 
-    Ok(EncodeResult { data, param_results })
+    Ok(EncodeResult {
+        data,
+        param_results,
+    })
 }
 
 // ===========================================================================
