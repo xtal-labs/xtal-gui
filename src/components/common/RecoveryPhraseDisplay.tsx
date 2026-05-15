@@ -78,13 +78,13 @@ export function RecoveryPhraseDisplay({
       </div>
 
       {/* Mnemonic grid */}
-      <div className="chamfered-border-wrap mb-4 max-h-[560px]:mb-3">
-        <div className="chamfered p-3 sm:p-4 max-h-[560px]:p-2 bg-card">
+      <div className="chamfered-border-wrap mb-4 max-h-[560px]:mb-3 [--_cb-color:hsl(var(--border-hover))] shadow-crystalline">
+        <div className="chamfered p-3 sm:p-4 max-h-[560px]:p-2 crystalline bg-card overflow-hidden">
           <div className="grid grid-cols-2 min-[520px]:grid-cols-3 gap-2 max-h-[560px]:gap-1.5">
             {mnemonic.map((word, index) => (
               <div
                 key={index}
-                className="chamfered-sm px-2 sm:px-3 py-2 max-h-[560px]:py-1.5 bg-background border border-border/50 flex items-center gap-2 group hover:border-accent/50 transition-colors"
+                className="chamfered-sm px-2 sm:px-3 py-2 max-h-[560px]:py-1.5 bg-background/80 border border-border/70 flex items-center gap-2 group hover:border-accent/50 transition-colors"
                 style={{ animationDelay: `${index * 50}ms` }}
               >
                 <span className="text-xs text-foreground-muted w-5 text-right font-mono">
@@ -212,28 +212,49 @@ export function RecoveryPhraseDisplay({
 
       {/* Confirmation checkbox (conditional) */}
       {showConfirmCheckbox && (
-        <label className="flex items-start gap-3 cursor-pointer group mb-4">
-          <div className="relative mt-0.5">
-            <input
-              type="checkbox"
-              checked={confirmed}
-              onChange={(e) => setConfirmed(e.target.checked)}
-              className="sr-only"
-            />
-            <div className={`
-              w-5 h-5 chamfered-sm border-2 transition-all flex items-center justify-center
-              ${confirmed
-                ? 'bg-accent border-accent'
-                : 'bg-transparent border-border group-hover:border-accent/50'
-              }
-            `}>
-              {confirmed && <Check className="w-3 h-3 text-accent-foreground" />}
+        <div
+          className={`
+            chamfered-border-wrap mb-4 transition-all
+            ${confirmed
+              ? '[--_cb-color:hsl(var(--success)/0.55)] shadow-[0_0_18px_hsl(var(--success)/0.12)] hover:[--_cb-color:hsl(var(--success)/0.75)] hover:shadow-[0_0_26px_hsl(var(--success)/0.2)]'
+              : '[--_cb-color:hsl(var(--accent)/0.45)] shadow-crystalline hover:[--_cb-color:hsl(var(--primary)/0.7)] hover:shadow-[0_0_28px_hsl(var(--primary)/0.22),0_4px_20px_-6px_hsl(var(--accent)/0.35)]'
+            }
+          `}
+        >
+          <label className="chamfered flex cursor-pointer items-start gap-4 bg-card px-4 py-3 transition-colors group hover:bg-card-elevated">
+            <div className="relative mt-0.5">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="peer sr-only"
+              />
+              <div className={`
+                w-7 h-7 chamfered-sm border-2 transition-all flex items-center justify-center
+                peer-focus-visible:ring-2 peer-focus-visible:ring-ring peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-background
+                ${confirmed
+                  ? 'bg-success border-success shadow-[0_0_14px_hsl(var(--success)/0.28)]'
+                  : 'bg-accent/15 border-primary shadow-[inset_0_0_0_1px_hsl(var(--background)),0_0_0_1px_hsl(var(--primary)/0.18)] group-hover:bg-accent/25 group-hover:shadow-[inset_0_0_0_1px_hsl(var(--background)),0_0_14px_hsl(var(--primary)/0.2)]'
+                }
+              `}>
+                {confirmed && <Check className="w-4 h-4 text-success-foreground" />}
+              </div>
             </div>
-          </div>
-          <span className="text-sm text-foreground-muted group-hover:text-foreground transition-colors">
-            I have written down my recovery phrase and stored it in a secure location
-          </span>
-        </label>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-foreground transition-colors">
+                  I have saved my recovery phrase
+                </span>
+                <span className="chamfered-sm bg-accent/10 px-2 py-0.5 text-[11px] font-heading uppercase tracking-wider text-accent">
+                  Required
+                </span>
+              </div>
+              <span className="mt-1 block text-xs text-foreground-secondary">
+                Confirm it is written down and stored in a secure offline location.
+              </span>
+            </div>
+          </label>
+        </div>
       )}
 
        {/* Confirm button */}
