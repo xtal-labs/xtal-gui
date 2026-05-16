@@ -1073,9 +1073,10 @@ pub async fn get_fruit_production_stats(
 ) -> Result<Vec<FruitProductionStats>, String> {
     let blockchain = state.services.blockchain();
     let current_epoch = blockchain.get_current_epoch();
+    let total_network_stake = blockchain.pos_consensus.total_stake();
 
-    // Look up validator stake if address provided
-    // Use the validator service (not pos_consensus, which only updates at epoch boundaries)
+    // Look up local validator stake if an address was provided.
+    // ValidatorService only represents validators loaded in this GUI process.
     let validator_stake: Option<u64> = if let Some(ref addr) = address {
         state
             .services
@@ -1086,7 +1087,6 @@ pub async fn get_fruit_production_stats(
         None
     };
 
-    let stake_table = blockchain.pos_consensus.pkh_stakes.load();
     let mut stats = Vec::new();
     for (fruit_type, spec) in get_fruits_by_stake_requirement() {
         // Get CURRENT network difficulty (dynamic, adjusts per epoch)
@@ -1097,10 +1097,7 @@ pub async fn get_fruit_production_stats(
         let (base_expected_stems, base_expected_time, base_win_prob) =
             calculate_production_rate(current_difficulty.bits());
 
-        let network_stake_units = stake_table
-            .values()
-            .map(|stake| stake / spec.min_stake_threshold)
-            .sum();
+        let network_stake_units = total_network_stake / spec.min_stake_threshold;
         let (expected_stems, expected_time, win_prob) = scale_production_rate_by_stake_units(
             base_expected_stems,
             base_expected_time,
