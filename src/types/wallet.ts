@@ -293,7 +293,7 @@ export interface WalletStatus {
  * Detailed mempool transaction information for the detail panel
  */
 export interface MempoolTransactionDetail {
-  hash: string;
+  txid: string;
   txType: string;
   fee: number;
   sizeBytes: number;

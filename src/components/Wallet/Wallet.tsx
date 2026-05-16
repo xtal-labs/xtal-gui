@@ -133,15 +133,6 @@ export default function Wallet() {
   const showMultisigModal = activeModal === MODAL_MULTISIG;
   // For load modal, the wallet name is passed as modalData
   const selectedWalletFromMenu = showLoadModal ? (modalData as string | null) : null;
-  const bridgeActionGlowClass = [
-    "relative isolate overflow-hidden",
-    "bg-primary/15 text-primary shadow-inner-glow",
-    "shadow-[0_0_18px_hsl(var(--primary)/0.18),0_0_38px_hsl(var(--accent)/0.16)]",
-    "hover:bg-primary/20 hover:shadow-[0_0_22px_hsl(var(--primary)/0.22),0_0_46px_hsl(var(--accent)/0.2)]",
-    "before:pointer-events-none before:absolute before:inset-0 before:content-['']",
-    "before:bg-[radial-gradient(135%_135%_at_18%_18%,hsl(var(--primary)/0.24)_0%,transparent_46%),radial-gradient(135%_140%_at_82%_82%,hsl(var(--accent)/0.22)_0%,transparent_50%)]",
-    "[&>*]:relative [&>*]:z-[1]",
-  ].join(" ");
 
   // UI state
   const [isLoading, setIsLoading] = useState(false);
@@ -823,7 +814,7 @@ export default function Wallet() {
         <Button
           size="lg"
           variant="outline-crystalline"
-          className={cn("h-14", bridgeActionGlowClass)}
+          className="h-14 text-foreground"
           onClick={() => openModal(MODAL_DEPOSIT)}
         >
           <ArrowUpFromLine className="h-4 w-4 mr-1.5" />
@@ -954,7 +945,7 @@ export default function Wallet() {
         <Button
           size="lg"
           variant="outline-crystalline"
-          className={cn("h-14", bridgeActionGlowClass)}
+          className="h-14 text-foreground"
           onClick={() => openModal(MODAL_WITHDRAW)}
           disabled={vmAddresses.length === 0}
         >
@@ -1199,7 +1190,9 @@ export default function Wallet() {
       </div>
 
       {/* Sub-tab Content */}
-      {activeSubTab === "utxo" ? renderUtxoContent() : renderVmContent()}
+      <div key={activeSubTab}>
+        {activeSubTab === "utxo" ? renderUtxoContent() : renderVmContent()}
+      </div>
     </div>
     );
   };

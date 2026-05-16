@@ -26,7 +26,7 @@ import { tauriCommand } from "@/hooks/useTauriCommand";
 import type { MempoolTransactionDetail } from "@/types/wallet";
 
 interface MempoolTransactionDetailPanelProps {
-  hash: string | null;
+  txid: string | null;
   onClose: () => void;
 }
 
@@ -225,7 +225,7 @@ function DetailRow({
 }
 
 export function MempoolTransactionDetailPanel({
-  hash,
+  txid,
   onClose,
 }: MempoolTransactionDetailPanelProps) {
   const [detail, setDetail] = useState<MempoolTransactionDetail | null>(null);
@@ -235,11 +235,11 @@ export function MempoolTransactionDetailPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const wasOpenRef = useRef(false);
 
-  const isOpen = hash !== null;
+  const isOpen = txid !== null;
 
-  // Fetch detail when hash changes
+  // Fetch detail when txid changes
   useEffect(() => {
-    if (!hash) {
+    if (!txid) {
       setDetail(null);
       return;
     }
@@ -250,7 +250,7 @@ export function MempoolTransactionDetailPanel({
 
     tauriCommand<MempoolTransactionDetail | null>(
       "get_mempool_transaction_detail",
-      { hash }
+      { txid }
     )
       .then((result) => {
         if (!cancelled) {
@@ -268,7 +268,7 @@ export function MempoolTransactionDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [hash]);
+  }, [txid]);
 
   // Escape key
   useEffect(() => {
@@ -366,7 +366,7 @@ export function MempoolTransactionDetailPanel({
               </div>
               {detail && (
                 <HashDisplay
-                  hash={detail.hash}
+                  hash={detail.txid}
                   chars={12}
                   className="text-xs text-foreground-muted"
                 />

@@ -19,7 +19,7 @@ interface MempoolInfo {
 }
 
 interface MempoolTransaction {
-  hash: string;
+  txid: string;
   tx_type: string;
   fee: number;
   size_bytes: number;
@@ -120,7 +120,7 @@ const TransactionRow = ({
 }: {
   tx: MempoolTransaction;
   copied: string | null;
-  onCopy: (hash: string) => void;
+  onCopy: (txid: string) => void;
   onClick: () => void;
 }) => {
   // For ContractDeploy with preferredFruitType, use fruit colors
@@ -156,17 +156,17 @@ const TransactionRow = ({
         </Badge>
       )}
 
-      {/* Hash with copy button */}
+      {/* TxID with copy button */}
       <div className="flex items-center gap-2 font-mono text-sm text-foreground-secondary">
         <span className="group-hover:text-foreground transition-colors">
-          {tx.hash}
+          {tx.txid}
         </span>
         <button
-          onClick={() => onCopy(tx.hash)}
+          onClick={() => onCopy(tx.txid)}
           className="opacity-0 group-hover:opacity-100 text-foreground-muted hover:text-primary transition-all"
-          title="Copy full hash"
+          title="Copy full txid"
         >
-          {copied === tx.hash ? (
+          {copied === tx.txid ? (
             <Check className="h-3.5 w-3.5 text-success" />
           ) : (
             <Copy className="h-3.5 w-3.5" />
@@ -285,12 +285,12 @@ export const Mempool = () => {
   const [sortField, setSortField] = useState<SortField>("age");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [copied, setCopied] = useState<string | null>(null);
-  const [selectedTxHash, setSelectedTxHash] = useState<string | null>(null);
+  const [selectedTxid, setSelectedTxid] = useState<string | null>(null);
 
-  // Copy hash to clipboard
-  const copyHash = async (hash: string) => {
-    await navigator.clipboard.writeText(hash);
-    setCopied(hash);
+  // Copy txid to clipboard
+  const copyTxid = async (txid: string) => {
+    await navigator.clipboard.writeText(txid);
+    setCopied(txid);
     setTimeout(() => setCopied(null), 2000);
   };
 
@@ -518,7 +518,7 @@ export const Mempool = () => {
           onSort={handleSort}
         />
         <div className="text-xs font-heading font-medium tracking-wide text-foreground-muted uppercase">
-          Hash
+          TxID
         </div>
         <SortHeader
           label="Fee"
@@ -558,11 +558,11 @@ export const Mempool = () => {
           <div>
             {filteredTransactions.map((tx) => (
               <TransactionRow
-                key={tx.hash}
+                key={tx.txid}
                 tx={tx}
                 copied={copied}
-                onCopy={copyHash}
-                onClick={() => setSelectedTxHash(tx.hash)}
+                onCopy={copyTxid}
+                onClick={() => setSelectedTxid(tx.txid)}
               />
             ))}
           </div>
@@ -591,8 +591,8 @@ export const Mempool = () => {
 
       {/* Transaction Detail Panel */}
       <MempoolTransactionDetailPanel
-        hash={selectedTxHash}
-        onClose={() => setSelectedTxHash(null)}
+        txid={selectedTxid}
+        onClose={() => setSelectedTxid(null)}
       />
     </div>
   );

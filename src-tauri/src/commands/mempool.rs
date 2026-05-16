@@ -29,7 +29,7 @@ pub struct MempoolInfo {
 /// Mempool transaction summary for display
 #[derive(Debug, Clone, Serialize)]
 pub struct MempoolTransaction {
-    pub hash: String,
+    pub txid: String,
     pub tx_type: String,
     pub fee: u64,
     pub size_bytes: usize,
@@ -98,9 +98,9 @@ pub async fn get_mempool_transactions(
     let mut results = Vec::with_capacity(txs_with_fees.len());
 
     for (tx, fee, timestamp) in txs_with_fees {
-        // Get transaction hash
-        let hash = match tx.hash() {
-            Ok(h) => hex::encode(h),
+        // Display the same id that the mempool uses for lookup.
+        let txid = match tx.id() {
+            Ok(id) => hex::encode(id),
             Err(_) => continue,
         };
 
@@ -114,7 +114,7 @@ pub async fn get_mempool_transactions(
         let age_secs = now.saturating_sub(timestamp);
 
         results.push(MempoolTransaction {
-            hash,
+            txid,
             tx_type,
             fee,
             size_bytes,
@@ -132,18 +132,17 @@ pub async fn get_mempool_transactions(
 #[tauri::command]
 pub async fn get_mempool_transaction(
     state: State<'_, AppState>,
-    hash: String,
+    txid: String,
 ) -> Result<Option<MempoolTransaction>, String> {
     let mempool = state.services.mempool();
 
-    // Parse hash
-    let hash_bytes: [u8; 32] = hex::decode(&hash)
-        .map_err(|e| format!("Invalid hash: {}", e))?
+    let txid_bytes: [u8; 32] = hex::decode(txid.trim_start_matches("0x"))
+        .map_err(|e| format!("Invalid txid: {}", e))?
         .try_into()
-        .map_err(|_| "Hash must be 32 bytes")?;
+        .map_err(|_| "Txid must be 32 bytes")?;
 
     // Look up transaction with cached fee and timestamp
-    let (tx, fee, timestamp) = match mempool.get_transaction_with_fee(&hash_bytes) {
+    let (tx, fee, timestamp) = match mempool.get_transaction_with_fee(&txid_bytes) {
         Some(data) => data,
         None => return Ok(None),
     };
@@ -158,7 +157,7 @@ pub async fn get_mempool_transaction(
     let age_secs = now.saturating_sub(timestamp);
 
     Ok(Some(MempoolTransaction {
-        hash,
+        txid: hex::encode(txid_bytes),
         tx_type,
         fee,
         size_bytes,
@@ -170,7 +169,7 @@ pub async fn get_mempool_transaction(
 #[derive(Debug, Clone, Serialize)]
 pub struct MempoolTransactionDetail {
     // Common fields
-    pub hash: String,
+    pub txid: String,
     pub tx_type: String,
     pub fee: u64,
     pub size_bytes: usize,
@@ -206,16 +205,16 @@ pub struct MempoolTransactionDetail {
 #[tauri::command]
 pub async fn get_mempool_transaction_detail(
     state: State<'_, AppState>,
-    hash: String,
+    txid: String,
 ) -> Result<Option<MempoolTransactionDetail>, String> {
     let mempool = state.services.mempool();
 
-    let hash_bytes: [u8; 32] = hex::decode(&hash)
-        .map_err(|e| format!("Invalid hash: {}", e))?
+    let txid_bytes: [u8; 32] = hex::decode(txid.trim_start_matches("0x"))
+        .map_err(|e| format!("Invalid txid: {}", e))?
         .try_into()
-        .map_err(|_| "Hash must be 32 bytes")?;
+        .map_err(|_| "Txid must be 32 bytes")?;
 
-    let (tx, fee, timestamp) = match mempool.get_transaction_with_fee(&hash_bytes) {
+    let (tx, fee, timestamp) = match mempool.get_transaction_with_fee(&txid_bytes) {
         Some(data) => data,
         None => return Ok(None),
     };
@@ -231,7 +230,7 @@ pub async fn get_mempool_transaction_detail(
     let age_secs = now.saturating_sub(timestamp);
 
     let mut detail = MempoolTransactionDetail {
-        hash,
+        txid: hex::encode(txid_bytes),
         tx_type,
         fee,
         size_bytes,
