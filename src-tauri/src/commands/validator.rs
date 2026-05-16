@@ -9,8 +9,9 @@ use primitive_types::U256;
 use serde::Serialize;
 use tauri::State;
 
+use xtal::blockchain::constants::{LEAVES_PER_EPOCH, TARGET_SPACING};
 use xtal::config::ValidatorConfig;
-use xtal::difficulty::Difficulty;
+use xtal::difficulty::{Difficulty, DEFAULT_STEM_DIFFICULTY_RATIO};
 use xtal::fruit::difficulty::calculate_effective_difficulty;
 use xtal::fruit::spec::get_fruits_by_stake_requirement;
 use xtal::fruit::FruitType;
@@ -1022,17 +1023,38 @@ fn u256_to_f64(value: U256) -> f64 {
     }
 }
 
+fn recent_stem_attempt_interval_secs(blockchain: &xtal::blockchain::Blockchain) -> f64 {
+    let leaf_chain = blockchain.get_leaf_chain();
+    let latest_idx = leaf_chain.len().saturating_sub(1);
+    if latest_idx == 0 {
+        return TARGET_SPACING as f64 / f64::from(DEFAULT_STEM_DIFFICULTY_RATIO);
+    }
+
+    let intervals = latest_idx.min(LEAVES_PER_EPOCH as usize);
+    let start_idx = latest_idx - intervals;
+    let start = blockchain.get_block_by_hash(&leaf_chain[start_idx]);
+    let end = blockchain.get_block_by_hash(&leaf_chain[latest_idx]);
+
+    let avg_leaf_secs = match (start, end) {
+        (Ok(start), Ok(end)) if end.header.timestamp > start.header.timestamp => {
+            end.header.timestamp.saturating_sub(start.header.timestamp) as f64 / intervals as f64
+        }
+        _ => TARGET_SPACING as f64,
+    };
+
+    avg_leaf_secs / f64::from(DEFAULT_STEM_DIFFICULTY_RATIO)
+}
+
 /// Calculate production rate metrics from difficulty bits.
 /// Returns (expected_stems, expected_time_secs, win_probability).
-fn calculate_production_rate(difficulty_bits: u32) -> (f64, f64, f64) {
+fn calculate_production_rate(difficulty_bits: u32, attempt_interval_secs: f64) -> (f64, f64, f64) {
     let difficulty = Difficulty::from_staking_bits(difficulty_bits);
     let work = difficulty.to_work();
 
     // Work = 2^256 / target, which is the expected number of attempts
     let expected_stems = u256_to_f64(work);
 
-    // 40 seconds per stem attempt
-    let expected_time_secs = expected_stems * 40.0;
+    let expected_time_secs = expected_stems * attempt_interval_secs;
 
     // Win probability is 1 / expected_stems
     let win_probability = if expected_stems > 0.0 {
@@ -1073,7 +1095,8 @@ pub async fn get_fruit_production_stats(
 ) -> Result<Vec<FruitProductionStats>, String> {
     let blockchain = state.services.blockchain();
     let current_epoch = blockchain.get_current_epoch();
-    let total_network_stake = blockchain.pos_consensus.total_stake();
+    let stake_table = blockchain.pos_consensus.validator_stakes.load();
+    let stem_attempt_interval_secs = recent_stem_attempt_interval_secs(blockchain.as_ref());
 
     // Look up local validator stake if an address was provided.
     // ValidatorService only represents validators loaded in this GUI process.
@@ -1095,9 +1118,12 @@ pub async fn get_fruit_production_stats(
             .unwrap_or_else(|_| spec.reference_difficulty());
 
         let (base_expected_stems, base_expected_time, base_win_prob) =
-            calculate_production_rate(current_difficulty.bits());
+            calculate_production_rate(current_difficulty.bits(), stem_attempt_interval_secs);
 
-        let network_stake_units = total_network_stake / spec.min_stake_threshold;
+        let network_stake_units = stake_table
+            .values()
+            .map(|stake| stake.total / spec.min_stake_threshold)
+            .sum();
         let (expected_stems, expected_time, win_prob) = scale_production_rate_by_stake_units(
             base_expected_stems,
             base_expected_time,
@@ -1106,14 +1132,17 @@ pub async fn get_fruit_production_stats(
         );
 
         // Calculate personalized expected time from effective difficulty
-        let personal_expected_time_secs = if let Some(stake) = validator_stake {
-            let effective_difficulty =
-                calculate_effective_difficulty(fruit_type, stake, current_difficulty);
-            let (_, personal_time, _) = calculate_production_rate(effective_difficulty.bits());
-            Some(personal_time)
-        } else {
-            None
-        };
+        let personal_expected_time_secs = validator_stake
+            .filter(|stake| *stake >= spec.min_stake_threshold)
+            .map(|stake| {
+                let effective_difficulty =
+                    calculate_effective_difficulty(fruit_type, stake, current_difficulty);
+                let (_, personal_time, _) = calculate_production_rate(
+                    effective_difficulty.bits(),
+                    stem_attempt_interval_secs,
+                );
+                personal_time
+            });
 
         stats.push(FruitProductionStats {
             fruit_type: format!("{:?}", fruit_type),

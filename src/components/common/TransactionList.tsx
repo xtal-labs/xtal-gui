@@ -48,6 +48,7 @@ function filterTransactionsBySurface(
     "contract_deploy",
     "account_transfer",
     "vm_deposit",
+    "vm_withdrawal",
   ]);
 
   const validatorTypes = new Set(["stake", "unstake", "coinbase", "standard", "send", "receive"]);

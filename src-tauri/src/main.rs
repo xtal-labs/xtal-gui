@@ -836,6 +836,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::list_cached_contracts,
             commands::import_contract_abi,
             commands::remove_cached_contract,
+            commands::encode_contract_calldata,
             // IPFS commands
             commands::pin_abi_to_ipfs,
             commands::get_ipfs_status,
