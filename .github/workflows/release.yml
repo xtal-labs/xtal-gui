@@ -5,6 +5,8 @@ on:
     tags:
       - 'v*'
 
+permissions: {}  # deny all by default; each job declares its own
+
 jobs:
   prepare:
     runs-on: ubuntu-latest
@@ -16,8 +18,9 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Generate release notes
+        env:
+          VERSION: ${{ github.ref_name }}
         run: |
-          VERSION=${{ github.ref_name }}
           DATE=$(date -u +"%B %d, %Y")
           CHECKSUMS="Checksums will be added after build completes."
 
@@ -163,7 +166,6 @@ jobs:
       #       --team-id "$APPLE_TEAM_ID" \
       #       --wait
       #     xcrun stapler staple target/${{ matrix.target }}/release/${{ matrix.binary }}
-
 
       - name: Build and upload
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2

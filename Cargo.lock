@@ -1394,7 +1394,6 @@ dependencies = [
 [[package]]
 name = "crystal-sdk"
 version = "0.1.0"
-source = "git+https://github.com/xtal-labs/xtal?branch=main#4ee0a1fbf1bbb3af5c1053286cceeaa2dd7485dd"
 dependencies = [
  "crystal-sdk-macros",
  "data-encoding",
@@ -1406,7 +1405,6 @@ dependencies = [
 [[package]]
 name = "crystal-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/xtal-labs/xtal?branch=main#4ee0a1fbf1bbb3af5c1053286cceeaa2dd7485dd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -10356,7 +10354,6 @@ dependencies = [
 [[package]]
 name = "xtal"
 version = "0.1.7"
-source = "git+https://github.com/xtal-labs/xtal?branch=main#4ee0a1fbf1bbb3af5c1053286cceeaa2dd7485dd"
 dependencies = [
  "aes-gcm",
  "anyhow",

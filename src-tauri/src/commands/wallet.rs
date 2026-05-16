@@ -188,15 +188,6 @@ fn tx_type_has_maturity(tx_type: &str) -> bool {
     matches!(tx_type, "coinbase" | "vm_withdrawal")
 }
 
-fn tx_type_requires_vm_receipt(tx_type: TransactionType) -> bool {
-    matches!(
-        tx_type,
-        TransactionType::ContractDeploy
-            | TransactionType::ContractCall
-            | TransactionType::AccountTransfer
-    )
-}
-
 fn maturity_status(kind: &str, phase: &str, blocks_until_mature: u64) -> MaturityStatus {
     MaturityStatus {
         is_immature: phase == "locked" && blocks_until_mature > 0,
@@ -3620,14 +3611,10 @@ fn collect_pending_vm_mempool_transactions(
                         if record.confirmation.is_none()
                             && !mempool_hashes.contains(&record.txid)
                             && !tx_in_active_stems(blockchain, &record.txid)
+                            && lookup_any_receipt(blockchain, &record.txid).is_none()
                         {
-                            if lookup_any_receipt(blockchain, &record.txid).is_some() {
-                                continue;
-                            }
-
-                            let _ = queries.remove_transaction(&record.txid);
-                            log::info!(
-                                "Cleaned up dropped VM tx {} (no longer in mempool or blockchain)",
+                            log::debug!(
+                                "Keeping tracked VM tx {} without live mempool/stem/receipt data",
                                 hex::encode(record.txid)
                             );
                         }
@@ -4107,35 +4094,21 @@ pub async fn get_vm_transaction_history(
             continue;
         }
         let canonical_receipt = lookup_persisted_receipt(blockchain.as_ref(), &record.txid);
+        let live_receipt = if canonical_receipt.is_none() {
+            lookup_live_stem_receipt(blockchain.as_ref(), &record.txid)
+        } else {
+            None
+        };
+        let receipt = canonical_receipt.as_ref().or(live_receipt.as_ref());
         let (confirmations, timestamp) = if let Some((ts, height)) = record.confirmation {
-            if tx_type_requires_vm_receipt(record.tx_type) && canonical_receipt.is_none() {
-                let in_mempool = mempool.get_transaction_by_hash(&record.txid).is_some();
-                let in_active_stem = tx_in_active_stems(blockchain.as_ref(), &record.txid);
-                if !in_mempool && !in_active_stem {
-                    let _ = queries.remove_transaction(&record.txid);
-                    log::info!(
-                        "Cleaned up stale confirmed VM tx {} (receipt is no longer canonical)",
-                        hex::encode(record.txid)
-                    );
-                    continue;
-                }
-            }
-            let confs = current_leaf_height.saturating_sub(height) as u32 + 1;
+            let confs = if height == 0 {
+                1
+            } else {
+                current_leaf_height.saturating_sub(height) as u32 + 1
+            };
             (confs, ts as u64)
         } else {
-            // Pending — check if still in mempool
-            let in_mempool = mempool.get_transaction_by_hash(&record.txid).is_some();
-            let in_active_stem = tx_in_active_stems(blockchain.as_ref(), &record.txid);
-            if !in_mempool && !in_active_stem && canonical_receipt.is_none() {
-                // Not in mempool and not confirmed — dropped
-                let _ = queries.remove_transaction(&record.txid);
-                log::info!(
-                    "Cleaned up dropped VM tx {} (no longer in mempool or blockchain)",
-                    hex::encode(record.txid)
-                );
-                continue;
-            }
-            if let Some(receipt) = canonical_receipt.as_ref() {
+            if let Some(receipt) = receipt {
                 (
                     current_leaf_height.saturating_sub(receipt.block_height) as u32 + 1,
                     record.created_at as u64,
@@ -4160,13 +4133,8 @@ pub async fn get_vm_transaction_history(
             confirmations,
             timestamp,
             tx_type: record.tx_type.as_str().to_string(),
-            execution_status: canonical_receipt
-                .as_ref()
+            execution_status: receipt
                 .map(|receipt| execution_status_label(&receipt.status))
-                .or_else(|| {
-                    lookup_live_stem_receipt(blockchain.as_ref(), &record.txid)
-                        .map(|receipt| execution_status_label(&receipt.status))
-                })
                 .or_else(|| {
                     record
                         .execution_status
