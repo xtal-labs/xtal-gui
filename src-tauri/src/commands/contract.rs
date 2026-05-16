@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::State;
 
 use ed25519_dalek::Signer;
@@ -26,7 +26,7 @@ use xtal::transaction::builders::{
     ContractCallTransactionBuilder, ContractDeployTransactionBuilder,
 };
 use xtal::transaction::{CurrencyType, Transaction, MAX_GAS_LIMIT, MIN_GAS_PRICE};
-use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
+use xtal::vm::abi::{content_cid_from_bytes, ContractAbi, ABI_CID_KEY};
 use xtal::vm::cage_contract::{CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
 use xtal::vm::CrystalVm;
 use xtal::wallet::database::models::{
@@ -91,28 +91,6 @@ pub struct QueryResult {
     pub gas_used: String,
     pub error_message: Option<String>,
     pub logs: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParamInput {
-    pub name: String,
-    #[serde(alias = "type")]
-    pub type_: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ParamResult {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub type_: String,
-    pub value: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct EncodeResult {
-    pub data: String,
-    pub param_results: Vec<ParamResult>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -990,225 +968,6 @@ pub async fn estimate_contract_gas(
     Ok(GasEstimate {
         gas_estimate: gas_estimate.to_string(),
         fee_estimate: fee_estimate.to_string(),
-    })
-}
-
-// ===========================================================================
-// Calldata Encoding — delegates to SDK ContractAbi::encode_args()
-// ===========================================================================
-
-/// Parse a string value into a typed AbiValue based on the given ParamType.
-///
-/// This replaces the old encode_param_value which directly produced hex.
-/// By parsing into typed AbiValue variants first, we guarantee compatibility
-/// with the SDK's canonical encoder and automatically support any future
-/// encoding changes the SDK introduces.
-fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiValue, String> {
-    match param_type {
-        ParamType::U8 => Ok(AbiValue::U8(value.parse().map_err(|_| "Invalid u8")?)),
-        ParamType::U16 => Ok(AbiValue::U16(value.parse().map_err(|_| "Invalid u16")?)),
-        ParamType::U32 => Ok(AbiValue::U32(value.parse().map_err(|_| "Invalid u32")?)),
-        ParamType::U64 => Ok(AbiValue::U64(value.parse().map_err(|_| "Invalid u64")?)),
-        ParamType::XtalAmount => Ok(AbiValue::U64(parse_xtal_to_shards(value)?)),
-        ParamType::Bool => match value.to_lowercase().as_str() {
-            "true" => Ok(AbiValue::Bool(true)),
-            "false" => Ok(AbiValue::Bool(false)),
-            _ => Err("bool must be 'true' or 'false'".into()),
-        },
-        ParamType::VmAddress | ParamType::Bytes20 => {
-            let hex = value.strip_prefix("0x").unwrap_or(value);
-            if hex.len() != 40 {
-                return Err(format!("Expected 40 hex chars, got {}", hex.len()));
-            }
-            let bytes = hex::decode(hex).map_err(|_| "Invalid hex address")?;
-            let mut addr = [0u8; 20];
-            addr.copy_from_slice(&bytes);
-            Ok(AbiValue::Address(addr))
-        }
-        ParamType::Bytes32 => {
-            let hex = value.strip_prefix("0x").unwrap_or(value);
-            if hex.len() != 64 {
-                return Err(format!("Expected 64 hex chars, got {}", hex.len()));
-            }
-            let bytes = hex::decode(hex).map_err(|_| "Invalid hex hash")?;
-            let mut hash = [0u8; 32];
-            hash.copy_from_slice(&bytes);
-            Ok(AbiValue::Hash(hash))
-        }
-        ParamType::UtxoAddress => {
-            if value.is_empty() || value.len() > 40 {
-                return Err(format!(
-                    "utxo_address must be 1-40 chars, got {}",
-                    value.len()
-                ));
-            }
-            Ok(AbiValue::String(value.to_string()))
-        }
-        ParamType::String => Ok(AbiValue::String(value.to_string())),
-        ParamType::Bytes => {
-            let hex = value.strip_prefix("0x").unwrap_or(value);
-            if hex.len() % 2 != 0 {
-                return Err("bytes hex must have even length".into());
-            }
-            Ok(AbiValue::Bytes(
-                hex::decode(hex).map_err(|_| "Invalid hex bytes")?,
-            ))
-        }
-        ParamType::Array(elem_type) => {
-            let elements = value
-                .split(',')
-                .map(|v| parse_string_to_abi_value(elem_type, v.trim()))
-                .collect::<Result<Vec<_>, _>>()?;
-            Ok(AbiValue::Array(elements))
-        }
-    }
-}
-
-/// Load a contract's ABI from the local cache or on-chain `__abi_cid`.
-///
-/// Helper used by encode_contract_calldata to resolve the ABI for a given
-/// contract address.
-async fn load_contract_abi_for_encoding(
-    state: &State<'_, AppState>,
-    contract_address: &str,
-) -> Result<ContractAbi, String> {
-    let addr_hex = contract_address
-        .strip_prefix("0x")
-        .unwrap_or(contract_address)
-        .to_uppercase();
-
-    // 1. Check local cache
-    if let Ok(cache) = state.abi_cache.lock() {
-        if let Some(abi) = cache.get(&addr_hex) {
-            return Ok(abi.clone());
-        }
-    }
-
-    // 2. Read __abi_cid from contract storage
-    let addr = decode_hex_address(contract_address)?;
-    let storage = state.services.storage();
-    let backend = Box::new(RocksDBBackend::new(
-        storage.db.clone(),
-        "unified_state".to_string(),
-    ));
-    let mpt = UnifiedMPT::new(backend).map_err(|e| format!("MPT error: {}", e))?;
-
-    let cid_value = mpt
-        .get_storage(&addr, FruitType::Apple, ABI_CID_KEY)
-        .unwrap_or(None);
-
-    if let Some(cid_bytes) = cid_value {
-        let cid_hex = hex::encode(&cid_bytes);
-
-        // Check if any cached ABI matches this CID or content hash
-        if let Ok(cache) = state.abi_cache.lock() {
-            if let Some(entry) = cache.find_by_cid(&cid_hex) {
-                if let Some(abi) = cache.get(&entry.address) {
-                    return Ok(abi.clone());
-                }
-            }
-            if cid_bytes.len() == 36 {
-                let digest_hex = hex::encode(&cid_bytes[4..]);
-                if let Some(entry) = cache.find_by_content_hash(&digest_hex) {
-                    if let Some(abi) = cache.get(&entry.address) {
-                        return Ok(abi.clone());
-                    }
-                }
-            }
-        }
-
-        // 3. IPFS fallback
-        if let Some(ref ipfs) = state.ipfs_client {
-            match ipfs.fetch_abi(&cid_bytes).await {
-                Ok(json_str) => {
-                    let abi: ContractAbi = serde_json::from_str(&json_str)
-                        .map_err(|e| format!("Invalid ABI from IPFS: {}", e))?;
-                    abi.validate()
-                        .map_err(|e| format!("ABI from IPFS failed validation: {}", e))?;
-
-                    let fetched_cid = content_cid_from_bytes(json_str.as_bytes());
-                    if fetched_cid != cid_bytes {
-                        return Err("ABI from IPFS does not match on-chain CID".to_string());
-                    }
-
-                    if let Ok(mut cache) = state.abi_cache.lock() {
-                        let _ = cache.put(&addr_hex, &abi, "ipfs", None);
-                    }
-
-                    log::info!("ABI resolved from IPFS for contract {}", addr_hex);
-                    return Ok(abi);
-                }
-                Err(e) => {
-                    log::warn!("IPFS fetch failed for {}: {}", addr_hex, e);
-                }
-            }
-        }
-    }
-
-    Err(
-        "ABI not found for contract. Import it via the ABI cache or deploy the contract first."
-            .to_string(),
-    )
-}
-
-/// Encode contract call parameters into packed hex calldata by delegating
-/// to the SDK's `ContractAbi::encode_args()`.
-///
-/// This is the canonical encoder — any future SDK encoding changes (e.g.
-/// array length prefixes, new types) are automatically reflected here.
-///
-/// Returns the hex-encoded calldata and per-param validation results.
-#[tauri::command]
-pub async fn encode_contract_calldata(
-    state: State<'_, AppState>,
-    contract_address: String,
-    method_name: String,
-    params: Vec<ParamInput>,
-) -> Result<EncodeResult, String> {
-    // Resolve the ABI for this contract
-    let abi = load_contract_abi_for_encoding(&state, &contract_address).await?;
-
-    // Look up the method definition
-    let method = abi
-        .method(&method_name)
-        .ok_or_else(|| format!("Unknown method: {}", method_name))?;
-
-    // Validate param count
-    if params.len() != method.params.len() {
-        return Err(format!(
-            "Expected {} params for method '{}', got {}",
-            method.params.len(),
-            method_name,
-            params.len()
-        ));
-    }
-
-    // Parse string inputs into typed AbiValues, building param_results in parallel
-    let mut param_results = Vec::with_capacity(params.len());
-    let values = params
-        .iter()
-        .zip(method.params.iter())
-        .map(|(input, param_def)| {
-            let result = parse_string_to_abi_value(&param_def.param_type, &input.value);
-            param_results.push(ParamResult {
-                name: input.name.clone(),
-                type_: input.type_.clone(),
-                value: match &result {
-                    Ok(_) => input.value.clone(),
-                    Err(e) => e.clone(),
-                },
-            });
-            result
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Delegate to the SDK's canonical encoder
-    let encoded_bytes = abi.encode_args(&method_name, &values)?;
-    let data = hex::encode(encoded_bytes);
-
-    Ok(EncodeResult {
-        data,
-        param_results,
     })
 }
 

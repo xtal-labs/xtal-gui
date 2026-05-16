@@ -3,8 +3,12 @@
 //! This module handles wallet-specific GUI events via Tauri.
 //! Node-level events (blocks, mining, sync, peers) are handled via WebSocket.
 
-use log::{debug, error, info, warn};
+use log::{debug, error, warn};
+#[cfg(debug_assertions)]
+use log::info;
+#[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(debug_assertions)]
 use std::time::Instant;
 
 // =============================================================================
