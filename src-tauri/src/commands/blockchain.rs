@@ -606,11 +606,16 @@ pub async fn get_transaction_detail_explorer(
         None => return Ok(None),
     };
 
-    let raw_receipt = blockchain
+    let stored_receipt = blockchain
         .get_receipt(&txid_bytes)
-        .map_err(|e| format!("Failed to lookup receipt: {}", e))?
+        .map_err(|e| format!("Failed to lookup receipt: {}", e))?;
+    let raw_receipt = stored_receipt
+        .as_ref()
+        .map(|stored| stored.receipt.clone())
         .or_else(|| lookup_live_stem_receipt(&blockchain, &txid_bytes));
-    let receipt = raw_receipt.clone().map(TransactionReceiptDetail::from);
+    let receipt = stored_receipt
+        .map(TransactionReceiptDetail::from)
+        .or_else(|| raw_receipt.clone().map(TransactionReceiptDetail::from));
     let execution_status = receipt.as_ref().map(|detail| detail.status.clone());
 
     let (tx_type, inputs, outputs, total_input, total_output, fee) =

@@ -413,7 +413,6 @@ mod tests {
     fn make_receipt_with_consumed(consumed: Vec<ConsumedUtxo>) -> TransactionReceipt {
         let mut receipt = TransactionReceipt::new(
             [1u8; 32],
-            [2u8; 32],
             10,
             FruitType::Apple,
             0,

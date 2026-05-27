@@ -29,7 +29,7 @@ use xtal::script::{
 use xtal::storage::types::UtxoEntry;
 use xtal::storage::UnifiedMPT;
 use xtal::transaction::builders::TransferBuilder;
-use xtal::transaction::receipt::{BlockReceipts, TransactionReceipt};
+use xtal::transaction::receipt::{BlockReceipts, StoredReceipt, TransactionReceipt};
 use xtal::transaction::{
     ContractCallTransaction, CurrencyType, Transaction, TxOut, MAX_GAS_LIMIT, MIN_GAS_PRICE,
 };
@@ -186,6 +186,22 @@ pub struct TransactionSummary {
 
 fn tx_type_has_maturity(tx_type: &str) -> bool {
     matches!(tx_type, "coinbase" | "vm_withdrawal")
+}
+
+fn transaction_matches_history_filter(
+    tx: &TransactionSummary,
+    filter: &str,
+) -> Result<bool, String> {
+    match filter {
+        "all" => Ok(true),
+        "sent" => Ok(tx.tx_type == "send" || (tx.tx_type == "standard" && tx.amount < 0)),
+        "received" => Ok(tx.tx_type == "receive" || (tx.tx_type == "standard" && tx.amount > 0)),
+        "mining_rewards" => Ok(tx.tx_type == "coinbase"),
+        "staking" => Ok(tx.tx_type == "stake"),
+        "unstaking" => Ok(tx.tx_type == "unstake"),
+        "vm_withdrawals" => Ok(tx.tx_type == "vm_withdrawal"),
+        other => Err(format!("Unsupported transaction type filter: {}", other)),
+    }
 }
 
 fn maturity_status(kind: &str, phase: &str, blocks_until_mature: u64) -> MaturityStatus {
@@ -594,6 +610,26 @@ impl From<xtal::transaction::receipt::TransactionReceipt> for TransactionReceipt
             status: execution_status_label(&receipt.status),
             block_height: receipt.block_height,
             transaction_index: receipt.tx_index,
+            gas_used: receipt.gas_used,
+            gas_price: receipt.gas_price,
+            fee_paid: receipt.fee_paid,
+            contract_address: receipt
+                .contract_address
+                .map(|address| format!("0x{}", hex::encode(address))),
+            logs: receipt.logs,
+            return_data: format!("0x{}", hex::encode(receipt.return_data)),
+            error: receipt.error,
+        }
+    }
+}
+
+impl From<StoredReceipt> for TransactionReceiptDetail {
+    fn from(stored: StoredReceipt) -> Self {
+        let receipt = stored.receipt;
+        Self {
+            status: execution_status_label(&receipt.status),
+            block_height: stored.stem_height,
+            transaction_index: stored.tx_index,
             gas_used: receipt.gas_used,
             gas_price: receipt.gas_price,
             fee_paid: receipt.fee_paid,
@@ -2004,6 +2040,7 @@ pub async fn get_transaction_history(
     offset: Option<usize>,
     address: Option<String>,
     wallet_id: Option<String>,
+    tx_type_filter: Option<String>,
 ) -> Result<TransactionHistoryResponse, String> {
     let mempool = state.services.mempool();
     let blockchain = state.services.blockchain();
@@ -2672,6 +2709,29 @@ pub async fn get_transaction_history(
         });
     }
 
+    if let Some(filter) = tx_type_filter
+        .as_deref()
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+    {
+        let filter = filter.to_ascii_lowercase();
+        let filter = filter.as_str();
+        if !matches!(
+            filter,
+            "all"
+                | "sent"
+                | "received"
+                | "mining_rewards"
+                | "staking"
+                | "unstaking"
+                | "vm_withdrawals"
+        ) {
+            return Err(format!("Unsupported transaction type filter: {}", filter));
+        }
+
+        transactions.retain(|tx| transaction_matches_history_filter(tx, filter).unwrap_or(false));
+    }
+
     // Sort by timestamp (newest first)
     transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
@@ -2758,10 +2818,11 @@ pub async fn get_transaction_detail(
     // 1. Live stem receipts are temporary (disappear when leaf persists)
     // 2. Persisted receipts (from confirmed leaves) are authoritative
     // 3. Wallet DB cache should only be a fallback when blockchain has no receipt yet
-    let blockchain_receipt = lookup_persisted_receipt(blockchain.as_ref(), &txid_bytes)
-        .or_else(|| lookup_live_stem_receipt(blockchain.as_ref(), &txid_bytes));
-
-    if let Some(br) = blockchain_receipt {
+    if let Some(stored) = lookup_persisted_receipt(blockchain.as_ref(), &txid_bytes) {
+        execution_status = Some(execution_status_label(&stored.receipt.status));
+        receipt = Some(TransactionReceiptDetail::from(stored.clone()));
+        raw_receipt = Some(stored.receipt);
+    } else if let Some(br) = lookup_live_stem_receipt(blockchain.as_ref(), &txid_bytes) {
         execution_status = Some(execution_status_label(&br.status));
         receipt = Some(TransactionReceiptDetail::from(br.clone()));
         raw_receipt = Some(br);
@@ -3551,20 +3612,20 @@ fn lookup_live_stem_receipt(
 fn lookup_persisted_receipt(
     blockchain: &xtal::blockchain::Blockchain,
     txid: &[u8; 32],
-) -> Option<TransactionReceipt> {
-    let receipt = blockchain.get_receipt(txid).ok().flatten()?;
+) -> Option<StoredReceipt> {
+    let stored_receipt = blockchain.get_receipt(txid).ok().flatten()?;
     let block_receipts = blockchain
-        .get_receipts_by_height(receipt.block_height)
+        .get_receipts_by_height(stored_receipt.stem_height)
         .ok()
         .flatten()?;
 
     if block_receipts_contains_tx(&block_receipts, txid) {
-        Some(receipt)
+        Some(stored_receipt)
     } else {
         log::debug!(
             "Ignoring stale VM receipt for tx {} at non-canonical height {}",
             hex::encode(txid),
-            receipt.block_height
+            stored_receipt.stem_height
         );
         None
     }
@@ -3582,7 +3643,7 @@ fn lookup_any_receipt(
     txid: &[u8; 32],
 ) -> Option<TransactionReceipt> {
     lookup_live_stem_receipt(blockchain, txid)
-        .or_else(|| lookup_persisted_receipt(blockchain, txid))
+        .or_else(|| lookup_persisted_receipt(blockchain, txid).map(|stored| stored.receipt))
 }
 
 fn collect_pending_vm_mempool_transactions(
@@ -4099,7 +4160,18 @@ pub async fn get_vm_transaction_history(
         } else {
             None
         };
-        let receipt = canonical_receipt.as_ref().or(live_receipt.as_ref());
+        let receipt_height = canonical_receipt
+            .as_ref()
+            .map(|receipt| receipt.stem_height)
+            .or_else(|| live_receipt.as_ref().map(|receipt| receipt.block_height));
+        let receipt_status = canonical_receipt
+            .as_ref()
+            .map(|receipt| execution_status_label(&receipt.receipt.status))
+            .or_else(|| {
+                live_receipt
+                    .as_ref()
+                    .map(|receipt| execution_status_label(&receipt.status))
+            });
         let (confirmations, timestamp) = if let Some((ts, height)) = record.confirmation {
             let confs = if height == 0 {
                 1
@@ -4108,9 +4180,9 @@ pub async fn get_vm_transaction_history(
             };
             (confs, ts as u64)
         } else {
-            if let Some(receipt) = receipt {
+            if let Some(height) = receipt_height {
                 (
-                    current_leaf_height.saturating_sub(receipt.block_height) as u32 + 1,
+                    current_leaf_height.saturating_sub(height) as u32 + 1,
                     record.created_at as u64,
                 )
             } else {
@@ -4133,9 +4205,7 @@ pub async fn get_vm_transaction_history(
             confirmations,
             timestamp,
             tx_type: record.tx_type.as_str().to_string(),
-            execution_status: receipt
-                .map(|receipt| execution_status_label(&receipt.status))
-                .or_else(|| {
+            execution_status: receipt_status.or_else(|| {
                     record
                         .execution_status
                         .map(|status| status.as_str().to_string())
@@ -4499,7 +4569,6 @@ mod tests {
         let caller = hash_public_key(&signing_key.verifying_key());
         let mut receipt = TransactionReceipt::new(
             [1u8; 32],
-            [2u8; 32],
             10,
             FruitType::Apple,
             0,
@@ -4541,7 +4610,6 @@ mod tests {
             FruitType::Apple,
             TransactionReceipt::new(
                 txid,
-                [4u8; 32],
                 42,
                 FruitType::Apple,
                 0,
@@ -4783,5 +4851,34 @@ mod tests {
         assert!(tx_type_has_maturity("vm_withdrawal"));
         assert!(!tx_type_has_maturity("withdrawal"));
         assert!(!tx_type_has_maturity("standard"));
+    }
+
+    #[test]
+    fn transaction_history_filter_maps_practical_categories() {
+        let tx = |tx_type: &str, amount: i64| TransactionSummary {
+            txid: "00".to_string(),
+            amount,
+            fee: 0,
+            confirmations: 1,
+            timestamp: 0,
+            tx_type: tx_type.to_string(),
+            execution_status: None,
+            maturity_status: None,
+        };
+
+        assert!(transaction_matches_history_filter(&tx("send", -10), "sent").unwrap());
+        assert!(transaction_matches_history_filter(&tx("standard", -10), "sent").unwrap());
+        assert!(!transaction_matches_history_filter(&tx("standard", 10), "sent").unwrap());
+
+        assert!(transaction_matches_history_filter(&tx("receive", 10), "received").unwrap());
+        assert!(transaction_matches_history_filter(&tx("standard", 10), "received").unwrap());
+        assert!(!transaction_matches_history_filter(&tx("standard", -10), "received").unwrap());
+
+        assert!(transaction_matches_history_filter(&tx("coinbase", 50), "mining_rewards").unwrap());
+        assert!(transaction_matches_history_filter(&tx("stake", -25), "staking").unwrap());
+        assert!(transaction_matches_history_filter(&tx("unstake", 25), "unstaking").unwrap());
+        assert!(
+            transaction_matches_history_filter(&tx("vm_withdrawal", 25), "vm_withdrawals").unwrap()
+        );
     }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Wallet as WalletIcon,
   Plus,
@@ -19,6 +19,7 @@ import {
   ArrowUpFromLine,
   ArrowDownToLine,
   ShieldCheck,
+  Filter,
 } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -30,6 +31,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -76,6 +79,46 @@ type WalletSubTab = "utxo" | "vm";
 
 // Import mode tabs
 type ImportMode = "mnemonic" | "key";
+type UtxoTransactionFilter =
+  | "all"
+  | "sent"
+  | "received"
+  | "mining_rewards"
+  | "staking"
+  | "unstaking"
+  | "vm_withdrawals";
+
+const PAGE_SIZE = 50;
+
+const normalizePage = (page: number | undefined) => Math.max(1, page ?? 1);
+const getPageOffset = (page: number) => (page - 1) * PAGE_SIZE;
+
+const UTXO_TRANSACTION_FILTERS: { value: UtxoTransactionFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "sent", label: "Sent" },
+  { value: "received", label: "Received" },
+  { value: "mining_rewards", label: "Mining Rewards" },
+  { value: "staking", label: "Staking" },
+  { value: "unstaking", label: "Unstaking" },
+  { value: "vm_withdrawals", label: "VM Withdrawals" },
+];
+
+const WALLET_TAB_CONTENT_CLASS = "space-y-6";
+
+function isUtxoTransactionFilter(value: string): value is UtxoTransactionFilter {
+  return UTXO_TRANSACTION_FILTERS.some((option) => option.value === value);
+}
+
+function transactionHistoryParams(
+  page: number,
+  filter: UtxoTransactionFilter
+): Record<string, unknown> {
+  return {
+    limit: PAGE_SIZE,
+    offset: getPageOffset(page),
+    ...(filter === "all" ? {} : { txTypeFilter: filter }),
+  };
+}
 
 // Response types for Tauri commands
 interface WalletCreationResult {
@@ -139,6 +182,8 @@ export default function Wallet() {
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<WalletSubTab>("utxo");
+  const [utxoTransactionFilter, setUtxoTransactionFilter] =
+    useState<UtxoTransactionFilter>("all");
 
   // Modal/form state (modal visibility is controlled by uiStore.activeModal)
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
@@ -167,6 +212,10 @@ export default function Wallet() {
   const [importKeyConfirmPassword, setImportKeyConfirmPassword] = useState("");
   const [importKeyPasswordEnabled, setImportKeyPasswordEnabled] = useState(true);
   const [showImportKeyPassword, setShowImportKeyPassword] = useState(false);
+  const activeSubTabRef = useRef(activeSubTab);
+  const utxoTransactionFilterRef = useRef(utxoTransactionFilter);
+  const transactionPageRef = useRef(transactionPagination.currentPage);
+  const vmTransactionPageRef = useRef(vmTransactionPagination.currentPage);
 
   // File import modal state
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -182,6 +231,22 @@ export default function Wallet() {
   useEffect(() => {
     console.log('[Wallet] walletName changed to:', walletName);
   }, [walletName]);
+
+  useEffect(() => {
+    activeSubTabRef.current = activeSubTab;
+  }, [activeSubTab]);
+
+  useEffect(() => {
+    utxoTransactionFilterRef.current = utxoTransactionFilter;
+  }, [utxoTransactionFilter]);
+
+  useEffect(() => {
+    transactionPageRef.current = transactionPagination.currentPage;
+  }, [transactionPagination.currentPage]);
+
+  useEffect(() => {
+    vmTransactionPageRef.current = vmTransactionPagination.currentPage;
+  }, [vmTransactionPagination.currentPage]);
 
   // Check wallet status on mount only if not already loaded AND no wallet name exists
   // This prevents overwriting good state with potentially null backend response
@@ -234,77 +299,122 @@ export default function Wallet() {
     }
   };
 
+  const refreshVmData = useCallback(async (page?: number) => {
+    const requestedPage = normalizePage(page ?? vmTransactionPageRef.current);
+    try {
+      const [vmBalanceResult, vmAddrsResult, txResult] = await Promise.all([
+        tauriCommand<VmAccountBalance>("get_vm_account_balance"),
+        tauriCommand<VmAddress[]>("get_vm_addresses"),
+        tauriCommand<TransactionHistoryResponse>("get_vm_transaction_history", {
+          limit: PAGE_SIZE,
+          offset: getPageOffset(requestedPage),
+        }),
+      ]);
+
+      const totalPages = Math.max(1, Math.ceil(txResult.totalCount / PAGE_SIZE));
+      if (requestedPage > totalPages) {
+        const clampedResult = await tauriCommand<TransactionHistoryResponse>(
+          "get_vm_transaction_history",
+          {
+            limit: PAGE_SIZE,
+            offset: getPageOffset(totalPages),
+          }
+        );
+        setVmBalance(vmBalanceResult);
+        setVmAddresses(vmAddrsResult);
+        setVmTransactionPage(totalPages, clampedResult.transactions, clampedResult.totalCount);
+        return;
+      }
+
+      setVmBalance(vmBalanceResult);
+      setVmAddresses(vmAddrsResult);
+      setVmTransactionPage(requestedPage, txResult.transactions, txResult.totalCount);
+    } catch (err) {
+      console.error("Failed to refresh VM data:", err);
+    }
+  }, [
+    setVmBalance,
+    setVmAddresses,
+    setVmTransactionPage,
+  ]);
+
+  const refreshWalletData = useCallback(
+    async (page?: number, vmPage?: number, filter?: UtxoTransactionFilter) => {
+      const requestedPage = normalizePage(page ?? transactionPageRef.current);
+      const requestedFilter = filter ?? utxoTransactionFilterRef.current;
+      setIsLoading(true);
+      setError(null);
+      try {
+        const [balanceResult, addressesResult, txResult] = await Promise.all([
+          tauriCommand<WalletBalance>("get_wallet_balance"),
+          tauriCommand<Address[]>("get_addresses", { limit: 20 }),
+          tauriCommand<TransactionHistoryResponse>(
+            "get_transaction_history",
+            transactionHistoryParams(requestedPage, requestedFilter)
+          ),
+        ]);
+
+        const totalPages = Math.max(1, Math.ceil(txResult.totalCount / PAGE_SIZE));
+        setBalance(balanceResult);
+        setAddresses(addressesResult);
+        if (requestedPage > totalPages) {
+          const clampedResult = await tauriCommand<TransactionHistoryResponse>(
+            "get_transaction_history",
+            transactionHistoryParams(totalPages, requestedFilter)
+          );
+          setTransactionPage(totalPages, clampedResult.transactions, clampedResult.totalCount);
+        } else {
+          setTransactionPage(requestedPage, txResult.transactions, txResult.totalCount);
+        }
+
+        // Also refresh VM data if on VM tab
+        if (activeSubTabRef.current === "vm") {
+          await refreshVmData(vmPage);
+        }
+      } catch (err) {
+        console.error("Failed to refresh wallet:", err);
+        const message = err instanceof Error ? err.message : String(err);
+        addToast({
+          type: "error",
+          title: "Failed to refresh wallet",
+          message,
+          duration: 5000,
+        });
+      } finally {
+        setIsLoading(false);
+      }
+    },
+    [
+      addToast,
+      refreshVmData,
+      setAddresses,
+      setBalance,
+      setTransactionPage,
+    ]
+  );
+
   // Refresh wallet data when wallet is loaded or wallet changes
   useEffect(() => {
     if (isLoaded && walletName) {
-      refreshWalletData();
+      utxoTransactionFilterRef.current = "all";
+      setUtxoTransactionFilter("all");
+      refreshWalletData(1, 1, "all");
     }
-  }, [isLoaded, walletName]);
+  }, [isLoaded, walletName, refreshWalletData]);
 
   // Refresh wallet data when triggered by new blocks (via store trigger)
   useEffect(() => {
     if (refreshTrigger > 0 && isLoaded) {
       refreshWalletData();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshTrigger]);
+  }, [refreshTrigger, isLoaded, refreshWalletData]);
 
   // Fetch VM data when switching to VM tab
   useEffect(() => {
     if (activeSubTab === "vm" && isLoaded) {
       refreshVmData();
     }
-  }, [activeSubTab, isLoaded]);
-
-  const PAGE_SIZE = 50;
-
-  const refreshWalletData = async () => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const [balanceResult, addressesResult, txResult] = await Promise.all([
-        tauriCommand<WalletBalance>("get_wallet_balance"),
-        tauriCommand<Address[]>("get_addresses", { limit: 20 }),
-        tauriCommand<TransactionHistoryResponse>("get_transaction_history", { limit: PAGE_SIZE, offset: 0 }),
-      ]);
-
-      setBalance(balanceResult);
-      setAddresses(addressesResult);
-      setTransactionPage(1, txResult.transactions, txResult.totalCount);
-
-      // Also refresh VM data if on VM tab
-      if (activeSubTab === "vm") {
-        await refreshVmData();
-      }
-    } catch (err) {
-      console.error("Failed to refresh wallet:", err);
-      const message = err instanceof Error ? err.message : String(err);
-      addToast({
-        type: "error",
-        title: "Failed to refresh wallet",
-        message,
-        duration: 5000,
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const refreshVmData = async () => {
-    try {
-      const [vmBalanceResult, vmAddrsResult, txResult] = await Promise.all([
-        tauriCommand<VmAccountBalance>("get_vm_account_balance"),
-        tauriCommand<VmAddress[]>("get_vm_addresses"),
-        tauriCommand<TransactionHistoryResponse>("get_vm_transaction_history", { limit: PAGE_SIZE, offset: 0 }),
-      ]);
-
-      setVmBalance(vmBalanceResult);
-      setVmAddresses(vmAddrsResult);
-      setVmTransactionPage(1, txResult.transactions, txResult.totalCount);
-    } catch (err) {
-      console.error("Failed to refresh VM data:", err);
-    }
-  };
+  }, [activeSubTab, isLoaded, refreshVmData]);
 
   const handleGenerateVmAddress = async () => {
     try {
@@ -326,14 +436,15 @@ export default function Wallet() {
   };
 
   const fetchTransactionPage = async (page: number) => {
+    const requestedPage = normalizePage(page);
+    transactionPageRef.current = requestedPage;
     setPageLoading(true);
     try {
-      const offset = (page - 1) * PAGE_SIZE;
-      const result = await tauriCommand<TransactionHistoryResponse>("get_transaction_history", {
-        limit: PAGE_SIZE,
-        offset,
-      });
-      setTransactionPage(page, result.transactions, result.totalCount);
+      const result = await tauriCommand<TransactionHistoryResponse>(
+        "get_transaction_history",
+        transactionHistoryParams(requestedPage, utxoTransactionFilterRef.current)
+      );
+      setTransactionPage(requestedPage, result.transactions, result.totalCount);
     } catch (err) {
       console.error("Failed to load transactions:", err);
       const message = err instanceof Error ? err.message : String(err);
@@ -348,14 +459,16 @@ export default function Wallet() {
   };
 
   const fetchVmTransactionPage = async (page: number) => {
+    const requestedPage = normalizePage(page);
+    vmTransactionPageRef.current = requestedPage;
     setVmPageLoading(true);
     try {
-      const offset = (page - 1) * PAGE_SIZE;
+      const offset = getPageOffset(requestedPage);
       const result = await tauriCommand<TransactionHistoryResponse>("get_vm_transaction_history", {
         limit: PAGE_SIZE,
         offset,
       });
-      setVmTransactionPage(page, result.transactions, result.totalCount);
+      setVmTransactionPage(requestedPage, result.transactions, result.totalCount);
     } catch (err) {
       console.error("Failed to load VM transactions:", err);
       const message = err instanceof Error ? err.message : String(err);
@@ -367,6 +480,17 @@ export default function Wallet() {
       });
       setVmPageLoading(false);
     }
+  };
+
+  const handleUtxoTransactionFilterChange = (value: string) => {
+    if (!isUtxoTransactionFilter(value) || value === utxoTransactionFilterRef.current) {
+      return;
+    }
+
+    utxoTransactionFilterRef.current = value;
+    transactionPageRef.current = 1;
+    setUtxoTransactionFilter(value);
+    refreshWalletData(1, undefined, value);
   };
 
   const handleLoadWallet = async () => {
@@ -768,6 +892,45 @@ export default function Wallet() {
   // Sub-tab content renderers
   // =========================================================================
 
+  const renderUtxoTransactionFilter = () => {
+    const selectedFilter =
+      UTXO_TRANSACTION_FILTERS.find((option) => option.value === utxoTransactionFilter) ??
+      UTXO_TRANSACTION_FILTERS[0];
+
+    return (
+      <div className="flex shrink-0 items-center justify-end">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline-crystalline"
+              size="sm"
+              className="min-w-[9.5rem] justify-between"
+            >
+              <span className="flex items-center gap-2">
+                <Filter className="h-4 w-4" />
+                {selectedFilter.label}
+              </span>
+              <ChevronDown className="h-4 w-4 opacity-70" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-52">
+            <DropdownMenuLabel>Transaction Type</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              value={utxoTransactionFilter}
+              onValueChange={handleUtxoTransactionFilterChange}
+            >
+              {UTXO_TRANSACTION_FILTERS.map((option) => (
+                <DropdownMenuRadioItem key={option.value} value={option.value}>
+                  {option.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
+  };
+
   const renderUtxoContent = () => (
     <>
       {/* Balance Card */}
@@ -885,6 +1048,7 @@ export default function Wallet() {
         transactions={transactions}
         surface="utxo"
         title="TRANSACTIONS"
+        headerAction={renderUtxoTransactionFilter()}
         currentPage={transactionPagination.currentPage}
         totalPages={Math.ceil(transactionPagination.totalCount / transactionPagination.pageSize)}
         isLoading={transactionPagination.isLoading}
@@ -1141,7 +1305,7 @@ export default function Wallet() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={refreshWalletData}
+            onClick={() => refreshWalletData()}
             disabled={isLoading}
           >
             <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
@@ -1190,7 +1354,7 @@ export default function Wallet() {
       </div>
 
       {/* Sub-tab Content */}
-      <div key={activeSubTab}>
+      <div key={activeSubTab} className={WALLET_TAB_CONTENT_CLASS}>
         {activeSubTab === "utxo" ? renderUtxoContent() : renderVmContent()}
       </div>
     </div>
@@ -1986,14 +2150,14 @@ export default function Wallet() {
         isOpen={showReceiveModal}
         onClose={closeModal}
         addresses={addresses}
-        onAddressGenerated={refreshWalletData}
+        onAddressGenerated={() => refreshWalletData()}
       />
 
       {/* Multisig Modal */}
       <MultisigModal
         isOpen={showMultisigModal}
         onClose={closeModal}
-        onAddressCreated={refreshWalletData}
+        onAddressCreated={() => refreshWalletData()}
       />
 
       {/* VM Send Modal */}
@@ -2008,7 +2172,7 @@ export default function Wallet() {
         isOpen={showVmReceiveModal}
         onClose={closeModal}
         vmAddresses={vmAddresses}
-        onAddressGenerated={refreshVmData}
+        onAddressGenerated={() => refreshVmData()}
       />
 
       {/* CAGE Deposit Modal (UTXO -> VM) */}

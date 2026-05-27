@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, type ReactNode } from "react";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { TransactionRow } from "./TransactionRow";
@@ -13,6 +13,8 @@ interface TransactionListProps {
   surface: "utxo" | "vm" | "validator";
   /** Section title (default: "TRANSACTIONS") */
   title?: string;
+  /** Optional action rendered in the transaction card header */
+  headerAction?: ReactNode;
   /** Optional address to include for isMine annotation (e.g. validator address) */
   address?: string;
   /** Cache for transaction details to avoid refetching */
@@ -41,6 +43,8 @@ function filterTransactionsBySurface(
     "receive",
     "standard",
     "coinbase",
+    "stake",
+    "unstake",
     "vm_withdrawal",
   ]);
   const vmTypes = new Set([
@@ -70,6 +74,7 @@ export function TransactionList({
   transactions,
   surface,
   title = "TRANSACTIONS",
+  headerAction,
   address,
   detailCache = {},
   onCacheDetail,
@@ -140,8 +145,9 @@ export function TransactionList({
   return (
     <>
       <Card variant="crystalline">
-        <CardHeader>
+        <CardHeader className={headerAction ? "flex-row items-center justify-between gap-3 space-y-0" : undefined}>
           <CardTitle className="text-base font-heading tracking-wide">{title}</CardTitle>
+          {headerAction}
         </CardHeader>
         <CardContent>
           {filteredTransactions.length === 0 ? (
