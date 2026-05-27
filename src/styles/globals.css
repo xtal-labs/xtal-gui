@@ -3,8 +3,86 @@
    Aesthetic: Geometric Precision
    ============================================ */
 
-/* Font imports MUST come before @tailwind directives */
-@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@300;400;500;600;700&display=swap');
+/* Local font faces - Chakra Petch */
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 300;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-Light.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-Regular.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-Medium.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-SemiBold.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-Bold.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 300;
+  font-style: italic;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-LightItalic.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-Italic.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 500;
+  font-style: italic;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-MediumItalic.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 600;
+  font-style: italic;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-SemiBoldItalic.ttf') format('truetype');
+}
+
+@font-face {
+  font-family: 'Chakra Petch';
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+  src: url('/fonts/Chakra_Petch/ChakraPetch-BoldItalic.ttf') format('truetype');
+}
 
 /* Tailwind directives - AFTER font imports */
 @tailwind base;
