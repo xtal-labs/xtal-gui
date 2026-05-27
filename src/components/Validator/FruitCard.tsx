@@ -26,6 +26,8 @@ interface FruitCardProps {
   // Production stats integration
   expectedTimeSecs?: number;
   personalExpectedTimeSecs?: number;
+  expectedTimeLabel?: string;
+  personalExpectedTimeLabel?: string;
   difficultyChanged?: boolean;
   difficultyUp?: boolean;  // true = harder, false = easier
   // Info tooltip data
@@ -47,6 +49,8 @@ function FruitCard({
   isLoading,
   expectedTimeSecs,
   personalExpectedTimeSecs,
+  expectedTimeLabel,
+  personalExpectedTimeLabel,
   difficultyChanged,
   difficultyUp,
   targetIntervalSecs,
@@ -95,6 +99,10 @@ function FruitCard({
 
   // Use personal time when available, fall back to network time
   const displayTimeSecs = personalExpectedTimeSecs ?? expectedTimeSecs;
+  const displayTimeLabel =
+    personalExpectedTimeLabel ??
+    expectedTimeLabel ??
+    (displayTimeSecs !== undefined ? formatDuration(displayTimeSecs) : undefined);
   const difficultyChartId = `${fruitType.replace(/[^a-z0-9]/gi, "") || "fruit"}DifficultyGradient`;
   const difficultyChartData = useMemo(
     () =>
@@ -205,7 +213,7 @@ function FruitCard({
         )}
 
         {/* Production Stats Section */}
-        {isEligible && displayTimeSecs !== undefined && (
+        {isEligible && displayTimeLabel !== undefined && (
           <div className="pt-2 mt-2 border-t border-border/30">
             <div className="flex items-center justify-between">
               {/* Expected Time */}
@@ -218,7 +226,7 @@ function FruitCard({
               >
                 <Timer className="h-3.5 w-3.5 text-foreground-muted" />
                 <span className="font-mono text-xs tabular-nums text-foreground">
-                  ~{formatDuration(displayTimeSecs)}
+                  ~{displayTimeLabel}
                 </span>
                 {personalExpectedTimeSecs === undefined && (
                   <span className="text-[10px] text-foreground-muted">(net)</span>

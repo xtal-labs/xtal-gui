@@ -124,9 +124,11 @@ export interface FruitProductionStats {
 
   // Dynamic difficulty (current epoch)
   currentDifficultyBits: number;
-  expectedStems: number;
   expectedTimeSecs: number;
-  winProbability: number;
+  expectedTimeLabel: string;
+  expectedFruitsPerHour: string;
+  expectedStemsLabel: string;
+  winProbabilityLabel: string;
   networkStakeUnits: number;
 
   // Reference difficulty (for comparison)
@@ -134,6 +136,10 @@ export interface FruitProductionStats {
 
   // Personalized stats (when validator address is provided)
   personalExpectedTimeSecs?: number;
+  personalExpectedTimeLabel?: string;
+  personalExpectedFruitsPerHour?: string;
+  personalExpectedStemsLabel?: string;
+  personalWinProbabilityLabel?: string;
 }
 
 /** Session-only per-epoch difficulty snapshot for a fruit type */
@@ -143,7 +149,6 @@ export interface FruitDifficultyHistoryPoint {
   difficultyBits: number;
   referenceDifficultyBits: number;
   expectedTimeSecs: number;
-  expectedStems: number;
   networkStakeUnits: number;
 }
 

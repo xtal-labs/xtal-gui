@@ -217,7 +217,6 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
           difficultyBits: stat.currentDifficultyBits,
           referenceDifficultyBits: stat.referenceDifficultyBits,
           expectedTimeSecs: stat.expectedTimeSecs,
-          expectedStems: stat.expectedStems,
           networkStakeUnits: stat.networkStakeUnits,
         };
         const existing = fruitDifficultyHistory[stat.fruitType] ?? [];

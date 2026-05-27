@@ -45,7 +45,7 @@ import {
 } from "./ValidatorModals";
 import { useValidatorStore, useUiStore } from "@/stores";
 import { tauriCommand, useTauriCommand } from "@/hooks";
-import { cn, shardsToXtal, formatDuration, formatNumber, formatTimeAgo, parseXtalToShards, copyToClipboard } from "@/lib/utils";
+import { cn, shardsToXtal, formatTimeAgo, parseXtalToShards, copyToClipboard } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import type {
   FruitSpec,
@@ -305,7 +305,7 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
                   <th className="text-right py-2 font-heading font-medium">
                     {hasPersonalStats ? "Network" : "Est. Time"}
                   </th>
-                  <th className="text-right py-2 font-heading font-medium">Win Rate</th>
+                  <th className="text-right py-2 font-heading font-medium">Rate</th>
                 </tr>
               </thead>
               <tbody>
@@ -333,8 +333,8 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
                       </td>
                       {hasPersonalStats && (
                         <td className="text-right font-mono tabular-nums font-semibold text-primary">
-                          {s.personalExpectedTimeSecs != null
-                            ? `~${formatDuration(s.personalExpectedTimeSecs)}`
+                          {s.personalExpectedTimeLabel != null
+                            ? `~${s.personalExpectedTimeLabel}`
                             : "—"}
                         </td>
                       )}
@@ -342,10 +342,13 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
                         "text-right font-mono tabular-nums",
                         hasPersonalStats && "text-foreground-muted"
                       )}>
-                        {formatDuration(s.expectedTimeSecs)}
+                        {s.expectedTimeLabel}
                       </td>
-                      <td className="text-right font-mono tabular-nums text-foreground-muted">
-                        1 in {formatNumber(s.expectedStems)}
+                      <td
+                        className="text-right font-mono tabular-nums text-foreground-muted"
+                        title={`${s.expectedStemsLabel} | ${s.winProbabilityLabel}`}
+                      >
+                        {s.expectedFruitsPerHour}
                       </td>
                     </tr>
                   );
@@ -1236,6 +1239,8 @@ export default function Validator() {
                     isLoading={loadingFruit === prod.fruitType}
                     expectedTimeSecs={stats?.expectedTimeSecs}
                     personalExpectedTimeSecs={stats?.personalExpectedTimeSecs}
+                    expectedTimeLabel={stats?.expectedTimeLabel}
+                    personalExpectedTimeLabel={stats?.personalExpectedTimeLabel}
                     difficultyChanged={difficultyChanged}
                     difficultyUp={difficultyUp}
                     targetIntervalSecs={stats?.targetIntervalSecs}

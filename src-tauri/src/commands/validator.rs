@@ -5,14 +5,14 @@
 
 use std::sync::Arc;
 
-use primitive_types::U256;
 use serde::Serialize;
 use tauri::State;
 
 use xtal::blockchain::constants::{LEAVES_PER_EPOCH, TARGET_SPACING};
 use xtal::config::ValidatorConfig;
-use xtal::difficulty::{Difficulty, DEFAULT_STEM_DIFFICULTY_RATIO};
+use xtal::difficulty::DEFAULT_STEM_DIFFICULTY_RATIO;
 use xtal::fruit::difficulty::calculate_effective_difficulty;
+use xtal::fruit::production::estimate_production_rate;
 use xtal::fruit::spec::get_fruits_by_stake_requirement;
 use xtal::fruit::FruitType;
 use xtal::interfaces::validator::ValidatorProduction;
@@ -989,45 +989,29 @@ pub struct FruitProductionStats {
 
     // Dynamic difficulty (current epoch)
     pub current_difficulty_bits: u32,
-    pub expected_stems: f64,
-    pub expected_time_secs: f64,
-    pub win_probability: f64,
+    pub expected_time_secs: u64,
+    pub expected_time_label: String,
+    pub expected_fruits_per_hour: String,
+    pub expected_stems_label: String,
+    pub win_probability_label: String,
     pub network_stake_units: u64,
 
     // Reference difficulty (for comparison)
     pub reference_difficulty_bits: u32,
 
     // Personalized stats (when validator address is provided)
-    pub personal_expected_time_secs: Option<f64>,
+    pub personal_expected_time_secs: Option<u64>,
+    pub personal_expected_time_label: Option<String>,
+    pub personal_expected_fruits_per_hour: Option<String>,
+    pub personal_expected_stems_label: Option<String>,
+    pub personal_win_probability_label: Option<String>,
 }
 
-/// Convert U256 to f64 (lossy but acceptable for display purposes).
-/// For very large numbers, uses logarithmic estimation.
-fn u256_to_f64(value: U256) -> f64 {
-    if value.is_zero() {
-        return 0.0;
-    }
-
-    // Count leading zeros to determine magnitude
-    let bits = 256 - value.leading_zeros() as u32;
-
-    if bits <= 53 {
-        // Fits in f64 mantissa precision - direct conversion
-        value.low_u64() as f64
-    } else {
-        // Approximate: shift down to get top ~53 bits as mantissa
-        let shift = bits - 53;
-        let shifted = value >> shift;
-        let mantissa = shifted.low_u64() as f64;
-        mantissa * 2f64.powi(shift as i32)
-    }
-}
-
-fn recent_stem_attempt_interval_secs(blockchain: &xtal::blockchain::Blockchain) -> f64 {
+fn recent_stem_attempt_cadence(blockchain: &xtal::blockchain::Blockchain) -> (u64, u64) {
     let leaf_chain = blockchain.get_leaf_chain();
     let latest_idx = leaf_chain.len().saturating_sub(1);
     if latest_idx == 0 {
-        return TARGET_SPACING as f64 / f64::from(DEFAULT_STEM_DIFFICULTY_RATIO);
+        return (TARGET_SPACING, u64::from(DEFAULT_STEM_DIFFICULTY_RATIO));
     }
 
     let intervals = latest_idx.min(LEAVES_PER_EPOCH as usize);
@@ -1035,52 +1019,16 @@ fn recent_stem_attempt_interval_secs(blockchain: &xtal::blockchain::Blockchain) 
     let start = blockchain.get_block_by_hash(&leaf_chain[start_idx]);
     let end = blockchain.get_block_by_hash(&leaf_chain[latest_idx]);
 
-    let avg_leaf_secs = match (start, end) {
+    let span_secs = match (start, end) {
         (Ok(start), Ok(end)) if end.header.timestamp > start.header.timestamp => {
-            end.header.timestamp.saturating_sub(start.header.timestamp) as f64 / intervals as f64
+            end.header.timestamp.saturating_sub(start.header.timestamp)
         }
-        _ => TARGET_SPACING as f64,
+        _ => TARGET_SPACING,
     };
 
-    avg_leaf_secs / f64::from(DEFAULT_STEM_DIFFICULTY_RATIO)
-}
-
-/// Calculate production rate metrics from difficulty bits.
-/// Returns (expected_stems, expected_time_secs, win_probability).
-fn calculate_production_rate(difficulty_bits: u32, attempt_interval_secs: f64) -> (f64, f64, f64) {
-    let difficulty = Difficulty::from_staking_bits(difficulty_bits);
-    let work = difficulty.to_work();
-
-    // Work = 2^256 / target, which is the expected number of attempts
-    let expected_stems = u256_to_f64(work);
-
-    let expected_time_secs = expected_stems * attempt_interval_secs;
-
-    // Win probability is 1 / expected_stems
-    let win_probability = if expected_stems > 0.0 {
-        1.0 / expected_stems
-    } else {
-        0.0
-    };
-
-    (expected_stems, expected_time_secs, win_probability)
-}
-
-fn scale_production_rate_by_stake_units(
-    expected_stems: f64,
-    expected_time_secs: f64,
-    win_probability: f64,
-    stake_units: u64,
-) -> (f64, f64, f64) {
-    if stake_units == 0 {
-        return (expected_stems, expected_time_secs, win_probability);
-    }
-
-    let units = stake_units as f64;
     (
-        expected_stems / units,
-        expected_time_secs / units,
-        (win_probability * units).min(1.0),
+        span_secs,
+        intervals as u64 * u64::from(DEFAULT_STEM_DIFFICULTY_RATIO),
     )
 }
 
@@ -1096,7 +1044,8 @@ pub async fn get_fruit_production_stats(
     let blockchain = state.services.blockchain();
     let current_epoch = blockchain.get_current_epoch();
     let stake_table = blockchain.pos_consensus.validator_stakes.load();
-    let stem_attempt_interval_secs = recent_stem_attempt_interval_secs(blockchain.as_ref());
+    let (cadence_numerator_secs, cadence_denominator) =
+        recent_stem_attempt_cadence(blockchain.as_ref());
 
     // Look up local validator stake if an address was provided.
     // ValidatorService only represents validators loaded in this GUI process.
@@ -1117,31 +1066,32 @@ pub async fn get_fruit_production_stats(
             .get_derived_fruit_difficulty(fruit_type, current_epoch)
             .unwrap_or_else(|_| spec.reference_difficulty());
 
-        let (base_expected_stems, base_expected_time, base_win_prob) =
-            calculate_production_rate(current_difficulty.bits(), stem_attempt_interval_secs);
-
-        let network_stake_units = stake_table
+        let network_stake_units: u64 = stake_table
             .values()
             .map(|stake| stake.total / spec.min_stake_threshold)
             .sum();
-        let (expected_stems, expected_time, win_prob) = scale_production_rate_by_stake_units(
-            base_expected_stems,
-            base_expected_time,
-            base_win_prob,
+        let network_estimate = estimate_production_rate(
+            current_difficulty.bits(),
+            cadence_numerator_secs,
+            cadence_denominator,
             network_stake_units,
         );
 
-        // Calculate personalized expected time from effective difficulty
-        let personal_expected_time_secs = validator_stake
+        // Calculate personalized rates from effective difficulty. The
+        // active-production budget determines which fruit tasks can run
+        // together; each running fruit still uses the validator's full stake in
+        // the lottery, matching production and verification.
+        let personal_estimate = validator_stake
             .filter(|stake| *stake >= spec.min_stake_threshold)
             .map(|stake| {
                 let effective_difficulty =
                     calculate_effective_difficulty(fruit_type, stake, current_difficulty);
-                let (_, personal_time, _) = calculate_production_rate(
+                estimate_production_rate(
                     effective_difficulty.bits(),
-                    stem_attempt_interval_secs,
-                );
-                personal_time
+                    cadence_numerator_secs,
+                    cadence_denominator,
+                    1,
+                )
             });
 
         stats.push(FruitProductionStats {
@@ -1150,12 +1100,27 @@ pub async fn get_fruit_production_stats(
             min_stake: spec.min_stake_threshold,
             target_interval_secs: spec.target_interval_secs.unwrap_or(60),
             current_difficulty_bits: current_difficulty.bits(),
-            expected_stems,
-            expected_time_secs: expected_time,
-            win_probability: win_prob,
+            expected_time_secs: network_estimate.expected_time_secs,
+            expected_time_label: network_estimate.expected_time_label,
+            expected_fruits_per_hour: network_estimate.expected_fruits_per_hour,
+            expected_stems_label: network_estimate.expected_stems_label,
+            win_probability_label: network_estimate.win_probability_label,
             network_stake_units,
             reference_difficulty_bits: spec.reference_difficulty_bits,
-            personal_expected_time_secs,
+            personal_expected_time_secs: personal_estimate
+                .as_ref()
+                .map(|estimate| estimate.expected_time_secs),
+            personal_expected_time_label: personal_estimate
+                .as_ref()
+                .map(|estimate| estimate.expected_time_label.clone()),
+            personal_expected_fruits_per_hour: personal_estimate
+                .as_ref()
+                .map(|estimate| estimate.expected_fruits_per_hour.clone()),
+            personal_expected_stems_label: personal_estimate
+                .as_ref()
+                .map(|estimate| estimate.expected_stems_label.clone()),
+            personal_win_probability_label: personal_estimate
+                .map(|estimate| estimate.win_probability_label),
         });
     }
 
