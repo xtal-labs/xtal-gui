@@ -36,8 +36,7 @@ use xtal::transaction::{
 use xtal::vm::abi::{cage_abi, ParamType};
 use xtal::vm::cage_contract::CAGE_CONTRACT_ADDRESS;
 use xtal::wallet::database::models::{
-    InputDetail, KeyType, TransactionExecutionStatus, TransactionRecord, TransactionType,
-    WalletScriptRecord, WalletType,
+    InputDetail, KeyType, TransactionRecord, TransactionType, WalletScriptRecord, WalletType,
 };
 use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::sync::WalletSyncService;
@@ -409,25 +408,6 @@ fn execution_status_label(status: &xtal::transaction::receipt::TxStatus) -> Stri
     }
 }
 
-impl From<xtal::wallet::database::models::TransactionReceiptRecord> for TransactionReceiptDetail {
-    fn from(receipt: xtal::wallet::database::models::TransactionReceiptRecord) -> Self {
-        Self {
-            status: receipt.status.as_str().to_string(),
-            block_height: receipt.block_height,
-            transaction_index: receipt.transaction_index,
-            gas_used: receipt.gas_used,
-            gas_price: receipt.gas_price,
-            fee_paid: receipt.fee_paid,
-            contract_address: receipt
-                .contract_address
-                .map(|address| format!("0x{}", hex::encode(address))),
-            logs: receipt.logs,
-            return_data: format!("0x{}", hex::encode(receipt.return_data)),
-            error: receipt.error,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct WalletOwnedPkh {
     pub(crate) pkh: [u8; 20],
@@ -730,10 +710,8 @@ pub enum VMBridgeDetail {
 
 struct VmWalletTransactionView {
     tx_type: TransactionType,
-    amount: u64,
     fee: u64,
     summary_amount: i64,
-    to_address: Option<String>,
 }
 
 struct ResolvedTransactionContext {
@@ -2271,6 +2249,16 @@ pub async fn get_transaction_history(
         if let Ok(all_confirmed) = queries.list_all_confirmed(&wallet_id) {
             for ctx in all_confirmed {
                 if !seen_txids.contains(&ctx.txid) {
+                    if matches!(
+                        ctx.tx_type,
+                        TransactionType::ContractDeploy
+                            | TransactionType::ContractCall
+                            | TransactionType::AccountTransfer
+                    ) && lookup_persisted_receipt(blockchain.as_ref(), &ctx.txid).is_none()
+                    {
+                        continue;
+                    }
+
                     seen_txids.insert(ctx.txid);
                     let (confirmed_at, db_height) = ctx.confirmation.unwrap_or((ctx.created_at, 0));
 
@@ -2359,7 +2347,7 @@ pub async fn get_transaction_history(
     }
 
     // 3. Scan mempool for relevant pending VM transactions
-    if let Some(ref wallet_id) = query_wallet_id {
+    if query_wallet_id.is_some() {
         if let Some(ref db) = wallet_db_ref {
             let queries = WalletQueries::new(db.connection());
             transactions.extend(collect_pending_vm_mempool_transactions(
@@ -2367,7 +2355,6 @@ pub async fn get_transaction_history(
                 mempool.as_ref(),
                 &wallet_pkhs,
                 Some(&queries),
-                Some(wallet_id.as_str()),
                 &mut seen_txids,
             ));
         } else {
@@ -2375,7 +2362,6 @@ pub async fn get_transaction_history(
                 blockchain.as_ref(),
                 mempool.as_ref(),
                 &wallet_pkhs,
-                None,
                 None,
                 &mut seen_txids,
             ));
@@ -2385,7 +2371,6 @@ pub async fn get_transaction_history(
             blockchain.as_ref(),
             mempool.as_ref(),
             &wallet_pkhs,
-            None,
             None,
             &mut seen_txids,
         ));
@@ -2801,15 +2786,9 @@ pub async fn get_transaction_detail(
             pending_timestamp = tx_record.created_at as u64;
             pending_fee = tx_record.fee.unwrap_or(0);
             stored_input_details = tx_record.input_details.clone();
-            receipt = wallet_detail.receipt.map(TransactionReceiptDetail::from);
-            execution_status = receipt
-                .as_ref()
-                .map(|receipt| receipt.status.clone())
-                .or_else(|| {
-                    tx_record
-                        .execution_status
-                        .map(|status| status.as_str().to_string())
-                });
+            execution_status = tx_record
+                .execution_status
+                .map(|status| status.as_str().to_string());
         }
     }
 
@@ -3299,10 +3278,8 @@ fn classify_vm_wallet_transaction(
 
             Some(VmWalletTransactionView {
                 tx_type: TransactionType::AccountTransfer,
-                amount: transfer_tx.amount,
                 fee,
                 summary_amount,
-                to_address: Some(format!("0x{}", hex::encode(recipient))),
             })
         }
         Transaction::ContractCall(call_tx) => {
@@ -3324,10 +3301,8 @@ fn classify_vm_wallet_transaction(
 
             Some(VmWalletTransactionView {
                 tx_type: TransactionType::ContractCall,
-                amount: total,
                 fee,
                 summary_amount,
-                to_address: Some(format!("0x{}", hex::encode(call_tx.contract_address))),
             })
         }
         Transaction::ContractDeploy(deploy_tx) => {
@@ -3340,10 +3315,8 @@ fn classify_vm_wallet_transaction(
 
             Some(VmWalletTransactionView {
                 tx_type: TransactionType::ContractDeploy,
-                amount: fee,
                 fee,
                 summary_amount: -(fee as i64),
-                to_address: None,
             })
         }
         _ => None,
@@ -3356,30 +3329,6 @@ fn pending_vm_amount_from_record(
 ) -> Option<i64> {
     let tx = Transaction::decode(&mut record.raw_tx.as_slice()).ok()?;
     classify_vm_wallet_transaction(&tx, wallet_pkhs).map(|info| info.summary_amount)
-}
-
-fn tx_in_active_stems(blockchain: &xtal::blockchain::Blockchain, txid: &[u8; 32]) -> bool {
-    for ((stem_hash, _nonce), _) in blockchain.get_stems_since_last_leaf() {
-        let Ok(stem_block) = blockchain.get_block_by_hash(&stem_hash) else {
-            continue;
-        };
-
-        for fruit_hash in &stem_block.fruit_hashes {
-            let Some(fruit) = blockchain.get_fruit_by_hash(fruit_hash, None) else {
-                continue;
-            };
-
-            if fruit
-                .transactions
-                .iter()
-                .any(|fruit_tx| fruit_tx.hash() == *txid)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
 }
 
 fn pending_transaction_context(tx: Transaction, timestamp: u64) -> ResolvedTransactionContext {
@@ -3651,39 +3600,10 @@ fn collect_pending_vm_mempool_transactions(
     mempool: &xtal::mempool::Mempool,
     wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
     queries: Option<&WalletQueries>,
-    wallet_id: Option<&str>,
     seen_txids: &mut std::collections::HashSet<[u8; 32]>,
 ) -> Vec<TransactionSummary> {
     let now = current_unix_timestamp();
     let mempool_txs = mempool.get_transactions();
-    let mut mempool_hashes = std::collections::HashSet::new();
-
-    for tx in &mempool_txs {
-        if let Ok(tx_hash) = tx.id() {
-            mempool_hashes.insert(tx_hash);
-        }
-    }
-
-    if let (Some(queries), Some(wallet_id)) = (queries, wallet_id) {
-        if let Ok(count) = queries.count_vm_transactions(wallet_id) {
-            if count > 0 {
-                if let Ok(records) = queries.list_vm_transactions(wallet_id, count as usize, 0) {
-                    for record in records {
-                        if record.confirmation.is_none()
-                            && !mempool_hashes.contains(&record.txid)
-                            && !tx_in_active_stems(blockchain, &record.txid)
-                            && lookup_any_receipt(blockchain, &record.txid).is_none()
-                        {
-                            log::debug!(
-                                "Keeping tracked VM tx {} without live mempool/stem/receipt data",
-                                hex::encode(record.txid)
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
 
     let mut summaries = Vec::new();
 
@@ -3703,29 +3623,6 @@ fn collect_pending_vm_mempool_transactions(
             .is_some_and(|record| record.confirmation.is_some())
         {
             continue;
-        }
-
-        if existing.is_none() {
-            if let (Some(queries), Some(wallet_id)) = (queries, wallet_id) {
-                let record = TransactionRecord {
-                    txid: tx_hash,
-                    raw_tx: tx.encode(),
-                    tx_type: view.tx_type,
-                    amount: view.amount,
-                    fee: Some(view.fee),
-                    to_address: view.to_address.clone(),
-                    memo: None,
-                    created_at: now as i64,
-                    confirmation: None,
-                    expires_at: None,
-                    priority: Some(0),
-                    input_details: None,
-                    execution_status: Some(TransactionExecutionStatus::Unknown),
-                };
-                if let Err(e) = queries.insert_transaction(wallet_id, &record) {
-                    log::warn!("Failed to store pending VM tx in wallet DB: {}", e);
-                }
-            }
         }
 
         if seen_txids.contains(&tx_hash) {
@@ -4138,7 +4035,6 @@ pub async fn get_vm_transaction_history(
         mempool.as_ref(),
         &wallet_pkhs,
         Some(&queries),
-        Some(&query_wallet_id),
         &mut seen_txids,
     ));
 
@@ -4155,23 +4051,23 @@ pub async fn get_vm_transaction_history(
             continue;
         }
         let canonical_receipt = lookup_persisted_receipt(blockchain.as_ref(), &record.txid);
-        let live_receipt = if canonical_receipt.is_none() {
-            lookup_live_stem_receipt(blockchain.as_ref(), &record.txid)
-        } else {
-            None
-        };
+
+        if matches!(
+            record.tx_type,
+            TransactionType::ContractDeploy
+                | TransactionType::ContractCall
+                | TransactionType::AccountTransfer
+        ) && canonical_receipt.is_none()
+        {
+            continue;
+        }
+
         let receipt_height = canonical_receipt
             .as_ref()
-            .map(|receipt| receipt.stem_height)
-            .or_else(|| live_receipt.as_ref().map(|receipt| receipt.block_height));
+            .map(|receipt| receipt.stem_height);
         let receipt_status = canonical_receipt
             .as_ref()
-            .map(|receipt| execution_status_label(&receipt.receipt.status))
-            .or_else(|| {
-                live_receipt
-                    .as_ref()
-                    .map(|receipt| execution_status_label(&receipt.status))
-            });
+            .map(|receipt| execution_status_label(&receipt.receipt.status));
         let (confirmations, timestamp) = if let Some((ts, height)) = record.confirmation {
             let confs = if height == 0 {
                 1
@@ -4206,10 +4102,10 @@ pub async fn get_vm_transaction_history(
             timestamp,
             tx_type: record.tx_type.as_str().to_string(),
             execution_status: receipt_status.or_else(|| {
-                    record
-                        .execution_status
-                        .map(|status| status.as_str().to_string())
-                }),
+                record
+                    .execution_status
+                    .map(|status| status.as_str().to_string())
+            }),
             maturity_status: None,
         });
         seen_txids.insert(record.txid);
@@ -4417,33 +4313,6 @@ pub async fn send_vm_transfer(
 
     let max_fee = gas_limit.saturating_mul(gas_price);
 
-    // Store in wallet database
-    if let Some(db) = wallet.database() {
-        let wallet_id = wallet.current_wallet_id().unwrap_or_default();
-        let queries = WalletQueries::new(db.connection());
-        let record = TransactionRecord {
-            txid: tx_hash,
-            raw_tx: tx.clone().encode(),
-            tx_type: TransactionType::AccountTransfer,
-            amount,
-            fee: Some(max_fee),
-            to_address: Some(to_address.clone()),
-            memo: None,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64,
-            confirmation: None,
-            expires_at: None,
-            priority: None,
-            input_details: None,
-            execution_status: Some(TransactionExecutionStatus::Unknown),
-        };
-        if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
-            log::warn!("Failed to record VM transfer in wallet db: {}", e);
-        }
-    }
-
     log::info!(
         "VM transfer sent: {} shards from {} to {}",
         amount,
@@ -4488,7 +4357,6 @@ mod tests {
 
         let view = classify_vm_wallet_transaction(&tx, &wallet_pkhs).unwrap();
         assert_eq!(view.tx_type, TransactionType::AccountTransfer);
-        assert_eq!(view.amount, 42);
         assert_eq!(view.fee, 75_000);
         assert_eq!(view.summary_amount, -42);
     }
@@ -4535,7 +4403,6 @@ mod tests {
 
         let view = classify_vm_wallet_transaction(&tx, &wallet_pkhs).unwrap();
         assert_eq!(view.tx_type, TransactionType::ContractCall);
-        assert_eq!(view.amount, 42_005);
         assert_eq!(view.fee, 42_000);
         assert_eq!(view.summary_amount, -42_005);
     }
@@ -4608,14 +4475,7 @@ mod tests {
         let mut block_receipts = BlockReceipts::new([3u8; 32], 42);
         block_receipts.add_receipt(
             FruitType::Apple,
-            TransactionReceipt::new(
-                txid,
-                42,
-                FruitType::Apple,
-                0,
-                TxStatus::Pending,
-                1_000,
-            ),
+            TransactionReceipt::new(txid, 42, FruitType::Apple, 0, TxStatus::Pending, 1_000),
         );
 
         assert!(block_receipts_contains_tx(&block_receipts, &txid));

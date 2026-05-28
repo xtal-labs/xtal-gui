@@ -14,7 +14,6 @@ use ed25519_dalek::Signer;
 use xtal::address_format::format_utxo_address;
 use xtal::blockchain::processing::utxo_verifier::consume_utxo_digest;
 use xtal::crypto::hash_public_key;
-use xtal::fruit::codec::Encode;
 use xtal::fruit::core::FruitType;
 use xtal::fruit::StemProvider;
 use xtal::gas::TX_BASE_GAS;
@@ -25,13 +24,10 @@ use xtal::storage::UnifiedMPT;
 use xtal::transaction::builders::{
     ContractCallTransactionBuilder, ContractDeployTransactionBuilder,
 };
-use xtal::transaction::{CurrencyType, Transaction, MAX_GAS_LIMIT, MIN_GAS_PRICE};
-use xtal::vm::abi::{content_cid_from_bytes, ContractAbi, ABI_CID_KEY, AbiValue, ParamType};
+use xtal::transaction::{CurrencyType, MAX_GAS_LIMIT, MIN_GAS_PRICE};
+use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
 use xtal::vm::cage_contract::{CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
 use xtal::vm::CrystalVm;
-use xtal::wallet::database::models::{
-    TransactionExecutionStatus, TransactionRecord, TransactionType,
-};
 use xtal::wallet::database::queries::WalletQueries;
 
 use crate::commands::wallet::{
@@ -195,53 +191,6 @@ fn fruit_type_name(ft: FruitType) -> &'static str {
         FruitType::Strawberry => "Strawberry",
         FruitType::Kiwi => "Kiwi",
         FruitType::Watermelon => "Watermelon",
-    }
-}
-
-fn persist_pending_vm_transaction(
-    state: &State<'_, AppState>,
-    tx: &Transaction,
-    txid: [u8; 32],
-    tx_type: TransactionType,
-    amount: u64,
-    fee: u64,
-    to_address: Option<String>,
-) {
-    let Some(wallet) = state.services.wallet.as_ref() else {
-        return;
-    };
-    let Some(db) = wallet.database() else {
-        return;
-    };
-    let Some(wallet_id) = wallet.current_wallet_id() else {
-        return;
-    };
-
-    let queries = WalletQueries::new(db.connection());
-    let record = TransactionRecord {
-        txid,
-        raw_tx: tx.encode(),
-        tx_type,
-        amount,
-        fee: Some(fee),
-        to_address,
-        memo: None,
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs() as i64,
-        confirmation: None,
-        expires_at: None,
-        priority: None,
-        input_details: None,
-        execution_status: Some(TransactionExecutionStatus::Unknown),
-    };
-
-    if let Err(error) = queries.insert_transaction(&wallet_id, &record) {
-        log::warn!(
-            "Failed to record pending VM transaction in wallet db: {}",
-            error
-        );
     }
 }
 
@@ -420,16 +369,6 @@ pub async fn deploy_contract(
         .map_err(|e| format!("Broadcast failed: {}", e))?;
 
     let max_fee = gas_limit.saturating_mul(gas_price);
-    persist_pending_vm_transaction(
-        &state,
-        &tx,
-        tx_hash,
-        TransactionType::ContractDeploy,
-        max_fee,
-        max_fee,
-        None,
-    );
-
     // Cache ABI locally if provided
     if let Some(json) = abi_json {
         let abi: ContractAbi =
@@ -563,16 +502,6 @@ pub async fn call_contract(
         .map_err(|e| format!("Broadcast failed: {}", e))?;
 
     let max_fee = gas_limit.saturating_mul(gas_price);
-    persist_pending_vm_transaction(
-        &state,
-        &tx,
-        tx_hash,
-        TransactionType::ContractCall,
-        send_value.saturating_add(max_fee),
-        max_fee,
-        Some(contract_address.clone()),
-    );
-
     log::info!(
         "Contract call submitted: {}.{} (value={})",
         contract_address,
@@ -694,16 +623,6 @@ pub async fn deposit_utxo(
         .mempool()
         .add_transaction(tx.clone(), TransactionSource::Local)
         .map_err(|e| format!("Broadcast failed: {}", e))?;
-
-    persist_pending_vm_transaction(
-        &state,
-        &tx,
-        tx_hash,
-        TransactionType::ContractCall,
-        utxo_entry.amount,
-        0,
-        Some(format!("0x{}", hex::encode(CAGE_CONTRACT_ADDRESS))),
-    );
 
     log::info!(
         "CAGE deposit submitted (sponsored): UTXO {}:{} amount={} anchor={}",
@@ -1117,7 +1036,6 @@ pub async fn list_cached_contracts(
 
     Ok(entries)
 }
-
 
 // ===========================================================================
 // Calldata Encoding — delegates to SDK ContractAbi::encode_args()
