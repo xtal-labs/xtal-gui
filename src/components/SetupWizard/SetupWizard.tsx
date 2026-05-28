@@ -323,7 +323,7 @@ export function SetupWizard() {
         >
           <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl items-stretch min-[900px]:items-center">
             <ScrollArea ref={contentRef} className="max-h-full w-full">
-              <div className={`mx-auto w-full ${contentWidthClass} pb-6 max-h-[560px]:pb-3`}>
+              <div className={`mx-auto w-full ${contentWidthClass} px-4 py-5 sm:px-6 sm:py-6 max-h-[560px]:px-3 max-h-[560px]:py-3`}>
                 {renderStep()}
               </div>
             </ScrollArea>
