@@ -12,9 +12,10 @@ import {
   Lock,
 } from "lucide-react";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ModalShell } from "@/components/ui/modal-shell";
 import { AmountDisplay, GasSettings, type GasConfig } from "@/components/common";
 import {
   cn,
@@ -174,8 +175,12 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
-      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+    <ModalShell
+      className="bg-black/60 backdrop-blur-sm"
+      cardClassName="max-w-lg relative"
+      onClose={onClose}
+      title="VM send"
+    >
         {/* Decorative crystal facet overlay */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
@@ -508,7 +513,6 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
             </div>
           )}
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }

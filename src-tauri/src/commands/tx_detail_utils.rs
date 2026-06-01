@@ -411,14 +411,8 @@ mod tests {
     use xtal::transaction::CurrencyType;
 
     fn make_receipt_with_consumed(consumed: Vec<ConsumedUtxo>) -> TransactionReceipt {
-        let mut receipt = TransactionReceipt::new(
-            [1u8; 32],
-            10,
-            FruitType::Apple,
-            0,
-            TxStatus::Success,
-            5_000,
-        );
+        let mut receipt =
+            TransactionReceipt::new([1u8; 32], 10, FruitType::Apple, 0, TxStatus::Success, 5_000);
         receipt.consumed_utxos = consumed;
         receipt
     }

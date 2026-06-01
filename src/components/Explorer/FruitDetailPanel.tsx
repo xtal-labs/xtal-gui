@@ -13,6 +13,7 @@ import {
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { AmountDisplay, HashDisplay, TransactionDetailPanel } from "@/components/common";
 import { useTauriCommand } from "@/hooks";
 import { getFruitColor } from "@/lib/fruitColors";
@@ -150,13 +151,11 @@ export function FruitDetailPanel({
   onClose,
   isLoading = false,
 }: FruitDetailPanelProps) {
-  const [isClosing, setIsClosing] = useState(false);
   const [neighborsOpen, setNeighborsOpen] = useState(false);
   const [transactionsOpen, setTransactionsOpen] = useState(true);
   const [selectedTxId, setSelectedTxId] = useState<string | null>(null);
   const [isTxDetailOpen, setIsTxDetailOpen] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const wasOpenRef = useRef(false);
+  const lastDetailRef = useRef<FruitDetail | null>(null);
 
   const {
     data: txDetail,
@@ -165,7 +164,12 @@ export function FruitDetailPanel({
     isLoading: isTxDetailLoading,
   } = useTauriCommand<TransactionDetail | null>("get_transaction_detail_explorer");
 
-  const color = detail ? getFruitColor(detail.fruitType) : getFruitColor("");
+  useEffect(() => {
+    if (detail) lastDetailRef.current = detail;
+  }, [detail]);
+
+  const visibleDetail = detail ?? (!isOpen ? lastDetailRef.current : null);
+  const color = visibleDetail ? getFruitColor(visibleDetail.fruitType) : getFruitColor("");
 
   const handleCloseTxDetail = useCallback(() => {
     setIsTxDetailOpen(false);
@@ -189,65 +193,13 @@ export function FruitDetailPanel({
   );
 
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen && !isTxDetailOpen) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [isOpen, isTxDetailOpen, onClose]);
-
-  useEffect(() => {
-    if (isOpen) {
-      wasOpenRef.current = true;
-    } else if (wasOpenRef.current) {
-      setIsClosing(true);
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    const el = panelRef.current;
-    if (!el || !isClosing) return;
-    const onEnd = (e: AnimationEvent) => {
-      if (e.target === el) setIsClosing(false);
-    };
-    el.addEventListener("animationend", onEnd);
-    return () => el.removeEventListener("animationend", onEnd);
-  }, [isClosing]);
-
-  useEffect(() => {
     setNeighborsOpen(false);
     setTransactionsOpen(true);
     handleCloseTxDetail();
   }, [detail?.hash, handleCloseTxDetail]);
 
-  if (!isOpen && !isClosing) return null;
-
   return (
-    <>
-      <div
-        className={cn(
-          "fixed inset-0 bg-black/40 backdrop-blur-sm z-40",
-          isClosing
-            ? "animate-out fade-out duration-300 fill-mode-forwards"
-            : "animate-in fade-in duration-300"
-        )}
-        onClick={onClose}
-      />
-
-      <div
-        ref={panelRef}
-        className={cn(
-          "fixed top-0 right-0 h-full z-50",
-          "w-full sm:w-[420px] lg:w-[480px]",
-          "bg-background text-foreground border-l border-border",
-          "flex flex-col",
-          isClosing
-            ? "animate-out slide-out-to-right duration-300 fill-mode-forwards"
-            : "animate-in slide-in-from-right duration-300"
-        )}
-      >
+    <SidePanelShell open={isOpen} onClose={onClose} title="Fruit detail">
         <div
           className={cn(
             "absolute top-0 left-0 right-0 h-32 pointer-events-none",
@@ -263,11 +215,11 @@ export function FruitDetailPanel({
             </div>
             <div>
               <h2 className={cn("font-heading text-lg tracking-wide", color.icon)}>
-                {detail ? `${color.emoji} ${detail.fruitType} Fruit` : "Fruit Detail"}
+                {visibleDetail ? `${color.emoji} ${visibleDetail.fruitType} Fruit` : "Fruit Detail"}
               </h2>
-              {detail && (
+              {visibleDetail && (
                 <HashDisplay
-                  hash={detail.hash}
+                  hash={visibleDetail.hash}
                   chars={12}
                   className="text-xs text-foreground-muted"
                 />
@@ -293,7 +245,7 @@ export function FruitDetailPanel({
                 Loading fruit details...
               </p>
             </div>
-          ) : detail ? (
+          ) : visibleDetail ? (
             <>
               <Card variant="crystalline" className="overflow-visible">
                 <CardContent className="p-4">
@@ -302,7 +254,7 @@ export function FruitDetailPanel({
                       variant="outline"
                       className={cn("text-sm px-3 py-1", color.icon, color.border)}
                     >
-                      {color.emoji} {detail.fruitType}
+                      {color.emoji} {visibleDetail.fruitType}
                     </Badge>
                   </div>
 
@@ -311,7 +263,7 @@ export function FruitDetailPanel({
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Nonce
                       </p>
-                      <span className="text-sm font-mono">{detail.nonce}</span>
+                      <span className="text-sm font-mono">{visibleDetail.nonce}</span>
                     </div>
 
                     <div className="text-center">
@@ -319,17 +271,17 @@ export function FruitDetailPanel({
                         Gas Price
                       </p>
                       <span className="text-sm font-mono">
-                        {detail.gasPrice.toLocaleString()} shards
+                        {visibleDetail.gasPrice.toLocaleString()} shards
                       </span>
                     </div>
 
-                    {detail.txCount != null && (
+                    {visibleDetail.txCount != null && (
                       <div className="text-center">
                         <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                           Transactions
                         </p>
                         <span className="text-sm font-mono">
-                          {detail.txCount.toLocaleString()}
+                          {visibleDetail.txCount.toLocaleString()}
                         </span>
                       </div>
                     )}
@@ -339,7 +291,7 @@ export function FruitDetailPanel({
                         Time
                       </p>
                       <span className="text-sm font-mono">
-                        {formatTimeAgo(detail.timestamp)}
+                        {formatTimeAgo(visibleDetail.timestamp)}
                       </span>
                     </div>
 
@@ -348,7 +300,7 @@ export function FruitDetailPanel({
                         Difficulty
                       </p>
                       <span className="text-sm font-mono">
-                        0x{detail.difficultyTarget.toString(16).padStart(8, "0")}
+                        0x{visibleDetail.difficultyTarget.toString(16).padStart(8, "0")}
                       </span>
                     </div>
                   </div>
@@ -357,19 +309,19 @@ export function FruitDetailPanel({
 
               <div className="space-y-3">
                 <DetailRow label="Validator">
-                  <HashDisplay hash={detail.validator} chars={16} className="text-xs" />
+                  <HashDisplay hash={visibleDetail.validator} chars={16} className="text-xs" />
                 </DetailRow>
 
                 <DetailRow label="Stem Reference">
-                  <HashDisplay hash={detail.stem} chars={16} className="text-xs" />
+                  <HashDisplay hash={visibleDetail.stem} chars={16} className="text-xs" />
                 </DetailRow>
 
                 <DetailRow label="Merkle Root">
-                  <HashDisplay hash={detail.merkleRoot} chars={16} className="text-xs" />
+                  <HashDisplay hash={visibleDetail.merkleRoot} chars={16} className="text-xs" />
                 </DetailRow>
               </div>
 
-              {detail.transactions && (
+              {visibleDetail.transactions && (
                 <div className="space-y-2">
                   <button
                     onClick={() => setTransactionsOpen((open) => !open)}
@@ -388,7 +340,7 @@ export function FruitDetailPanel({
                       TRANSACTIONS
                     </span>
                     <Badge variant="outline" className="font-mono text-xs">
-                      {detail.transactions.length}
+                      {visibleDetail.transactions.length}
                     </Badge>
                   </button>
 
@@ -400,13 +352,13 @@ export function FruitDetailPanel({
                         : "max-h-0 opacity-0 overflow-hidden"
                     )}
                   >
-                    {detail.transactions.length === 0 ? (
+                    {visibleDetail.transactions.length === 0 ? (
                       <div className="px-3 py-4 chamfered-sm bg-muted/20 border border-border/30 text-center text-sm text-foreground-muted font-heading">
                         No transactions in this fruit
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {detail.transactions.map((transaction) => (
+                        {visibleDetail.transactions.map((transaction) => (
                           <FruitTransactionRow
                             key={transaction.txid}
                             transaction={transaction}
@@ -420,7 +372,7 @@ export function FruitDetailPanel({
                 </div>
               )}
 
-              {detail.neighbors.length > 0 && (
+              {visibleDetail.neighbors.length > 0 && (
                 <div className="space-y-2">
                   <button
                     onClick={() => setNeighborsOpen((open) => !open)}
@@ -439,7 +391,7 @@ export function FruitDetailPanel({
                       NEIGHBORS
                     </span>
                     <Badge variant="outline" className="font-mono text-xs">
-                      {detail.neighbors.length}
+                      {visibleDetail.neighbors.length}
                     </Badge>
                   </button>
 
@@ -452,7 +404,7 @@ export function FruitDetailPanel({
                     )}
                   >
                     <div className="space-y-1">
-                      {detail.neighbors.map((neighbor, idx) => (
+                      {visibleDetail.neighbors.map((neighbor, idx) => (
                         <div
                           key={idx}
                           className="px-3 py-2 chamfered-sm bg-muted/20 border border-border/30"
@@ -474,7 +426,6 @@ export function FruitDetailPanel({
             </div>
           )}
         </div>
-      </div>
 
       <TransactionDetailPanel
         detail={txDetail}
@@ -482,7 +433,7 @@ export function FruitDetailPanel({
         onClose={handleCloseTxDetail}
         isLoading={isTxDetailLoading}
       />
-    </>
+    </SidePanelShell>
   );
 }
 

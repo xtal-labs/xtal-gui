@@ -16,6 +16,7 @@ export { Progress, ProgressIndeterminate } from "./progress";
 export { Input, type InputProps } from "./input";
 export { Switch } from "./switch";
 export { ModalShell } from "./modal-shell";
+export { SidePanelShell } from "./side-panel-shell";
 export {
   Tooltip,
   TooltipTrigger,

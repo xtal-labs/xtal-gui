@@ -24,6 +24,7 @@ import {
 
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ModalShell } from "@/components/ui/modal-shell";
 import { RecoveryPhraseDisplay } from "@/components/common/RecoveryPhraseDisplay";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -1363,6 +1364,44 @@ export default function Wallet() {
     );
   };
 
+  const closeCreateWalletModal = () => {
+    closeModal();
+    setCreatedMnemonic(null);
+    setCreatedAddress(null);
+    setCreatedMasterSeed(null);
+    setNewWalletName("");
+    setPassword("");
+    setConfirmPassword("");
+    setError(null);
+  };
+
+  const closeImportWalletModal = () => {
+    closeModal();
+    setImportMode("mnemonic");
+    setImportStep("mnemonic");
+    setImportWords([]);
+    setImportWalletName("");
+    setImportPassword("");
+    setImportConfirmPassword("");
+    setImportKeyHex("");
+    setImportKeyName("");
+    setImportKeyPassword("");
+    setImportKeyConfirmPassword("");
+    setImportKeyPasswordEnabled(true);
+    setShowImportKeyPassword(false);
+    setError(null);
+  };
+
+  const closeImportFileModal = () => {
+    closeModal();
+    resetFileImportForm();
+  };
+
+  const closeChangePasswordModal = () => {
+    closeModal();
+    resetChangePasswordForm();
+  };
+
   // Main return - renders content with modals always available
   return (
     <>
@@ -1370,8 +1409,7 @@ export default function Wallet() {
 
       {/* Load Wallet Modal - simple confirmation, no password required */}
       {showLoadModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
-          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <ModalShell cardClassName="max-w-md" onClose={closeModal} title="Load wallet">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">LOAD WALLET</CardTitle>
@@ -1404,32 +1442,22 @@ export default function Wallet() {
                 Load Wallet
               </Button>
             </CardContent>
-          </Card>
-        </div>
+        </ModalShell>
       )}
 
       {/* Create Wallet Modal - always rendered regardless of wallet state */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
-          <Card variant="crystalline" className={cn(
-            "w-full max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto",
-            createdMnemonic ? "max-w-lg" : "max-w-md"
-          )}>
+        <ModalShell
+          cardClassName={createdMnemonic ? "max-w-lg" : "max-w-md"}
+          onClose={closeCreateWalletModal}
+          title={createdMnemonic ? "Backup recovery phrase" : "Create new wallet"}
+        >
             {createdMnemonic ? (
               /* Mnemonic display — wider card, no header, matches validator pattern */
               <CardContent className="pt-6">
                 <div className="flex items-center justify-between mb-4">
                   <CardTitle className="font-heading tracking-wide">BACKUP RECOVERY PHRASE</CardTitle>
-                  <Button variant="ghost" size="icon" onClick={() => {
-                    closeModal();
-                    setCreatedMnemonic(null);
-                    setCreatedAddress(null);
-                    setCreatedMasterSeed(null);
-                    setNewWalletName("");
-                    setPassword("");
-                    setConfirmPassword("");
-                    setError(null);
-                  }}>
+                  <Button variant="ghost" size="icon" onClick={closeCreateWalletModal}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
@@ -1447,16 +1475,7 @@ export default function Wallet() {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">CREATE NEW WALLET</CardTitle>
-                <Button variant="ghost" size="icon" onClick={() => {
-                  closeModal();
-                  setCreatedMnemonic(null);
-                  setCreatedAddress(null);
-                  setCreatedMasterSeed(null);
-                  setNewWalletName("");
-                  setPassword("");
-                  setConfirmPassword("");
-                  setError(null);
-                }}>
+                <Button variant="ghost" size="icon" onClick={closeCreateWalletModal}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -1537,14 +1556,12 @@ export default function Wallet() {
             </CardContent>
               </>
             )}
-          </Card>
-        </div>
+        </ModalShell>
       )}
 
       {/* Import Wallet Modal */}
       {showImportModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
-          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <ModalShell cardClassName="max-w-md" onClose={closeImportWalletModal} title="Import wallet">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">
@@ -1553,22 +1570,7 @@ export default function Wallet() {
                     : "IMPORT PRIVATE KEY"
                   }
                 </CardTitle>
-                <Button variant="ghost" size="icon" onClick={() => {
-                  closeModal();
-                  setImportMode("mnemonic");
-                  setImportStep("mnemonic");
-                  setImportWords([]);
-                  setImportWalletName("");
-                  setImportPassword("");
-                  setImportConfirmPassword("");
-                  setImportKeyHex("");
-                  setImportKeyName("");
-                  setImportKeyPassword("");
-                  setImportKeyConfirmPassword("");
-                  setImportKeyPasswordEnabled(true);
-                  setShowImportKeyPassword(false);
-                  setError(null);
-                }}>
+                <Button variant="ghost" size="icon" onClick={closeImportWalletModal}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -1864,23 +1866,22 @@ export default function Wallet() {
                 </form>
               )}
             </CardContent>
-          </Card>
-        </div>
+        </ModalShell>
       )}
 
       {/* Import Wallet from File Modal */}
       {showImportFileModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
-          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <ModalShell
+          cardClassName="max-w-md"
+          onClose={closeImportFileModal}
+          title={fileImportStep === "file" ? "Import from file" : "Enter wallet password"}
+        >
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">
                   {fileImportStep === "file" ? "IMPORT FROM FILE" : "ENTER PASSWORD"}
                 </CardTitle>
-                <Button variant="ghost" size="icon" onClick={() => {
-                  closeModal();
-                  resetFileImportForm();
-                }}>
+                <Button variant="ghost" size="icon" onClick={closeImportFileModal}>
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -2022,23 +2023,22 @@ export default function Wallet() {
                 </form>
               )}
             </CardContent>
-          </Card>
-        </div>
+        </ModalShell>
       )}
 
       {showChangePasswordModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4 text-foreground">
-          <Card variant="crystalline" className="w-full max-w-md max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+        <ModalShell
+          cardClassName="max-w-md"
+          onClose={closeChangePasswordModal}
+          title="Change password"
+        >
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="font-heading tracking-wide">CHANGE PASSWORD</CardTitle>
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => {
-                    closeModal();
-                    resetChangePasswordForm();
-                  }}
+                  onClick={closeChangePasswordModal}
                 >
                   <X className="h-4 w-4" />
                 </Button>
@@ -2136,8 +2136,7 @@ export default function Wallet() {
                 </Button>
               </form>
             </CardContent>
-          </Card>
-        </div>
+        </ModalShell>
       )}
 
       {/* Send Modal */}

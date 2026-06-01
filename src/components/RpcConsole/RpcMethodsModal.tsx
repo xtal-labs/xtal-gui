@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 
 import {
-  Card,
   CardContent,
   CardHeader,
   CardTitle,
@@ -24,6 +23,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { ModalShell } from "@/components/ui/modal-shell";
 import { cn } from "@/lib/utils";
 import type { RpcMethodInfo } from "@/types/rpc";
 
@@ -105,11 +105,12 @@ export function RpcMethodsModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card
-        variant="crystalline"
-        className="w-full max-w-2xl mx-4 max-h-[80vh] flex flex-col relative overflow-hidden fade-in-up"
-      >
+    <ModalShell
+      className="bg-black/60 backdrop-blur-sm"
+      cardClassName="max-w-2xl max-h-[80vh] flex flex-col relative overflow-hidden fade-in-up"
+      onClose={onClose}
+      title="RPC methods"
+    >
         {/* Decorative elements */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
@@ -289,7 +290,6 @@ export function RpcMethodsModal({
             );
           })}
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }

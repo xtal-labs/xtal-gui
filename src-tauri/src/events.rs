@@ -3,9 +3,9 @@
 //! This module handles wallet-specific GUI events via Tauri.
 //! Node-level events (blocks, mining, sync, peers) are handled via WebSocket.
 
-use log::{debug, error, warn};
 #[cfg(debug_assertions)]
 use log::info;
+use log::{debug, error, warn};
 #[cfg(debug_assertions)]
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(debug_assertions)]
@@ -64,7 +64,9 @@ use xtal::interfaces::validator::ValidatorProduction;
 use xtal::mempool::{MempoolEvent, RemovalReason};
 use xtal::node::services::Services;
 use xtal::script::extract_pkh_from_script;
-use xtal::wallet::database::models::{InputDetail, TransactionRecord, TransactionType};
+use xtal::wallet::database::models::{
+    InputDetail, KeyType, TransactionRecord, TransactionType, WalletType,
+};
 use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::database::WalletDatabase;
 
@@ -383,35 +385,40 @@ fn handle_transaction_added(
     transaction: Arc<xtal::transaction::Transaction>,
     services: &Arc<Services>,
 ) {
-    // Build set of all monitored PKHs (user wallet + validators)
-    let mut all_pkhs = HashSet::new();
+    let mut total_incoming: u64 = 0;
+    let mut incoming_records = Vec::new();
 
-    // Collect user wallet PKHs if wallet is loaded
+    // Check the loaded user wallet independently so validator funds are not
+    // aggregated into the regular wallet's incoming amount.
     if let Some(ref wallet) = services.wallet {
         if wallet.is_loaded() {
             if let Ok(pkhs) = get_wallet_pkh_set(wallet) {
-                all_pkhs.extend(pkhs);
+                let amount = incoming_amount_for_pkhs(&transaction, &pkhs);
+                if amount > 0 {
+                    total_incoming = total_incoming.saturating_add(amount);
+                    if let (Some(db), Some(wallet_id)) =
+                        (wallet.database(), wallet.current_wallet_id())
+                    {
+                        incoming_records.push((db, wallet_id, amount));
+                    }
+                }
             }
         }
     }
 
-    // Collect validator PKHs
+    // Check each running validator wallet separately.
     for entry in services.validators.iter() {
         if let Ok(pkh) = entry.value().get_validator_pkh() {
-            all_pkhs.insert(pkh);
-        }
-    }
-
-    if all_pkhs.is_empty() {
-        return;
-    }
-
-    // Check each output for matches with wallet/validator addresses
-    let mut total_incoming: u64 = 0;
-    for output in transaction.utxo_outputs() {
-        if let Some(recipient_pkh) = extract_pkh_from_script(&output.script_pubkey) {
-            if all_pkhs.contains(&recipient_pkh) {
-                total_incoming = total_incoming.saturating_add(output.amount);
+            let pkhs = HashSet::from([pkh]);
+            let amount = incoming_amount_for_pkhs(&transaction, &pkhs);
+            if amount > 0 {
+                total_incoming = total_incoming.saturating_add(amount);
+                if let (Some(db), Some(wallet_id)) = (
+                    entry.value().get_wallet_database(),
+                    entry.value().get_wallet_id(),
+                ) {
+                    incoming_records.push((db, wallet_id, amount));
+                }
             }
         }
     }
@@ -440,64 +447,16 @@ fn handle_transaction_added(
             error!("Failed to emit incoming transaction event: {}", e);
         }
 
-        // Store incoming mempool transaction in wallet DB with input_details captured now
-        // (while input UTXOs are still unspent and resolvable)
-        if let Some((db, wallet_id)) = services
-            .wallet
-            .as_ref()
-            .and_then(|w| Some((w.database()?, w.current_wallet_id()?)))
-        {
-            let queries = WalletQueries::new(db.connection());
-            if queries.get_transaction(&tx_hash).ok().flatten().is_none() {
-                let blockchain = services.blockchain();
-                let input_details = transaction
-                    .utxo_inputs()
-                    .and_then(|inputs| {
-                        let mut details = Vec::new();
-                        for inp in inputs {
-                            let (amount, address) = if let Ok(Some(utxo)) =
-                                blockchain.get_utxo(&inp.tx_id, inp.output_index)
-                            {
-                                let addr = extract_pkh_from_script(&utxo.script_pubkey)
-                                    .map(|pkh| format_utxo_address(&pkh));
-                                (Some(utxo.amount), addr)
-                            } else {
-                                (None, None)
-                            };
-                            details.push(InputDetail {
-                                txid: hex::encode(inp.tx_id),
-                                index: inp.output_index,
-                                amount: amount.unwrap_or(0),
-                                address,
-                            });
-                        }
-                        if details.is_empty() {
-                            None
-                        } else {
-                            Some(details)
-                        }
-                    })
-                    .and_then(|d| InputDetail::serialize_list(&d));
-
-                let record = TransactionRecord {
-                    txid: tx_hash,
-                    raw_tx: transaction.encode(),
-                    tx_type: TransactionType::Receive,
-                    amount: total_incoming,
-                    fee: None,
-                    to_address: None,
-                    memo: None,
-                    created_at: timestamp as i64,
-                    confirmation: None, // Pending in mempool
-                    expires_at: None,
-                    priority: None,
-                    input_details,
-                    execution_status: None,
-                };
-                if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
-                    warn!("Failed to store incoming mempool tx in wallet DB: {}", e);
-                }
-            }
+        for (db, wallet_id, amount) in incoming_records {
+            store_incoming_mempool_tx(
+                &db,
+                &wallet_id,
+                tx_hash,
+                &transaction,
+                amount,
+                timestamp,
+                services,
+            );
         }
     }
 
@@ -524,6 +483,84 @@ fn handle_transaction_added(
                 }
             }
         }
+    }
+}
+
+fn incoming_amount_for_pkhs(
+    transaction: &xtal::transaction::Transaction,
+    pkhs: &HashSet<[u8; 20]>,
+) -> u64 {
+    transaction
+        .utxo_outputs()
+        .iter()
+        .filter_map(|output| {
+            extract_pkh_from_script(&output.script_pubkey)
+                .filter(|recipient_pkh| pkhs.contains(recipient_pkh))
+                .map(|_| output.amount)
+        })
+        .fold(0u64, u64::saturating_add)
+}
+
+fn store_incoming_mempool_tx(
+    db: &Arc<WalletDatabase>,
+    wallet_id: &str,
+    tx_hash: [u8; 32],
+    transaction: &xtal::transaction::Transaction,
+    amount: u64,
+    timestamp: u64,
+    services: &Arc<Services>,
+) {
+    let queries = WalletQueries::new(db.connection());
+    if queries.get_transaction(&tx_hash).ok().flatten().is_some() {
+        return;
+    }
+
+    let blockchain = services.blockchain();
+    let input_details = transaction
+        .utxo_inputs()
+        .and_then(|inputs| {
+            let mut details = Vec::new();
+            for inp in inputs {
+                let (amount, address) =
+                    if let Ok(Some(utxo)) = blockchain.get_utxo(&inp.tx_id, inp.output_index) {
+                        let addr = extract_pkh_from_script(&utxo.script_pubkey)
+                            .map(|pkh| format_utxo_address(&pkh));
+                        (Some(utxo.amount), addr)
+                    } else {
+                        (None, None)
+                    };
+                details.push(InputDetail {
+                    txid: hex::encode(inp.tx_id),
+                    index: inp.output_index,
+                    amount: amount.unwrap_or(0),
+                    address,
+                });
+            }
+            if details.is_empty() {
+                None
+            } else {
+                Some(details)
+            }
+        })
+        .and_then(|d| InputDetail::serialize_list(&d));
+
+    let record = TransactionRecord {
+        txid: tx_hash,
+        raw_tx: transaction.encode(),
+        tx_type: TransactionType::Receive,
+        amount,
+        fee: None,
+        to_address: None,
+        memo: None,
+        created_at: timestamp as i64,
+        confirmation: None,
+        expires_at: None,
+        priority: None,
+        input_details,
+        execution_status: None,
+    };
+    if let Err(e) = queries.insert_transaction(wallet_id, &record) {
+        warn!("Failed to store incoming mempool tx in wallet DB: {}", e);
     }
 }
 
@@ -619,16 +656,26 @@ pub(crate) fn get_wallet_pkh_set(
 
     if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet.current_wallet_id()) {
         let queries = WalletQueries::new(db.connection());
+        let mut wallet_type = None;
         if let Ok(Some(record)) = queries.get_wallet(&wallet_id) {
-            if let Some(address) = record.validator_address() {
-                if let Ok(pkh) = parse_address_input(&address) {
-                    pkhs.insert(pkh);
+            wallet_type = Some(record.wallet_type);
+            if record.wallet_type == WalletType::Validator {
+                if let Some(address) = record.validator_address() {
+                    if let Ok(pkh) = parse_address_input(&address) {
+                        pkhs.insert(pkh);
+                    }
                 }
             }
         }
 
         if let Ok(all_keys) = queries.get_public_keys(&wallet_id, None) {
             for key in all_keys {
+                if let Some(wallet_type) = wallet_type {
+                    if !key_type_belongs_to_wallet_scope(wallet_type, key.key_type) {
+                        continue;
+                    }
+                }
+
                 let Ok(pk_bytes) = hex::decode(&key.public_key_hex) else {
                     continue;
                 };
@@ -673,10 +720,6 @@ pub(crate) fn get_wallet_pkh_set(
         }
     }
 
-    if let Ok((_, vk)) = wallet.with_wallet(|w| w.get_validator_staking_public_key()) {
-        pkhs.insert(hash_public_key(&vk));
-    }
-
     if let Ok(vm_accounts) = wallet.with_wallet(|w| w.get_all_vm_account_addresses()) {
         for (_, _, _, vk) in vm_accounts {
             pkhs.insert(hash_public_key(&vk));
@@ -684,4 +727,8 @@ pub(crate) fn get_wallet_pkh_set(
     }
 
     Ok(pkhs)
+}
+
+fn key_type_belongs_to_wallet_scope(wallet_type: WalletType, key_type: KeyType) -> bool {
+    wallet_type == WalletType::Validator || key_type != KeyType::Staking
 }

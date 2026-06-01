@@ -1628,17 +1628,21 @@ pub async fn get_addresses(
         .as_ref()
         .ok_or("Wallet not available")?;
     let wallet_id = wallet.current_wallet_id();
-    let validator_address_from_db =
-        if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet_id.as_ref()) {
-            let queries = WalletQueries::new(db.connection());
-            queries
-                .get_wallet(wallet_id)
-                .ok()
-                .flatten()
-                .and_then(|record| record.validator_address())
-        } else {
-            None
-        };
+    let wallet_record = if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet_id.as_ref())
+    {
+        let queries = WalletQueries::new(db.connection());
+        queries.get_wallet(wallet_id).ok().flatten()
+    } else {
+        None
+    };
+    let is_validator_wallet = wallet_record
+        .as_ref()
+        .map(|record| record.wallet_type == WalletType::Validator)
+        .unwrap_or(false);
+    let validator_address_from_db = wallet_record
+        .as_ref()
+        .filter(|record| record.wallet_type == WalletType::Validator)
+        .and_then(|record| record.validator_address());
     let saved_script_addresses =
         if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet_id.as_ref()) {
             let queries = WalletQueries::new(db.connection());
@@ -1662,9 +1666,13 @@ pub async fn get_addresses(
             let mut seen = HashSet::new();
 
             let validator_address = validator_address_from_db.clone().or_else(|| {
-                w.get_validator_staking_public_key()
-                    .ok()
-                    .map(|(_, vk)| format_utxo_address(&hash_public_key(&vk)))
+                if is_validator_wallet {
+                    w.get_validator_staking_public_key()
+                        .ok()
+                        .map(|(_, vk)| format_utxo_address(&hash_public_key(&vk)))
+                } else {
+                    None
+                }
             });
             if let Some(address) = validator_address {
                 if seen.insert(address.clone()) {
@@ -1688,7 +1696,7 @@ pub async fn get_addresses(
                         index,
                         kind: "mining".to_string(),
                         order: addresses.len() as u32,
-                        label: if index == 0 && validator_address_from_db.is_none() {
+                        label: if index == 0 && !is_validator_wallet {
                             Some("Primary".to_string())
                         } else {
                             None
@@ -2939,19 +2947,19 @@ pub async fn get_transaction_detail(
         }
     }
 
-    // Always prioritize blockchain receipts over cached ones to ensure we have the most current status
+    // Always prioritize blockchain receipts over cached ones to ensure we have the most current status.
     // This is critical because:
     // 1. Live stem receipts are temporary (disappear when leaf persists)
     // 2. Persisted receipts (from confirmed leaves) are authoritative
     // 3. Wallet DB cache should only be a fallback when blockchain has no receipt yet
-    if let Some(stored) = lookup_persisted_receipt(blockchain.as_ref(), &txid_bytes) {
-        execution_status = Some(execution_status_label(&stored.receipt.status));
-        receipt = Some(TransactionReceiptDetail::from(stored.clone()));
-        raw_receipt = Some(stored.receipt);
-    } else if let Some(br) = lookup_live_stem_receipt(blockchain.as_ref(), &txid_bytes) {
+    if let Some(br) = lookup_live_stem_receipt(blockchain.as_ref(), &txid_bytes) {
         execution_status = Some(execution_status_label(&br.status));
         receipt = Some(TransactionReceiptDetail::from(br.clone()));
         raw_receipt = Some(br);
+    } else if let Some(stored) = lookup_persisted_receipt(blockchain.as_ref(), &txid_bytes) {
+        execution_status = Some(execution_status_label(&stored.receipt.status));
+        receipt = Some(TransactionReceiptDetail::from(stored.clone()));
+        raw_receipt = Some(stored.receipt);
     }
     // Note: If no blockchain receipt found, we use the wallet DB receipt already captured above
 
@@ -4247,14 +4255,24 @@ fn get_wallet_addresses(
     // Primary: read public keys from database (works even when wallet is locked)
     if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet.current_wallet_id()) {
         let queries = WalletQueries::new(db.connection());
+        let mut wallet_type = None;
         if let Ok(Some(record)) = queries.get_wallet(&wallet_id) {
-            if let Some(address) = record.validator_address() {
-                addresses.insert(address);
+            wallet_type = Some(record.wallet_type);
+            if record.wallet_type == WalletType::Validator {
+                if let Some(address) = record.validator_address() {
+                    addresses.insert(address);
+                }
             }
         }
 
         if let Ok(all_keys) = queries.get_public_keys(&wallet_id, None) {
             for key in &all_keys {
+                if let Some(wallet_type) = wallet_type {
+                    if !key_type_belongs_to_wallet_scope(wallet_type, key.key_type) {
+                        continue;
+                    }
+                }
+
                 // Use stored address if available
                 if let Some(ref addr) = key.address {
                     addresses.insert(addr.clone());
@@ -4295,15 +4313,13 @@ fn get_wallet_addresses(
                 addresses.insert(addr);
             }
         }
-
-        if let Ok((_, validator_vk)) = wallet.with_wallet(|w| w.get_validator_staking_public_key())
-        {
-            let pkh = hash_public_key(&validator_vk);
-            addresses.insert(format_utxo_address(&pkh));
-        }
     }
 
     Ok(addresses)
+}
+
+fn key_type_belongs_to_wallet_scope(wallet_type: WalletType, key_type: KeyType) -> bool {
+    wallet_type == WalletType::Validator || key_type != KeyType::Staking
 }
 
 /// Calculate net amount for wallet from inputs and outputs

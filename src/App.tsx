@@ -973,15 +973,15 @@ function AppContent() {
       {/* Sidebar */}
       <aside
         className={cn(
-          "flex flex-col border-r border-border bg-background-secondary",
-          "min-h-0 overflow-y-auto transition-all duration-300 ease-in-out",
+          "flex h-full shrink-0 flex-col border-r border-border bg-background-secondary",
+          "min-h-0 overflow-hidden transition-all duration-300 ease-in-out",
           sidebarCollapsed ? "w-[64px]" : "w-[240px]"
         )}
       >
         {/* Logo */}
         <div
           className={cn(
-            "flex items-center h-16 px-4",
+            "flex h-16 shrink-0 items-center px-4",
             sidebarCollapsed ? "justify-center" : "justify-between"
           )}
         >
@@ -1008,28 +1008,28 @@ function AppContent() {
         </div>
 
         {/* Angular Divider */}
-        <div className="mx-3 divider-angular" />
+        <div className="mx-3 shrink-0 divider-angular" />
 
         {/* Navigation */}
-	          <nav className="flex-1 p-2 space-y-1 mt-2">
-	          {navItems.map((item) => {
-	            const Icon = item.icon;
-	            const isActive = activeTab === item.id;
+        <nav className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+          {navItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeTab === item.id;
 
-	            const button = (
-	              <button
-	                key={item.id}
-	                onClick={() => setActiveTab(item.id)}
-	                data-active={isActive}
-	                className={cn(
-	                  "sidebar-nav-item relative w-full flex items-center gap-3 px-3 py-2.5 chamfered-sm",
-	                  "transition-all duration-200",
-	                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-	                  isActive
-	                    ? "bg-primary/15 text-primary shadow-inner-glow"
-	                    : "text-foreground-secondary hover:text-foreground hover:bg-muted/50"
-	                )}
-	              >
+            const button = (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                data-active={isActive}
+                className={cn(
+                  "sidebar-nav-item relative w-full flex items-center gap-3 px-3 py-2.5 chamfered-sm",
+                  "transition-all duration-200",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  isActive
+                    ? "bg-primary/15 text-primary shadow-inner-glow"
+                    : "text-foreground-secondary hover:text-foreground hover:bg-muted/50"
+                )}
+              >
                 {/* Active indicator diamond */}
                 {isActive && (
                   <span className="status-diamond-sm bg-primary absolute -left-0.5" />
@@ -1058,7 +1058,7 @@ function AppContent() {
 
         {/* Collapse button when collapsed */}
         {sidebarCollapsed && (
-          <div className="p-2">
+          <div className="shrink-0 p-2">
             <Button
               variant="ghost"
               size="icon-sm"
@@ -1071,10 +1071,10 @@ function AppContent() {
         )}
 
         {/* Angular Divider */}
-        <div className="mx-3 divider-angular" />
+        <div className="mx-3 shrink-0 divider-angular" />
 
         {/* Status Footer */}
-        <div className="p-3 space-y-2">
+        <div className="shrink-0 p-3 space-y-2">
           {/* Node Connection - only visible when disconnected */}
           {nodeConnectionState !== "connected" && (
             <div
@@ -1153,7 +1153,7 @@ function AppContent() {
       </aside>
 
       {/* Main Content */}
-      <main className="min-w-0 flex-1 overflow-auto hex-grid-bg text-foreground">
+      <main className="h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden hex-grid-bg text-foreground">
         <div className="relative min-h-full p-4 sm:p-6">
           {activeTab === "dashboard" && <Dashboard />}
           {activeTab === "mining" && (

@@ -2,8 +2,9 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Download, X, Copy, Check, RefreshCw, QrCode } from "lucide-react";
 import QRCode from "qrcode";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ModalShell } from "@/components/ui/modal-shell";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { hexToBase58Address } from "@/lib/address";
@@ -155,8 +156,12 @@ export function ReceiveModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
-      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+    <ModalShell
+      className="bg-black/60 backdrop-blur-sm"
+      cardClassName="max-w-lg relative"
+      onClose={onClose}
+      title="Receive"
+    >
         {/* Decorative elements */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
@@ -312,7 +317,6 @@ export function ReceiveModal({
             Generate New Address
           </Button>
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }

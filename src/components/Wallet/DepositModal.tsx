@@ -14,9 +14,10 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { ModalShell } from "@/components/ui/modal-shell";
 import { AmountDisplay } from "@/components/common";
 import { cn, formatXtal } from "@/lib/utils";
 import { tauriCommand } from "@/hooks";
@@ -134,8 +135,12 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
   const eligible = utxos.filter((u) => u.isEligible);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
-      <Card variant="crystalline" className="w-full max-w-lg relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+    <ModalShell
+      className="bg-black/60 backdrop-blur-sm"
+      cardClassName="max-w-lg relative"
+      onClose={onClose}
+      title="Deposit"
+    >
         {/* Decorative crystal facet overlay — primary (UTXO source) to accent (VM destination) */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
@@ -457,7 +462,6 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
             </div>
           )}
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }

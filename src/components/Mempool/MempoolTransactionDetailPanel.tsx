@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   X,
   ChevronDown,
@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { AmountDisplay } from "@/components/common/AmountDisplay";
 import { HashDisplay } from "@/components/common/HashDisplay";
 import { cn } from "@/lib/utils";
@@ -231,16 +232,12 @@ export function MempoolTransactionDetailPanel({
   const [detail, setDetail] = useState<MempoolTransactionDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isClosing, setIsClosing] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const wasOpenRef = useRef(false);
 
   const isOpen = txid !== null;
 
   // Fetch detail when txid changes
   useEffect(() => {
     if (!txid) {
-      setDetail(null);
       return;
     }
 
@@ -270,37 +267,6 @@ export function MempoolTransactionDetailPanel({
     };
   }, [txid]);
 
-  // Escape key
-  useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) onClose();
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [isOpen, onClose]);
-
-  // Exit animation tracking
-  useEffect(() => {
-    if (isOpen) {
-      wasOpenRef.current = true;
-    } else if (wasOpenRef.current) {
-      setIsClosing(true);
-    }
-  }, [isOpen]);
-
-  // Unmount after exit animation
-  useEffect(() => {
-    const el = panelRef.current;
-    if (!el || !isClosing) return;
-    const onEnd = (e: AnimationEvent) => {
-      if (e.target === el) setIsClosing(false);
-    };
-    el.addEventListener("animationend", onEnd);
-    return () => el.removeEventListener("animationend", onEnd);
-  }, [isClosing]);
-
-  if (!isOpen && !isClosing) return null;
-
   const style = detail ? getStyle(detail.txType) : DEFAULT_STYLE;
   const Icon = style.icon;
 
@@ -308,31 +274,7 @@ export function MempoolTransactionDetailPanel({
   const isVm = detail?.caller != null;
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className={cn(
-          "fixed inset-0 bg-black/40 backdrop-blur-sm z-40",
-          isClosing
-            ? "animate-out fade-out duration-300 fill-mode-forwards"
-            : "animate-in fade-in duration-300"
-        )}
-        onClick={onClose}
-      />
-
-      {/* Panel */}
-      <div
-        ref={panelRef}
-        className={cn(
-          "fixed top-0 right-0 h-full z-50",
-          "w-full sm:w-[420px] lg:w-[480px]",
-          "bg-background text-foreground border-l border-border",
-          "flex flex-col",
-          isClosing
-            ? "animate-out slide-out-to-right duration-300 fill-mode-forwards"
-            : "animate-in slide-in-from-right duration-300"
-        )}
-      >
+    <SidePanelShell open={isOpen} onClose={onClose} title="Mempool transaction detail">
         {/* Decorative gradient */}
         <div
           className={cn(
@@ -714,8 +656,7 @@ export function MempoolTransactionDetailPanel({
             </div>
           )}
         </div>
-      </div>
-    </>
+    </SidePanelShell>
   );
 }
 

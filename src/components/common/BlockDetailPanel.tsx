@@ -13,6 +13,7 @@ import {
 
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import {
   Tooltip,
   TooltipTrigger,
@@ -130,65 +131,22 @@ export function BlockDetailPanel({
   onTransactionClick,
   onFruitClick,
 }: BlockDetailPanelProps) {
-  const [isClosing, setIsClosing] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const wasOpenRef = useRef(false);
+  const lastDetailRef = useRef<BlockDetail | null>(null);
 
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [isOpen, onClose]);
+    if (detail) lastDetailRef.current = detail;
+  }, [detail]);
 
-  useEffect(() => {
-    if (isOpen) {
-      wasOpenRef.current = true;
-    } else if (wasOpenRef.current) {
-      setIsClosing(true);
-      const el = panelRef.current;
-      if (!el) return;
-      const onEnd = (e: AnimationEvent) => {
-        if (e.target === el) setIsClosing(false);
-      };
-      el.addEventListener("animationend", onEnd);
-      return () => el.removeEventListener("animationend", onEnd);
-    }
-  }, [isOpen]);
-
-  if (!isOpen && !isClosing) return null;
-
-  const style = getBlockStyle(detail?.blockType);
+  const visibleDetail = detail ?? (!isOpen ? lastDetailRef.current : null);
+  const style = getBlockStyle(visibleDetail?.blockType);
 
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className={cn(
-          "fixed inset-0 bg-black/40 backdrop-blur-sm z-40",
-          isClosing
-            ? "animate-out fade-out duration-300 fill-mode-forwards"
-            : "animate-in fade-in duration-300"
-        )}
-        onClick={onClose}
-      />
-
-      {/* Panel */}
-      <div
-        ref={panelRef}
-        className={cn(
-          "fixed top-0 right-0 h-full z-50",
-          "w-full sm:w-[420px] lg:w-[520px]",
-          "bg-background text-foreground border-l border-border",
-          "flex flex-col",
-          isClosing
-            ? "animate-out slide-out-to-right duration-300 fill-mode-forwards pointer-events-none"
-            : "animate-in slide-in-from-right duration-300"
-        )}
-      >
+    <SidePanelShell
+      open={isOpen}
+      onClose={onClose}
+      title="Block detail"
+      className="lg:w-[520px]"
+    >
         <TooltipProvider>
         {/* Gradient accent */}
         <div
@@ -209,9 +167,9 @@ export function BlockDetailPanel({
               <h2 className={cn("font-heading text-lg tracking-wide", style.color)}>
                 {style.label}
               </h2>
-              {detail && (
+              {visibleDetail && (
                 <HashDisplay
-                  hash={detail.hash}
+                  hash={visibleDetail.hash}
                   chars={12}
                   className="text-xs text-foreground-muted"
                 />
@@ -244,7 +202,7 @@ export function BlockDetailPanel({
                 {error}
               </CardContent>
             </Card>
-          ) : detail ? (
+          ) : visibleDetail ? (
             <>
               {/* Height + time */}
               <Card variant="crystalline" className="overflow-visible">
@@ -254,7 +212,7 @@ export function BlockDetailPanel({
                       Block Height
                     </p>
                     <div className="text-3xl font-heading font-bold tabular-nums">
-                      {formatBlockHeight(detail.height)}
+                      {formatBlockHeight(visibleDetail.height)}
                     </div>
                   </div>
 
@@ -264,17 +222,17 @@ export function BlockDetailPanel({
                         Leaf Height
                       </p>
                       <span className="text-sm font-mono">
-                        {formatBlockHeight(detail.leafHeight)}
+                        {formatBlockHeight(visibleDetail.leafHeight)}
                       </span>
                     </div>
                     <div className="text-center">
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
-                        {detail.blockType === "Stem" ? "Fruits" : "Transactions"}
+                        {visibleDetail.blockType === "Stem" ? "Fruits" : "Transactions"}
                       </p>
                       <span className="text-sm font-mono">
-                        {detail.blockType === "Stem"
-                          ? detail.fruitCount.toLocaleString()
-                          : detail.txCount.toLocaleString()}
+                        {visibleDetail.blockType === "Stem"
+                          ? visibleDetail.fruitCount.toLocaleString()
+                          : visibleDetail.txCount.toLocaleString()}
                       </span>
                     </div>
                     <div className="text-center">
@@ -282,7 +240,7 @@ export function BlockDetailPanel({
                         Size
                       </p>
                       <span className="text-sm font-mono">
-                        {detail.size ? formatBytes(detail.size) : "\u2014"}
+                        {visibleDetail.size ? formatBytes(visibleDetail.size) : "\u2014"}
                       </span>
                     </div>
                     <div className="text-center">
@@ -292,11 +250,11 @@ export function BlockDetailPanel({
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <span className="text-sm font-mono cursor-help">
-                            {formatTimeAgo(detail.timestamp)}
+                            {formatTimeAgo(visibleDetail.timestamp)}
                           </span>
                         </TooltipTrigger>
                         <TooltipContent>
-                          {formatTimestamp(detail.timestamp)}
+                          {formatTimestamp(visibleDetail.timestamp)}
                         </TooltipContent>
                       </Tooltip>
                     </div>
@@ -321,14 +279,14 @@ export function BlockDetailPanel({
                         <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                           Version
                         </p>
-                        <span className="text-xs font-mono">{detail.version}</span>
+                        <span className="text-xs font-mono">{visibleDetail.version}</span>
                       </div>
                       <div className="text-center py-2.5 px-2">
                         <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                           Difficulty
                         </p>
                         <span className="text-xs font-mono">
-                          0x{detail.difficulty.toString(16).padStart(8, "0")}
+                          0x{visibleDetail.difficulty.toString(16).padStart(8, "0")}
                         </span>
                       </div>
                       <div className="text-center py-2.5 px-2">
@@ -336,7 +294,7 @@ export function BlockDetailPanel({
                           Nonce
                         </p>
                         <span className="text-xs font-mono">
-                          {detail.nonce}
+                          {visibleDetail.nonce}
                         </span>
                       </div>
                     </div>
@@ -346,48 +304,48 @@ export function BlockDetailPanel({
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Froot Accumulator
                       </p>
-                      <HashDisplay hash={detail.froot} chars={10} className="text-xs" />
+                      <HashDisplay hash={visibleDetail.froot} chars={10} className="text-xs" />
                     </div>
                     <div className="px-3 py-2 space-y-0.5">
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
-                        {detail.blockType === "Stem" ? "Fruit Merkle Root" : "Tx Merkle Root"}
+                        {visibleDetail.blockType === "Stem" ? "Fruit Merkle Root" : "Tx Merkle Root"}
                       </p>
-                      <HashDisplay hash={detail.merkleRoot} chars={10} className="text-xs" />
+                      <HashDisplay hash={visibleDetail.merkleRoot} chars={10} className="text-xs" />
                     </div>
-                    {detail.previousHash && (
+                    {visibleDetail.previousHash && (
                       <div className="px-3 py-2 space-y-0.5">
                         <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                           Previous Block
                         </p>
-                        <HashDisplay hash={detail.previousHash} chars={10} className="text-xs" />
+                        <HashDisplay hash={visibleDetail.previousHash} chars={10} className="text-xs" />
                       </div>
                     )}
                     <div className="px-3 py-2 space-y-0.5">
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Miner
                       </p>
-                      <HashDisplay hash={detail.miner} chars={10} className="text-xs" />
+                      <HashDisplay hash={visibleDetail.miner} chars={10} className="text-xs" />
                     </div>
                     <div className="px-3 py-2 space-y-0.5">
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Timestamp
                       </p>
                       <span className="text-xs font-mono text-foreground">
-                        {formatTimestamp(detail.timestamp)}
+                        {formatTimestamp(visibleDetail.timestamp)}
                       </span>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {detail.blockType === "Stem" ? (
-                <CollapsibleSection title="FRUITS" count={detail.fruitCount}>
-                  {!detail.fruits || detail.fruits.length === 0 ? (
+              {visibleDetail.blockType === "Stem" ? (
+                <CollapsibleSection title="FRUITS" count={visibleDetail.fruitCount}>
+                  {!visibleDetail.fruits || visibleDetail.fruits.length === 0 ? (
                     <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
                       No fruits in this stem
                     </div>
                   ) : (
-                    detail.fruits.map((fruit) => {
+                    visibleDetail.fruits.map((fruit) => {
                       const color = getFruitColor(fruit.fruitType);
                       const canOpen = Boolean(onFruitClick);
                       return (
@@ -403,7 +361,7 @@ export function BlockDetailPanel({
                           )}
                           onClick={() => {
                             if (onFruitClick) {
-                              onFruitClick(fruit.hash, detail.hash);
+                              onFruitClick(fruit.hash, visibleDetail.hash);
                             }
                           }}
                         >
@@ -455,17 +413,17 @@ export function BlockDetailPanel({
                       <h3 className="text-sm font-heading tracking-wide text-foreground">TRANSACTIONS</h3>
                     </div>
                     <Badge variant="outline" className="font-mono text-xs" shape="chamfered">
-                      {detail.transactions.length.toLocaleString()}
+                      {visibleDetail.transactions.length.toLocaleString()}
                     </Badge>
                   </div>
 
-                  {detail.transactions.length === 0 ? (
+                  {visibleDetail.transactions.length === 0 ? (
                     <div className="chamfered-sm bg-muted/30 px-4 py-6 text-center text-sm text-foreground-muted">
                       No transactions in this block
                     </div>
                   ) : (
                     <div className="space-y-2">
-                      {detail.transactions.map((tx) => (
+                      {visibleDetail.transactions.map((tx) => (
                         <button
                           type="button"
                           key={tx.txid}
@@ -478,7 +436,7 @@ export function BlockDetailPanel({
                           )}
                           onClick={() => {
                             if (onTransactionClick) {
-                              onTransactionClick(tx.txid, detail.hash);
+                              onTransactionClick(tx.txid, visibleDetail.hash);
                             }
                           }}
                         >
@@ -519,8 +477,7 @@ export function BlockDetailPanel({
           )}
         </div>
         </TooltipProvider>
-      </div>
-    </>
+    </SidePanelShell>
   );
 }
 

@@ -12,10 +12,11 @@ import {
   X,
 } from "lucide-react";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { ModalShell } from "@/components/ui/modal-shell";
 import { cn } from "@/lib/utils";
 import { tauriCommand } from "@/hooks";
 import { useUiStore } from "@/stores";
@@ -168,8 +169,12 @@ export function MultisigModal({ isOpen, onClose, onAddressCreated }: MultisigMod
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-start min-[900px]:items-center justify-center z-50 overflow-y-auto p-3 sm:p-4">
-      <Card variant="crystalline" className="w-full max-w-xl relative max-h-[calc(100dvh-1.5rem)] sm:max-h-[calc(100dvh-2rem)] overflow-y-auto">
+    <ModalShell
+      className="bg-black/60 backdrop-blur-sm"
+      cardClassName="max-w-xl relative"
+      onClose={isCreating ? undefined : onClose}
+      title="Create multisig address"
+    >
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
             className="absolute top-0 left-0 w-44 h-44 bg-gradient-to-br from-primary/50 to-transparent"
@@ -358,8 +363,7 @@ export function MultisigModal({ isOpen, onClose, onAddressCreated }: MultisigMod
             </div>
           )}
         </CardContent>
-      </Card>
-    </div>
+    </ModalShell>
   );
 }
 

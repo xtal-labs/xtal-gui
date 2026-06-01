@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { AmountDisplay } from "./AmountDisplay";
 import { HashDisplay } from "./HashDisplay";
 import { cn, formatTimeAgo } from "@/lib/utils";
@@ -766,78 +767,29 @@ export function TransactionDetailPanel({
   onClose,
   isLoading = false,
 }: TransactionDetailPanelProps) {
-  const [isClosing, setIsClosing] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  const wasOpenRef = useRef(false);
+  const lastDetailRef = useRef<TransactionDetail | null>(null);
 
   useEffect(() => {
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && isOpen) {
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", handleEscape);
-    return () => window.removeEventListener("keydown", handleEscape);
-  }, [isOpen, onClose]);
+    if (detail) lastDetailRef.current = detail;
+  }, [detail]);
 
-  useEffect(() => {
-    if (isOpen) {
-      wasOpenRef.current = true;
-    } else if (wasOpenRef.current) {
-      setIsClosing(true);
-    }
-  }, [isOpen]);
-
-  useEffect(() => {
-    const el = panelRef.current;
-    if (!el || !isClosing) return;
-    const onEnd = (e: AnimationEvent) => {
-      if (e.target === el) setIsClosing(false);
-    };
-    el.addEventListener("animationend", onEnd);
-    return () => el.removeEventListener("animationend", onEnd);
-  }, [isClosing]);
-
-  if (!isOpen && !isClosing) return null;
-
-  const payload = detail?.detail;
+  const visibleDetail = detail ?? (!isOpen ? lastDetailRef.current : null);
+  const payload = visibleDetail?.detail;
   const netAmount = payload?.kind === "utxo" ? payload.netAmount : 0;
   const preferredFruitType =
     payload?.kind === "vm" ? payload.preferredFruitType : undefined;
-  const style = detail
-    ? getTransactionStyle(detail.txType, netAmount, preferredFruitType)
+  const style = visibleDetail
+    ? getTransactionStyle(visibleDetail.txType, netAmount, preferredFruitType)
     : getTransactionStyle("standard", 0);
   const Icon = style.icon;
-  const executionBadge = getExecutionStatusBadge(detail?.executionStatus);
-  const amountPresentation = detail
-    ? getAmountPresentation(detail)
+  const executionBadge = getExecutionStatusBadge(visibleDetail?.executionStatus);
+  const amountPresentation = visibleDetail
+    ? getAmountPresentation(visibleDetail)
     : { label: "Net Amount", amount: 0, positive: false, negative: false };
-  const bridgeHint = detail ? getBridgeHint(detail) : null;
+  const bridgeHint = visibleDetail ? getBridgeHint(visibleDetail) : null;
 
   return (
-    <>
-      <div
-        className={cn(
-          "fixed inset-0 bg-black/40 backdrop-blur-sm z-40",
-          isClosing
-            ? "animate-out fade-out duration-300 fill-mode-forwards"
-            : "animate-in fade-in duration-300"
-        )}
-        onClick={onClose}
-      />
-
-      <div
-        ref={panelRef}
-        className={cn(
-          "fixed top-0 right-0 h-full z-50",
-          "w-full sm:w-[420px] lg:w-[480px]",
-          "bg-background text-foreground border-l border-border",
-          "flex flex-col",
-          isClosing
-            ? "animate-out slide-out-to-right duration-300 fill-mode-forwards"
-            : "animate-in slide-in-from-right duration-300"
-        )}
-      >
+    <SidePanelShell open={isOpen} onClose={onClose} title="Transaction detail">
         <div
           className={cn(
             "absolute top-0 left-0 right-0 h-32 pointer-events-none",
@@ -853,14 +805,14 @@ export function TransactionDetailPanel({
             </div>
             <div>
               <h2 className={cn("font-heading text-lg tracking-wide", style.color)}>{style.label}</h2>
-              {detail && (
+              {visibleDetail && (
                 <div className="space-y-1">
-                  <HashDisplay hash={detail.txid} chars={12} className="text-xs text-foreground-muted" />
+                  <HashDisplay hash={visibleDetail.txid} chars={12} className="text-xs text-foreground-muted" />
                   {executionBadge && (
                     <Badge
                       variant={executionBadge.variant}
                       shape="chamfered"
-                      diamond={detail.executionStatus !== "success"}
+                      diamond={visibleDetail.executionStatus !== "success"}
                       className="text-[10px]"
                     >
                       {executionBadge.label}
@@ -887,9 +839,9 @@ export function TransactionDetailPanel({
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="text-sm text-foreground-muted font-heading">Loading transaction...</p>
             </div>
-          ) : detail && payload ? (
+          ) : visibleDetail && payload ? (
             <>
-              {detail.executionStatus === "failed" && detail.receipt?.error && (
+              {visibleDetail.executionStatus === "failed" && visibleDetail.receipt?.error && (
                 <div className="chamfered-sm border border-destructive/40 bg-destructive/10 px-4 py-3">
                   <div className="mb-2 flex items-center gap-2 text-destructive">
                     <AlertTriangle className="h-4 w-4" />
@@ -898,7 +850,7 @@ export function TransactionDetailPanel({
                     </span>
                   </div>
                   <p className="text-sm font-medium text-destructive break-words">
-                    {detail.receipt.error}
+                    {visibleDetail.receipt.error}
                   </p>
                 </div>
               )}
@@ -923,21 +875,21 @@ export function TransactionDetailPanel({
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Fee
                       </p>
-                      <AmountDisplay amount={detail.fee ?? 0} size="sm" />
+                      <AmountDisplay amount={visibleDetail.fee ?? 0} size="sm" />
                     </div>
 
                     <div className="text-center">
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Confirmations
                       </p>
-                      {detail.confirmations === 0 ? (
+                      {visibleDetail.confirmations === 0 ? (
                         <span className="text-sm font-mono text-warning flex items-center justify-center gap-1">
                           <Clock className="h-3.5 w-3.5" />
                           Pending
                         </span>
                       ) : (
                         <span className="text-sm font-mono text-success">
-                          {detail.confirmations.toLocaleString()}
+                          {visibleDetail.confirmations.toLocaleString()}
                         </span>
                       )}
                     </div>
@@ -946,10 +898,10 @@ export function TransactionDetailPanel({
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Block
                       </p>
-                      {detail.blockHeight ? (
+                      {visibleDetail.blockHeight ? (
                         <span className="text-sm font-mono flex items-center justify-center gap-1">
                           <Layers className="h-3 w-3 text-foreground-muted" />
-                          {detail.blockHeight.toLocaleString()}
+                          {visibleDetail.blockHeight.toLocaleString()}
                         </span>
                       ) : (
                         <span className="text-sm font-mono text-foreground-muted">—</span>
@@ -960,13 +912,13 @@ export function TransactionDetailPanel({
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Time
                       </p>
-                      <span className="text-sm font-mono">{formatTimeAgo(detail.timestamp)}</span>
+                      <span className="text-sm font-mono">{formatTimeAgo(visibleDetail.timestamp)}</span>
                     </div>
                   </div>
                 </CardContent>
               </Card>
 
-              {(payload.kind === "vm" || executionBadge || detail.receipt) && (
+              {(payload.kind === "vm" || executionBadge || visibleDetail.receipt) && (
                 <div className="space-y-3">
                   <div className="chamfered-sm bg-muted/20 px-4 py-3">
                     <div className="space-y-0 divide-y divide-border/30">
@@ -977,7 +929,7 @@ export function TransactionDetailPanel({
                               <Badge
                                 variant={executionBadge.variant}
                                 shape="chamfered"
-                                diamond={detail.executionStatus !== "success"}
+                                diamond={visibleDetail.executionStatus !== "success"}
                               >
                                 {executionBadge.label}
                               </Badge>
@@ -989,20 +941,20 @@ export function TransactionDetailPanel({
                         </DetailRow>
                       )}
 
-                      {detail.receipt && (
+                      {visibleDetail.receipt && (
                         <>
                           <DetailRow label="Gas Used">
                             <span className="text-sm font-mono tabular-nums">
-                              {detail.receipt.gasUsed.toLocaleString()}
+                              {visibleDetail.receipt.gasUsed.toLocaleString()}
                             </span>
                           </DetailRow>
                           <DetailRow label="Fee Paid">
-                            <AmountDisplay amount={detail.receipt.feePaid} size="sm" negative />
+                            <AmountDisplay amount={visibleDetail.receipt.feePaid} size="sm" negative />
                           </DetailRow>
-                          {detail.receipt.contractAddress && (
+                          {visibleDetail.receipt.contractAddress && (
                             <DetailRow label="Contract">
                               <HashDisplay
-                                hash={detail.receipt.contractAddress}
+                                hash={visibleDetail.receipt.contractAddress}
                                 chars={12}
                                 className="text-xs"
                               />
@@ -1010,12 +962,12 @@ export function TransactionDetailPanel({
                           )}
                           <DetailRow label="Block Height">
                             <span className="text-sm font-mono tabular-nums">
-                              {detail.receipt.blockHeight.toLocaleString()}
+                              {visibleDetail.receipt.blockHeight.toLocaleString()}
                             </span>
                           </DetailRow>
                           <DetailRow label="Tx Index">
                             <span className="text-sm font-mono tabular-nums">
-                              {detail.receipt.transactionIndex.toLocaleString()}
+                              {visibleDetail.receipt.transactionIndex.toLocaleString()}
                             </span>
                           </DetailRow>
                         </>
@@ -1023,20 +975,20 @@ export function TransactionDetailPanel({
                     </div>
                   </div>
 
-                  {detail.receipt && (
+                  {visibleDetail.receipt && (
                     <CollapsibleSection
                       title="LOGS"
-                      count={detail.receipt.logs.length}
-                      defaultOpen={detail.receipt.logs.length <= 3}
+                      count={visibleDetail.receipt.logs.length}
+                      defaultOpen={visibleDetail.receipt.logs.length <= 3}
                     >
-                      {detail.receipt.logs.length === 0 ? (
+                      {visibleDetail.receipt.logs.length === 0 ? (
                         <div className="chamfered-sm bg-background/50 border-l-2 border-l-border px-3 py-2">
                           <p className="text-xs text-foreground-muted italic">No logs emitted</p>
                         </div>
                       ) : (
-                        detail.receipt.logs.map((log, index) => (
+                        visibleDetail.receipt.logs.map((log, index) => (
                           <div
-                            key={`${detail.txid}-log-${index}`}
+                            key={`${visibleDetail.txid}-log-${index}`}
                             className="chamfered-sm bg-background/50 border-l-2 border-l-border px-3 py-2"
                           >
                             <p className="mb-1 text-[10px] font-heading tracking-wider uppercase text-foreground-muted">
@@ -1051,14 +1003,14 @@ export function TransactionDetailPanel({
                     </CollapsibleSection>
                   )}
 
-                  {detail.receipt && (
+                  {visibleDetail.receipt && (
                     <div className="space-y-1">
                       <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                         Return Data
                       </p>
                       <div className="chamfered-sm bg-muted/20 px-4 py-3">
                         <pre className="whitespace-pre-wrap break-all text-xs font-mono text-foreground">
-                          {detail.receipt.returnData}
+                          {visibleDetail.receipt.returnData}
                         </pre>
                       </div>
                     </div>
@@ -1073,17 +1025,17 @@ export function TransactionDetailPanel({
               )}
 
               {payload.kind === "utxo" ? (
-                <UtxoDetailBody detail={detail} utxoDetail={payload} style={style} />
+                <UtxoDetailBody detail={visibleDetail} utxoDetail={payload} style={style} />
               ) : (
-                <VmDetailBody detail={detail} vmDetail={payload} />
+                <VmDetailBody detail={visibleDetail} vmDetail={payload} />
               )}
 
-              {detail.blockHash && (
+              {visibleDetail.blockHash && (
                 <div className="space-y-1">
                   <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase">
                     Block Hash
                   </p>
-                  <HashDisplay hash={detail.blockHash} chars={16} className="text-xs" />
+                  <HashDisplay hash={visibleDetail.blockHash} chars={16} className="text-xs" />
                 </div>
               )}
             </>
@@ -1093,8 +1045,7 @@ export function TransactionDetailPanel({
             </div>
           )}
         </div>
-      </div>
-    </>
+    </SidePanelShell>
   );
 }
 
