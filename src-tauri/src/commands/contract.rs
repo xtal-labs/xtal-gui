@@ -4,7 +4,7 @@
 //! smart contracts through the GUI.
 
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tauri::State;
@@ -14,6 +14,7 @@ use ed25519_dalek::Signer;
 use xtal::address_format::format_utxo_address;
 use xtal::blockchain::processing::utxo_verifier::consume_utxo_digest;
 use xtal::crypto::hash_public_key;
+use xtal::fruit::codec::Encode;
 use xtal::fruit::core::FruitType;
 use xtal::fruit::StemProvider;
 use xtal::gas::TX_BASE_GAS;
@@ -28,6 +29,9 @@ use xtal::transaction::{CurrencyType, MAX_GAS_LIMIT, MIN_GAS_PRICE};
 use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
 use xtal::vm::cage_contract::{CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
 use xtal::vm::CrystalVm;
+use xtal::wallet::database::models::{
+    InputDetail, TransactionExecutionStatus, TransactionRecord, TransactionType,
+};
 use xtal::wallet::database::queries::WalletQueries;
 
 use crate::commands::wallet::{
@@ -161,6 +165,13 @@ pub struct DepositResult {
 // SendResult is re-exported from wallet commands
 // ---------------------------------------------------------------------------
 use super::wallet::SendResult;
+
+fn current_unix_timestamp_i64() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
 
 // ---------------------------------------------------------------------------
 // Helper: parse fruit type string
@@ -369,6 +380,26 @@ pub async fn deploy_contract(
         .map_err(|e| format!("Broadcast failed: {}", e))?;
 
     let max_fee = gas_limit.saturating_mul(gas_price);
+
+    let record = TransactionRecord {
+        txid: tx_hash,
+        raw_tx: tx.encode(),
+        tx_type: TransactionType::ContractDeploy,
+        amount: max_fee,
+        fee: Some(max_fee),
+        to_address: Some(format!("0x{}", hex::encode(contract_address))),
+        memo: None,
+        created_at: current_unix_timestamp_i64(),
+        confirmation: None,
+        expires_at: None,
+        priority: Some(0),
+        input_details: None,
+        execution_status: Some(TransactionExecutionStatus::Unknown),
+    };
+    if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
+        log::warn!("Failed to store pending contract deploy: {}", e);
+    }
+
     // Cache ABI locally if provided
     if let Some(json) = abi_json {
         let abi: ContractAbi =
@@ -502,6 +533,25 @@ pub async fn call_contract(
         .map_err(|e| format!("Broadcast failed: {}", e))?;
 
     let max_fee = gas_limit.saturating_mul(gas_price);
+    let record = TransactionRecord {
+        txid: tx_hash,
+        raw_tx: tx.encode(),
+        tx_type: TransactionType::ContractCall,
+        amount: send_value.saturating_add(max_fee),
+        fee: Some(max_fee),
+        to_address: Some(contract_address.clone()),
+        memo: None,
+        created_at: current_unix_timestamp_i64(),
+        confirmation: None,
+        expires_at: None,
+        priority: Some(0),
+        input_details: None,
+        execution_status: Some(TransactionExecutionStatus::Unknown),
+    };
+    if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
+        log::warn!("Failed to store pending contract call: {}", e);
+    }
+
     log::info!(
         "Contract call submitted: {}.{} (value={})",
         contract_address,
@@ -623,6 +673,34 @@ pub async fn deposit_utxo(
         .mempool()
         .add_transaction(tx.clone(), TransactionSource::Local)
         .map_err(|e| format!("Broadcast failed: {}", e))?;
+
+    if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet.current_wallet_id()) {
+        let queries = WalletQueries::new(db.connection());
+        let input_details = vec![InputDetail {
+            txid: hex::encode(txid_bytes),
+            index: vout,
+            amount: utxo_entry.amount,
+            address: Some(owner_address.clone()),
+        }];
+        let record = TransactionRecord {
+            txid: tx_hash,
+            raw_tx: tx.encode(),
+            tx_type: TransactionType::ContractCall,
+            amount: utxo_entry.amount,
+            fee: Some(0),
+            to_address: Some(format!("0x{}", hex::encode(CAGE_CONTRACT_ADDRESS))),
+            memo: None,
+            created_at: current_unix_timestamp_i64(),
+            confirmation: None,
+            expires_at: None,
+            priority: Some(0),
+            input_details: InputDetail::serialize_list(&input_details),
+            execution_status: Some(TransactionExecutionStatus::Unknown),
+        };
+        if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
+            log::warn!("Failed to store pending CAGE deposit: {}", e);
+        }
+    }
 
     log::info!(
         "CAGE deposit submitted (sponsored): UTXO {}:{} amount={} anchor={}",

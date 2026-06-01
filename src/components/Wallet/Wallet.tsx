@@ -86,6 +86,7 @@ type UtxoTransactionFilter =
   | "mining_rewards"
   | "staking"
   | "unstaking"
+  | "vm_deposits"
   | "vm_withdrawals";
 
 const PAGE_SIZE = 50;
@@ -100,6 +101,7 @@ const UTXO_TRANSACTION_FILTERS: { value: UtxoTransactionFilter; label: string }[
   { value: "mining_rewards", label: "Mining Rewards" },
   { value: "staking", label: "Staking" },
   { value: "unstaking", label: "Unstaking" },
+  { value: "vm_deposits", label: "VM Deposits" },
   { value: "vm_withdrawals", label: "VM Withdrawals" },
 ];
 

@@ -106,6 +106,7 @@ export type TransactionType =
   | "contract_call"
   | "contract_deploy"
   | "account_transfer"
+  | "cage_withdrawal"
   | "vm_withdrawal"
   | "vm_deposit";
 

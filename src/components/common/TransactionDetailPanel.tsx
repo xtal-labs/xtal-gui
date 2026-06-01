@@ -116,6 +116,15 @@ function getTransactionStyle(
         label: "Transfer",
         gradient: "from-primary/10 via-transparent to-transparent",
       };
+    case "cage_withdrawal":
+      return {
+        icon: LogOut,
+        color: "text-rose-400",
+        bg: "bg-rose-400/20",
+        borderColor: "border-rose-400/30",
+        label: "Withdrawal Request",
+        gradient: "from-rose-400/10 via-transparent to-transparent",
+      };
     case "vm_withdrawal":
       return {
         icon: LogOut,
@@ -227,8 +236,8 @@ function getAmountPresentation(detail: TransactionDetail) {
     return {
       label: "Withdrawal Amount",
       amount: payload.bridge.netWithdrawalAmount ?? payload.bridge.requestedAmount,
-      positive: true,
-      negative: false,
+      positive: false,
+      negative: true,
     };
   }
 

@@ -36,7 +36,8 @@ use xtal::transaction::{
 use xtal::vm::abi::{cage_abi, ParamType};
 use xtal::vm::cage_contract::CAGE_CONTRACT_ADDRESS;
 use xtal::wallet::database::models::{
-    InputDetail, KeyType, TransactionRecord, TransactionType, WalletScriptRecord, WalletType,
+    InputDetail, KeyType, TransactionExecutionStatus, TransactionRecord, TransactionType,
+    WalletScriptRecord, WalletType,
 };
 use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::sync::WalletSyncService;
@@ -44,7 +45,8 @@ use xtal::wallet::{FeeStrategy, TransactionBuilder, WalletManager};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::commands::tx_detail_utils::{
-    extract_inputs, extract_transaction_details, vm_transaction_fee,
+    extract_inputs, extract_output_from_transaction, extract_transaction_details,
+    vm_transaction_fee,
 };
 use crate::events::{emit_wallet_loaded, emit_wallet_unloaded, get_wallet_pkh_set};
 use crate::state::AppState;
@@ -198,6 +200,7 @@ fn transaction_matches_history_filter(
         "mining_rewards" => Ok(tx.tx_type == "coinbase"),
         "staking" => Ok(tx.tx_type == "stake"),
         "unstaking" => Ok(tx.tx_type == "unstake"),
+        "vm_deposits" => Ok(tx.tx_type == "vm_deposit"),
         "vm_withdrawals" => Ok(tx.tx_type == "vm_withdrawal"),
         other => Err(format!("Unsupported transaction type filter: {}", other)),
     }
@@ -708,10 +711,38 @@ pub enum VMBridgeDetail {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalletHistoryTxType {
+    Canonical(TransactionType),
+    VmDeposit,
+    CageWithdrawal,
+}
+
+impl WalletHistoryTxType {
+    fn as_str(self) -> &'static str {
+        match self {
+            WalletHistoryTxType::Canonical(tx_type) => tx_type.as_str(),
+            WalletHistoryTxType::VmDeposit => "vm_deposit",
+            WalletHistoryTxType::CageWithdrawal => "cage_withdrawal",
+        }
+    }
+}
+
 struct VmWalletTransactionView {
-    tx_type: TransactionType,
+    tx_type: WalletHistoryTxType,
     fee: u64,
     summary_amount: i64,
+}
+
+struct CageDepositReceiptView {
+    consumed_amount: u64,
+    owner_credit: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WalletHistorySurface {
+    Utxo,
+    Vm,
 }
 
 struct ResolvedTransactionContext {
@@ -2010,6 +2041,72 @@ pub async fn send_transaction(
     })
 }
 
+fn transaction_record_is_incoming_for_pkhs(
+    record: &TransactionRecord,
+    wallet_pkhs: &HashSet<[u8; 20]>,
+) -> bool {
+    if record.raw_tx.is_empty() {
+        return true;
+    }
+
+    Transaction::decode(&mut record.raw_tx.as_slice())
+        .map(|tx| {
+            transaction_record_net_amount_for_pkhs(record, &tx, wallet_pkhs)
+                .map(|net| net > 0)
+                .unwrap_or_else(|| transaction_outputs_to_pkhs(&tx, wallet_pkhs))
+        })
+        .unwrap_or(true)
+}
+
+fn transaction_record_net_amount_for_pkhs(
+    record: &TransactionRecord,
+    tx: &Transaction,
+    wallet_pkhs: &HashSet<[u8; 20]>,
+) -> Option<i64> {
+    let received = tx
+        .utxo_outputs()
+        .iter()
+        .filter_map(|output| {
+            extract_pkh_from_script(&output.script_pubkey)
+                .filter(|pkh| wallet_pkhs.contains(pkh))
+                .map(|_| output.amount)
+        })
+        .fold(0u64, u64::saturating_add);
+
+    if received == 0 {
+        return Some(0);
+    }
+
+    let spent = record
+        .input_details
+        .as_deref()
+        .and_then(InputDetail::deserialize_list)
+        .map(|inputs| {
+            inputs
+                .iter()
+                .filter_map(|input| {
+                    input
+                        .address
+                        .as_deref()
+                        .and_then(|address| xtal::address_format::parse_address_input(address).ok())
+                        .filter(|pkh| wallet_pkhs.contains(pkh))
+                        .map(|_| input.amount)
+                })
+                .fold(0u64, u64::saturating_add)
+        })
+        .unwrap_or(0);
+
+    Some((received as i64).saturating_sub(spent as i64))
+}
+
+fn transaction_outputs_to_pkhs(tx: &Transaction, wallet_pkhs: &HashSet<[u8; 20]>) -> bool {
+    tx.utxo_outputs().iter().any(|output| {
+        extract_pkh_from_script(&output.script_pubkey)
+            .map(|pkh| wallet_pkhs.contains(&pkh))
+            .unwrap_or(false)
+    })
+}
+
 /// Get transaction history including confirmed transactions from blockchain
 #[tauri::command]
 pub async fn get_transaction_history(
@@ -2248,6 +2345,23 @@ pub async fn get_transaction_history(
         // This ensures the UTXO scan (section 4) only catches newly discovered txs
         if let Ok(all_confirmed) = queries.list_all_confirmed(&wallet_id) {
             for ctx in all_confirmed {
+                let is_utxo_bridge_deposit_record =
+                    matches!(ctx.tx_type, TransactionType::ContractCall)
+                        && pending_vm_amount_from_record(
+                            blockchain.as_ref(),
+                            &ctx,
+                            &wallet_pkhs,
+                            WalletHistorySurface::Utxo,
+                        )
+                        .is_some();
+
+                if !ctx.is_outgoing()
+                    && !transaction_record_is_incoming_for_pkhs(&ctx, &wallet_pkhs)
+                    && !is_utxo_bridge_deposit_record
+                {
+                    continue;
+                }
+
                 if !seen_txids.contains(&ctx.txid) {
                     if matches!(
                         ctx.tx_type,
@@ -2297,8 +2411,13 @@ pub async fn get_transaction_history(
                             | TransactionType::ContractCall
                             | TransactionType::AccountTransfer
                     ) {
-                        pending_vm_amount_from_record(&ctx, &wallet_pkhs)
-                            .unwrap_or(ctx.amount as i64)
+                        pending_vm_amount_from_record(
+                            blockchain.as_ref(),
+                            &ctx,
+                            &wallet_pkhs,
+                            WalletHistorySurface::Utxo,
+                        )
+                        .unwrap_or(ctx.amount as i64)
                     } else if ctx.is_outgoing() {
                         -(ctx.amount as i64)
                     } else {
@@ -2342,6 +2461,30 @@ pub async fn get_transaction_history(
                 }
             }
         }
+
+        // CAGE deposits are VM contract calls, but they consume wallet UTXOs.
+        // Keep them visible on the UTXO surface even while the receipt moves
+        // from active-stem metadata into persisted receipt storage.
+        if let Ok(vm_count) = queries.count_vm_transactions(&wallet_id) {
+            if let Ok(vm_records) = queries.list_vm_transactions(&wallet_id, vm_count as usize, 0) {
+                for record in vm_records {
+                    if seen_txids.contains(&record.txid) {
+                        continue;
+                    }
+
+                    if let Some(summary) = vm_summary_from_record(
+                        blockchain.as_ref(),
+                        &record,
+                        &wallet_pkhs,
+                        current_leaf_height,
+                        WalletHistorySurface::Utxo,
+                    ) {
+                        seen_txids.insert(record.txid);
+                        transactions.push(summary);
+                    }
+                }
+            }
+        }
     } else {
         log::debug!("No wallet database available for outgoing transaction query");
     }
@@ -2356,6 +2499,7 @@ pub async fn get_transaction_history(
                 &wallet_pkhs,
                 Some(&queries),
                 &mut seen_txids,
+                WalletHistorySurface::Utxo,
             ));
         } else {
             transactions.extend(collect_pending_vm_mempool_transactions(
@@ -2364,6 +2508,7 @@ pub async fn get_transaction_history(
                 &wallet_pkhs,
                 None,
                 &mut seen_txids,
+                WalletHistorySurface::Utxo,
             ));
         }
     } else {
@@ -2373,6 +2518,7 @@ pub async fn get_transaction_history(
             &wallet_pkhs,
             None,
             &mut seen_txids,
+            WalletHistorySurface::Utxo,
         ));
     }
 
@@ -2709,6 +2855,7 @@ pub async fn get_transaction_history(
                 | "mining_rewards"
                 | "staking"
                 | "unstaking"
+                | "vm_deposits"
                 | "vm_withdrawals"
         ) {
             return Err(format!("Unsupported transaction type filter: {}", filter));
@@ -3217,6 +3364,14 @@ pub(crate) fn build_transaction_detail_response(
 ) -> TransactionDetail {
     annotate_transaction_io_ownership(&mut inputs, &mut outputs, wallet_addresses);
     let net_amount = calculate_net_amount(&inputs, &outputs, wallet_addresses);
+    let tx_type = match tx {
+        Transaction::ContractCall(call_tx)
+            if tx_type == "contract_call" && decode_cage_withdrawal_call(call_tx).is_some() =>
+        {
+            "cage_withdrawal".to_string()
+        }
+        _ => tx_type,
+    };
 
     let detail = match tx {
         Transaction::ContractCall(_)
@@ -3254,12 +3409,125 @@ pub(crate) fn build_transaction_detail_response(
     }
 }
 
+fn is_cage_deposit_call(call_tx: &ContractCallTransaction) -> bool {
+    call_tx.contract_address == CAGE_CONTRACT_ADDRESS
+        && call_tx.method == "consume_utxo"
+        && call_tx.data.len() >= 66
+}
+
+fn decode_cage_deposit_outpoint(call_tx: &ContractCallTransaction) -> Option<([u8; 32], u16)> {
+    if !is_cage_deposit_call(call_tx) {
+        return None;
+    }
+
+    let txid: [u8; 32] = call_tx.data.get(32..64)?.try_into().ok()?;
+    let vout = u16::from_le_bytes([*call_tx.data.get(64)?, *call_tx.data.get(65)?]);
+    Some((txid, vout))
+}
+
+fn amount_from_stored_inputs(stored_input_details: Option<&str>) -> Option<u64> {
+    stored_input_details
+        .and_then(InputDetail::deserialize_list)
+        .and_then(|inputs| inputs.first().map(|input| input.amount))
+}
+
+fn resolve_referenced_output_amount(
+    blockchain: &xtal::blockchain::Blockchain,
+    txid: &[u8; 32],
+    output_index: u16,
+) -> Option<u64> {
+    if let Ok(Some(utxo)) = blockchain.get_utxo(txid, output_index) {
+        return Some(utxo.amount);
+    }
+
+    blockchain
+        .get_transaction(txid)
+        .ok()
+        .flatten()
+        .and_then(|source_tx| extract_output_from_transaction(&source_tx, output_index).0)
+}
+
+fn decode_cage_deposit_owner_credit(
+    receipt: &TransactionReceipt,
+    owner: &[u8; 20],
+    txid: &[u8; 32],
+    output_index: u16,
+) -> Option<u64> {
+    const EVENT_UTXO_CONSUMED: [u8; 4] = 8u32.to_le_bytes();
+
+    receipt.events.iter().find_map(|event| {
+        if event.contract_address != CAGE_CONTRACT_ADDRESS
+            || event.topics.len() != 4
+            || event.topics[0].as_slice() != EVENT_UTXO_CONSUMED
+            || event.topics[1].as_slice() != owner
+            || event.topics[2].as_slice() != txid
+            || event.data.len() != 27
+        {
+            return None;
+        }
+
+        let event_output_index = u16::from_le_bytes(event.data.get(0..2)?.try_into().ok()?);
+        if event_output_index != output_index {
+            return None;
+        }
+
+        let credit_bytes: [u8; 8] = event.data.get(18..26)?.try_into().ok()?;
+        Some(u64::from_le_bytes(credit_bytes))
+    })
+}
+
+fn cage_deposit_receipt_view(
+    raw_receipt: Option<&TransactionReceipt>,
+    wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
+) -> Option<CageDepositReceiptView> {
+    let receipt = raw_receipt?;
+    if !receipt.status.as_bool() {
+        return None;
+    }
+
+    let consumed = receipt
+        .consumed_utxos
+        .iter()
+        .find(|consumed| wallet_pkhs.contains(&consumed.owner))?;
+
+    Some(CageDepositReceiptView {
+        consumed_amount: consumed.amount,
+        owner_credit: decode_cage_deposit_owner_credit(
+            receipt,
+            &consumed.owner,
+            &consumed.position.tx_id,
+            consumed.position.output_index,
+        ),
+    })
+}
+
+fn cage_deposit_amount(
+    blockchain: Option<&xtal::blockchain::Blockchain>,
+    call_tx: &ContractCallTransaction,
+    stored_input_details: Option<&str>,
+) -> Option<u64> {
+    amount_from_stored_inputs(stored_input_details)
+        .or_else(|| {
+            let blockchain = blockchain?;
+            let (txid, output_index) = decode_cage_deposit_outpoint(call_tx)?;
+            resolve_referenced_output_amount(blockchain, &txid, output_index)
+        })
+}
+
 fn classify_vm_wallet_transaction(
+    blockchain: Option<&xtal::blockchain::Blockchain>,
     tx: &Transaction,
     wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
+    raw_receipt: Option<&TransactionReceipt>,
+    stored_input_details: Option<&str>,
+    surface: WalletHistorySurface,
 ) -> Option<VmWalletTransactionView> {
     match tx {
         Transaction::AccountTransfer(transfer_tx) => {
+            if surface == WalletHistorySurface::Utxo {
+                return None;
+            }
+
             let sender = hash_public_key(&transfer_tx.sender);
             let recipient = *transfer_tx.recipient;
             let sender_watched = wallet_pkhs.contains(&sender);
@@ -3277,7 +3545,7 @@ fn classify_vm_wallet_transaction(
             };
 
             Some(VmWalletTransactionView {
-                tx_type: TransactionType::AccountTransfer,
+                tx_type: WalletHistoryTxType::Canonical(TransactionType::AccountTransfer),
                 fee,
                 summary_amount,
             })
@@ -3292,6 +3560,52 @@ fn classify_vm_wallet_transaction(
             }
 
             let fee = vm_transaction_fee(tx).unwrap_or(0);
+
+            if is_cage_deposit_call(call_tx) {
+                if !caller_watched {
+                    return None;
+                }
+
+                let receipt_view = cage_deposit_receipt_view(raw_receipt, wallet_pkhs);
+                let summary_amount = if let Some(view) = receipt_view {
+                    match surface {
+                        WalletHistorySurface::Utxo => -(view.consumed_amount as i64),
+                        WalletHistorySurface::Vm => {
+                            view.owner_credit.unwrap_or(view.consumed_amount) as i64
+                        }
+                    }
+                } else {
+                    let amount =
+                        cage_deposit_amount(blockchain, call_tx, stored_input_details).unwrap_or(0);
+                    match surface {
+                        WalletHistorySurface::Utxo => -(amount as i64),
+                        WalletHistorySurface::Vm => amount as i64,
+                    }
+                };
+
+                return Some(VmWalletTransactionView {
+                    tx_type: WalletHistoryTxType::VmDeposit,
+                    fee,
+                    summary_amount,
+                });
+            }
+
+            if let Some(withdrawal) = decode_cage_withdrawal_call(call_tx) {
+                if surface == WalletHistorySurface::Utxo || !caller_watched {
+                    return None;
+                }
+
+                return Some(VmWalletTransactionView {
+                    tx_type: WalletHistoryTxType::CageWithdrawal,
+                    fee,
+                    summary_amount: -(withdrawal.requested_amount as i64),
+                });
+            }
+
+            if surface == WalletHistorySurface::Utxo {
+                return None;
+            }
+
             let total = call_tx.value.saturating_add(fee);
             let summary_amount = if caller_watched {
                 -(total as i64)
@@ -3300,12 +3614,16 @@ fn classify_vm_wallet_transaction(
             };
 
             Some(VmWalletTransactionView {
-                tx_type: TransactionType::ContractCall,
+                tx_type: WalletHistoryTxType::Canonical(TransactionType::ContractCall),
                 fee,
                 summary_amount,
             })
         }
         Transaction::ContractDeploy(deploy_tx) => {
+            if surface == WalletHistorySurface::Utxo {
+                return None;
+            }
+
             let sender = hash_public_key(&deploy_tx.sender);
             if !wallet_pkhs.contains(&sender) {
                 return None;
@@ -3314,7 +3632,7 @@ fn classify_vm_wallet_transaction(
             let fee = vm_transaction_fee(tx).unwrap_or(0);
 
             Some(VmWalletTransactionView {
-                tx_type: TransactionType::ContractDeploy,
+                tx_type: WalletHistoryTxType::Canonical(TransactionType::ContractDeploy),
                 fee,
                 summary_amount: -(fee as i64),
             })
@@ -3324,11 +3642,89 @@ fn classify_vm_wallet_transaction(
 }
 
 fn pending_vm_amount_from_record(
+    blockchain: &xtal::blockchain::Blockchain,
     record: &TransactionRecord,
     wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
+    surface: WalletHistorySurface,
 ) -> Option<i64> {
     let tx = Transaction::decode(&mut record.raw_tx.as_slice()).ok()?;
-    classify_vm_wallet_transaction(&tx, wallet_pkhs).map(|info| info.summary_amount)
+    classify_vm_wallet_transaction(
+        Some(blockchain),
+        &tx,
+        wallet_pkhs,
+        None,
+        record.input_details.as_deref(),
+        surface,
+    )
+    .map(|info| info.summary_amount)
+}
+
+fn vm_summary_from_record(
+    blockchain: &xtal::blockchain::Blockchain,
+    record: &TransactionRecord,
+    wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
+    current_leaf_height: u64,
+    surface: WalletHistorySurface,
+) -> Option<TransactionSummary> {
+    if record.tx_type == TransactionType::VmWithdrawal {
+        return None;
+    }
+
+    let tx = Transaction::decode(&mut record.raw_tx.as_slice()).ok()?;
+    let live_receipt = lookup_live_stem_receipt(blockchain, &record.txid);
+    let canonical_receipt = if live_receipt.is_none() {
+        lookup_persisted_receipt(blockchain, &record.txid)
+    } else {
+        None
+    };
+    let raw_receipt = canonical_receipt
+        .as_ref()
+        .map(|stored| &stored.receipt)
+        .or(live_receipt.as_ref());
+
+    let view = classify_vm_wallet_transaction(
+        Some(blockchain),
+        &tx,
+        wallet_pkhs,
+        raw_receipt,
+        record.input_details.as_deref(),
+        surface,
+    )?;
+
+    let (confirmations, timestamp) = if let Some((ts, height)) = record.confirmation {
+        let confirmations = if height == 0 {
+            1
+        } else {
+            current_leaf_height.saturating_sub(height) as u32 + 1
+        };
+        (confirmations, ts as u64)
+    } else if let Some(stored) = canonical_receipt.as_ref() {
+        (
+            current_leaf_height.saturating_sub(stored.stem_height) as u32 + 1,
+            record.created_at as u64,
+        )
+    } else {
+        (0, record.created_at as u64)
+    };
+
+    let execution_status = raw_receipt
+        .map(|receipt| execution_status_label(&receipt.status))
+        .or_else(|| {
+            record
+                .execution_status
+                .map(|status| status.as_str().to_string())
+        });
+
+    Some(TransactionSummary {
+        txid: hex::encode(record.txid),
+        amount: view.summary_amount,
+        fee: view.fee,
+        confirmations,
+        timestamp,
+        tx_type: view.tx_type.as_str().to_string(),
+        execution_status,
+        maturity_status: None,
+    })
 }
 
 fn pending_transaction_context(tx: Transaction, timestamp: u64) -> ResolvedTransactionContext {
@@ -3434,6 +3830,108 @@ fn resolve_finalized_transaction_context(
     }))
 }
 
+fn context_height_for_block(
+    blockchain: &xtal::blockchain::Blockchain,
+    block: &xtal::blockchain::Block,
+    fallback_height: u64,
+) -> u64 {
+    if block.is_leaf() {
+        blockchain
+            .get_leaf_height_for_hash(&block.hash())
+            .unwrap_or(fallback_height)
+    } else {
+        fallback_height
+    }
+}
+
+fn confirmed_record_context_from_block(
+    blockchain: &xtal::blockchain::Blockchain,
+    block: std::sync::Arc<xtal::blockchain::Block>,
+    txid: &[u8; 32],
+    fallback_height: u64,
+    current_leaf_height: u64,
+) -> Option<ResolvedTransactionContext> {
+    let tx = find_transaction_in_block_or_fruits(blockchain, block.as_ref(), txid)?;
+    let block_height = context_height_for_block(blockchain, block.as_ref(), fallback_height);
+
+    Some(ResolvedTransactionContext {
+        tx,
+        block_height: Some(block_height),
+        block_hash: Some(hex::encode(block.hash())),
+        timestamp: block.header.timestamp,
+        confirmations: current_leaf_height.saturating_sub(block_height) as u32 + 1,
+        is_pending: false,
+    })
+}
+
+fn resolve_confirmed_wallet_record_context(
+    blockchain: &xtal::blockchain::Blockchain,
+    txid: &[u8; 32],
+    record: &TransactionRecord,
+    current_leaf_height: u64,
+) -> Result<Option<ResolvedTransactionContext>, String> {
+    let Some(record_height) = record.height() else {
+        return Ok(None);
+    };
+
+    let mut tried_hashes = HashSet::new();
+
+    if let Some(index) = blockchain
+        .get_transaction_index(txid)
+        .map_err(|e| format!("Failed to lookup transaction index: {}", e))?
+    {
+        let block = blockchain
+            .get_block_by_hash_arc(&index.block_hash)
+            .map_err(|e| format!("Failed to load indexed block: {}", e))?;
+        tried_hashes.insert(block.hash());
+        if let Some(context) = confirmed_record_context_from_block(
+            blockchain,
+            block,
+            txid,
+            index.block_height,
+            current_leaf_height,
+        ) {
+            return Ok(Some(context));
+        }
+    }
+
+    if let Some(block) = blockchain
+        .get_block_by_leaf_height(record_height)
+        .map_err(|e| format!("Failed to get block by leaf height: {}", e))?
+    {
+        if tried_hashes.insert(block.hash()) {
+            if let Some(context) = confirmed_record_context_from_block(
+                blockchain,
+                block,
+                txid,
+                record_height,
+                current_leaf_height,
+            ) {
+                return Ok(Some(context));
+            }
+        }
+    }
+
+    if let Some(block) = blockchain
+        .get_block_by_height(record_height)
+        .map_err(|e| format!("Failed to get block by total height: {}", e))?
+    {
+        if tried_hashes.insert(block.hash()) {
+            if let Some(context) = confirmed_record_context_from_block(
+                blockchain,
+                block,
+                txid,
+                record_height,
+                current_leaf_height,
+            ) {
+                return Ok(Some(context));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn resolve_utxo_transaction_context(
     blockchain: &xtal::blockchain::Blockchain,
     txid: &[u8; 32],
@@ -3496,21 +3994,13 @@ fn resolve_transaction_context(
         }
 
         if let Some(record) = wallet_record {
-            if let Some(height) = record.height() {
-                let block_info = blockchain.get_block_by_leaf_height(height).ok().flatten();
-                let timestamp = block_info
-                    .as_ref()
-                    .map(|block| block.header.timestamp)
-                    .unwrap_or_else(|| record.confirmed_at().unwrap_or(record.created_at) as u64);
-
-                return Ok(ResolvedTransactionContext {
-                    tx: decoded_tx,
-                    block_height: Some(height),
-                    block_hash: block_info.as_ref().map(|block| hex::encode(block.hash())),
-                    timestamp,
-                    confirmations: current_leaf_height.saturating_sub(height) as u32 + 1,
-                    is_pending: false,
-                });
+            if let Some(context) = resolve_confirmed_wallet_record_context(
+                blockchain,
+                txid,
+                record,
+                current_leaf_height,
+            )? {
+                return Ok(context);
             }
         }
 
@@ -3601,6 +4091,7 @@ fn collect_pending_vm_mempool_transactions(
     wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
     queries: Option<&WalletQueries>,
     seen_txids: &mut std::collections::HashSet<[u8; 32]>,
+    surface: WalletHistorySurface,
 ) -> Vec<TransactionSummary> {
     let now = current_unix_timestamp();
     let mempool_txs = mempool.get_transactions();
@@ -3611,10 +4102,6 @@ fn collect_pending_vm_mempool_transactions(
         let tx_hash = match tx.id() {
             Ok(hash) => hash,
             Err(_) => continue,
-        };
-
-        let Some(view) = classify_vm_wallet_transaction(&tx, wallet_pkhs) else {
-            continue;
         };
 
         let existing = queries.and_then(|q| q.get_transaction(&tx_hash).ok().flatten());
@@ -3629,11 +4116,26 @@ fn collect_pending_vm_mempool_transactions(
             continue;
         }
 
+        let raw_receipt = lookup_any_receipt(blockchain, &tx_hash);
+        let Some(view) = classify_vm_wallet_transaction(
+            Some(blockchain),
+            &tx,
+            wallet_pkhs,
+            raw_receipt.as_ref(),
+            existing
+                .as_ref()
+                .and_then(|record| record.input_details.as_deref()),
+            surface,
+        ) else {
+            continue;
+        };
+
         let timestamp = existing
             .as_ref()
             .map(|record| record.created_at as u64)
             .unwrap_or(now);
-        let execution_status = lookup_any_receipt(blockchain, &tx_hash)
+        let execution_status = raw_receipt
+            .as_ref()
             .map(|receipt| execution_status_label(&receipt.status))
             .or_else(|| {
                 existing
@@ -3663,6 +4165,7 @@ fn collect_active_stem_vm_transactions(
     blockchain: &xtal::blockchain::Blockchain,
     wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
     seen_txids: &mut std::collections::HashSet<[u8; 32]>,
+    surface: WalletHistorySurface,
 ) -> Vec<TransactionSummary> {
     let mut summaries = Vec::new();
 
@@ -3698,13 +4201,20 @@ fn collect_active_stem_vm_transactions(
                     FruitTx::ContractDeploy(tx) => Transaction::ContractDeploy(tx.clone()),
                 };
 
-                let Some(view) = classify_vm_wallet_transaction(&tx, wallet_pkhs) else {
+                let raw_receipt = receipts_by_tx.get(&tx_hash).copied();
+                let Some(view) = classify_vm_wallet_transaction(
+                    Some(blockchain),
+                    &tx,
+                    wallet_pkhs,
+                    raw_receipt,
+                    None,
+                    surface,
+                ) else {
                     continue;
                 };
 
-                let execution_status = receipts_by_tx
-                    .get(&tx_hash)
-                    .map(|receipt| execution_status_label(&receipt.status));
+                let execution_status =
+                    raw_receipt.map(|receipt| execution_status_label(&receipt.status));
 
                 seen_txids.insert(tx_hash);
                 summaries.push(TransactionSummary {
@@ -4029,6 +4539,7 @@ pub async fn get_vm_transaction_history(
         blockchain.as_ref(),
         &wallet_pkhs,
         &mut seen_txids,
+        WalletHistorySurface::Vm,
     ));
     transactions.extend(collect_pending_vm_mempool_transactions(
         blockchain.as_ref(),
@@ -4036,6 +4547,7 @@ pub async fn get_vm_transaction_history(
         &wallet_pkhs,
         Some(&queries),
         &mut seen_txids,
+        WalletHistorySurface::Vm,
     ));
 
     let confirmed_count = queries
@@ -4050,65 +4562,17 @@ pub async fn get_vm_transaction_history(
         if seen_txids.contains(&record.txid) {
             continue;
         }
-        let canonical_receipt = lookup_persisted_receipt(blockchain.as_ref(), &record.txid);
 
-        if matches!(
-            record.tx_type,
-            TransactionType::ContractDeploy
-                | TransactionType::ContractCall
-                | TransactionType::AccountTransfer
-        ) && canonical_receipt.is_none()
-        {
-            continue;
+        if let Some(summary) = vm_summary_from_record(
+            blockchain.as_ref(),
+            &record,
+            &wallet_pkhs,
+            current_leaf_height,
+            WalletHistorySurface::Vm,
+        ) {
+            seen_txids.insert(record.txid);
+            transactions.push(summary);
         }
-
-        let receipt_height = canonical_receipt
-            .as_ref()
-            .map(|receipt| receipt.stem_height);
-        let receipt_status = canonical_receipt
-            .as_ref()
-            .map(|receipt| execution_status_label(&receipt.receipt.status));
-        let (confirmations, timestamp) = if let Some((ts, height)) = record.confirmation {
-            let confs = if height == 0 {
-                1
-            } else {
-                current_leaf_height.saturating_sub(height) as u32 + 1
-            };
-            (confs, ts as u64)
-        } else {
-            if let Some(height) = receipt_height {
-                (
-                    current_leaf_height.saturating_sub(height) as u32 + 1,
-                    record.created_at as u64,
-                )
-            } else {
-                (0u32, record.created_at as u64)
-            }
-        };
-
-        // Derive VM direction from the decoded transaction when possible.
-        let amount = pending_vm_amount_from_record(&record, &wallet_pkhs).unwrap_or_else(|| {
-            match record.tx_type {
-                TransactionType::VmWithdrawal => record.amount as i64,
-                _ => -(record.amount as i64),
-            }
-        });
-
-        transactions.push(TransactionSummary {
-            txid: hex::encode(record.txid),
-            amount,
-            fee: record.fee.unwrap_or(0),
-            confirmations,
-            timestamp,
-            tx_type: record.tx_type.as_str().to_string(),
-            execution_status: receipt_status.or_else(|| {
-                record
-                    .execution_status
-                    .map(|status| status.as_str().to_string())
-            }),
-            maturity_status: None,
-        });
-        seen_txids.insert(record.txid);
     }
 
     transactions.sort_by(|a, b| {
@@ -4312,6 +4776,24 @@ pub async fn send_vm_transfer(
         .map_err(|e| format!("Failed to broadcast transaction: {}", e))?;
 
     let max_fee = gas_limit.saturating_mul(gas_price);
+    let record = TransactionRecord {
+        txid: tx_hash,
+        raw_tx: tx.encode(),
+        tx_type: TransactionType::AccountTransfer,
+        amount,
+        fee: Some(max_fee),
+        to_address: Some(to_address.clone()),
+        memo: None,
+        created_at: current_unix_timestamp() as i64,
+        confirmation: None,
+        expires_at: None,
+        priority: Some(0),
+        input_details: None,
+        execution_status: Some(TransactionExecutionStatus::Unknown),
+    };
+    if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
+        log::warn!("Failed to store pending VM transfer: {}", e);
+    }
 
     log::info!(
         "VM transfer sent: {} shards from {} to {}",
@@ -4328,13 +4810,16 @@ mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
     use std::fs;
+    use xtal::blockchain::processing::utxo_verifier::ConsumedUtxo;
     use xtal::config::SHARDS_PER_XTAL;
     use xtal::fruit::core::FruitType;
-    use xtal::storage::{trie::RocksDBBackend as XtalRocksDbBackend, Storage};
-    use xtal::transaction::receipt::{BlockReceipts, TxStatus};
+    use xtal::storage::{
+        trie::RocksDBBackend as XtalRocksDbBackend, Storage, UtxoPosition,
+    };
+    use xtal::transaction::receipt::{BlockReceipts, TransactionReceipt, TxStatus};
     use xtal::transaction::{AccountTransferTransaction, ContractCallTransaction};
     use xtal::vm::abi::AbiValue;
-    use xtal::vm::PendingWithdrawal;
+    use xtal::vm::{ContractEvent, PendingWithdrawal};
 
     #[test]
     fn classify_vm_wallet_transaction_marks_outgoing_account_transfer() {
@@ -4355,8 +4840,19 @@ mod tests {
             .with_gas_price(3),
         );
 
-        let view = classify_vm_wallet_transaction(&tx, &wallet_pkhs).unwrap();
-        assert_eq!(view.tx_type, TransactionType::AccountTransfer);
+        let view = classify_vm_wallet_transaction(
+            None,
+            &tx,
+            &wallet_pkhs,
+            None,
+            None,
+            WalletHistorySurface::Vm,
+        )
+        .unwrap();
+        assert_eq!(
+            view.tx_type,
+            WalletHistoryTxType::Canonical(TransactionType::AccountTransfer)
+        );
         assert_eq!(view.fee, 75_000);
         assert_eq!(view.summary_amount, -42);
     }
@@ -4379,7 +4875,15 @@ mod tests {
             .with_gas_price(3),
         );
 
-        let view = classify_vm_wallet_transaction(&tx, &wallet_pkhs).unwrap();
+        let view = classify_vm_wallet_transaction(
+            None,
+            &tx,
+            &wallet_pkhs,
+            None,
+            None,
+            WalletHistorySurface::Vm,
+        )
+        .unwrap();
         assert_eq!(view.summary_amount, 42);
     }
 
@@ -4401,10 +4905,160 @@ mod tests {
             signature: None,
         });
 
-        let view = classify_vm_wallet_transaction(&tx, &wallet_pkhs).unwrap();
-        assert_eq!(view.tx_type, TransactionType::ContractCall);
+        let view = classify_vm_wallet_transaction(
+            None,
+            &tx,
+            &wallet_pkhs,
+            None,
+            None,
+            WalletHistorySurface::Vm,
+        )
+        .unwrap();
+        assert_eq!(
+            view.tx_type,
+            WalletHistoryTxType::Canonical(TransactionType::ContractCall)
+        );
         assert_eq!(view.fee, 42_000);
         assert_eq!(view.summary_amount, -42_005);
+    }
+
+    #[test]
+    fn classify_vm_wallet_transaction_marks_cage_deposit_by_surface() {
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let caller = hash_public_key(&signing_key.verifying_key());
+        let wallet_pkhs = std::collections::HashSet::from([caller]);
+        let mut data = vec![0u8; 66];
+        data[32..64].copy_from_slice(&[4u8; 32]);
+        data[64..66].copy_from_slice(&2u16.to_le_bytes());
+        let input_details = InputDetail::serialize_list(&[InputDetail {
+            txid: hex::encode([4u8; 32]),
+            index: 2,
+            amount: 123,
+            address: Some(format_utxo_address(&caller)),
+        }]);
+
+        let tx = Transaction::ContractCall(ContractCallTransaction {
+            caller: signing_key.verifying_key(),
+            contract_address: CAGE_CONTRACT_ADDRESS,
+            method: "consume_utxo".to_string(),
+            data,
+            value: 0,
+            gas_limit: 0,
+            gas_price: None,
+            nonce: 1,
+            signature: None,
+        });
+
+        let vm_view = classify_vm_wallet_transaction(
+            None,
+            &tx,
+            &wallet_pkhs,
+            None,
+            input_details.as_deref(),
+            WalletHistorySurface::Vm,
+        )
+        .unwrap();
+        assert_eq!(vm_view.tx_type, WalletHistoryTxType::VmDeposit);
+        assert_eq!(vm_view.summary_amount, 123);
+
+        let utxo_view = classify_vm_wallet_transaction(
+            None,
+            &tx,
+            &wallet_pkhs,
+            None,
+            input_details.as_deref(),
+            WalletHistorySurface::Utxo,
+        )
+        .unwrap();
+        assert_eq!(utxo_view.tx_type, WalletHistoryTxType::VmDeposit);
+        assert_eq!(utxo_view.summary_amount, -123);
+    }
+
+    #[test]
+    fn classify_vm_wallet_transaction_uses_deposit_receipt_owner_credit_for_vm_surface() {
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let caller = hash_public_key(&signing_key.verifying_key());
+        let wallet_pkhs = std::collections::HashSet::from([caller]);
+        let consumed_txid = [4u8; 32];
+        let consumed_vout = 2u16;
+        let consumed_amount = 123u64;
+        let owner_credit = 100u64;
+
+        let mut data = vec![0u8; 66];
+        data[32..64].copy_from_slice(&consumed_txid);
+        data[64..66].copy_from_slice(&consumed_vout.to_le_bytes());
+
+        let tx = Transaction::ContractCall(ContractCallTransaction {
+            caller: signing_key.verifying_key(),
+            contract_address: CAGE_CONTRACT_ADDRESS,
+            method: "consume_utxo".to_string(),
+            data,
+            value: 0,
+            gas_limit: 0,
+            gas_price: None,
+            nonce: 1,
+            signature: None,
+        });
+
+        let mut receipt = TransactionReceipt::new(
+            [9u8; 32],
+            10,
+            FruitType::Apple,
+            0,
+            TxStatus::Success,
+            5_000,
+        );
+        receipt.consumed_utxos.push(ConsumedUtxo {
+            position: UtxoPosition {
+                tx_id: consumed_txid,
+                output_index: consumed_vout,
+            },
+            amount: consumed_amount,
+            currency: CurrencyType::XTAL,
+            owner: caller,
+        });
+        let mut event_data = Vec::new();
+        event_data.extend_from_slice(&consumed_vout.to_le_bytes());
+        event_data.extend_from_slice(&consumed_amount.to_le_bytes());
+        event_data.extend_from_slice(&23u64.to_le_bytes());
+        event_data.extend_from_slice(&owner_credit.to_le_bytes());
+        event_data.push(CurrencyType::XTAL as u8);
+        receipt.events.push(ContractEvent {
+            contract_address: CAGE_CONTRACT_ADDRESS,
+            topics: vec![
+                8u32.to_le_bytes().to_vec(),
+                caller.to_vec(),
+                consumed_txid.to_vec(),
+                [0u8; 32].to_vec(),
+            ],
+            data: event_data,
+            transaction_hash: None,
+            block_height: None,
+        });
+
+        let vm_view = classify_vm_wallet_transaction(
+            None,
+            &tx,
+            &wallet_pkhs,
+            Some(&receipt),
+            None,
+            WalletHistorySurface::Vm,
+        )
+        .unwrap();
+        assert_eq!(vm_view.tx_type, WalletHistoryTxType::VmDeposit);
+        assert_eq!(vm_view.summary_amount, owner_credit as i64);
+
+        let utxo_view = classify_vm_wallet_transaction(
+            None,
+            &tx,
+            &wallet_pkhs,
+            Some(&receipt),
+            None,
+            WalletHistorySurface::Utxo,
+        )
+        .unwrap();
+        assert_eq!(utxo_view.tx_type, WalletHistoryTxType::VmDeposit);
+        assert_eq!(utxo_view.summary_amount, -(consumed_amount as i64));
     }
 
     #[test]
@@ -4737,6 +5391,7 @@ mod tests {
         assert!(transaction_matches_history_filter(&tx("coinbase", 50), "mining_rewards").unwrap());
         assert!(transaction_matches_history_filter(&tx("stake", -25), "staking").unwrap());
         assert!(transaction_matches_history_filter(&tx("unstake", 25), "unstaking").unwrap());
+        assert!(transaction_matches_history_filter(&tx("vm_deposit", -25), "vm_deposits").unwrap());
         assert!(
             transaction_matches_history_filter(&tx("vm_withdrawal", 25), "vm_withdrawals").unwrap()
         );

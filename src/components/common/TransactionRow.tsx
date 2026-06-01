@@ -30,6 +30,7 @@ function getTransactionIcon(type: string, amount: number) {
       return { icon: FileCode, color: "text-cyan-400", bg: "bg-cyan-400/20" };
     case "account_transfer":
       return { icon: ArrowRightLeft, color: "text-primary", bg: "bg-primary/20" };
+    case "cage_withdrawal":
     case "vm_withdrawal":
       return { icon: LogOut, color: "text-rose-400", bg: "bg-rose-400/20" };
     case "vm_deposit":
@@ -61,6 +62,8 @@ function getTransactionLabel(type: string, amount: number, walletType?: "normal"
       return "Deploy Contract";
     case "account_transfer":
       return "Transfer";
+    case "cage_withdrawal":
+      return "Withdrawal Request";
     case "vm_withdrawal":
       return "Withdrawal";
     case "vm_deposit":

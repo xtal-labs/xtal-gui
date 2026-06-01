@@ -552,6 +552,13 @@ fn handle_transaction_removed(
 
 /// Clean up a pending transaction that was removed from mempool without confirmation
 fn cleanup_removed_tx(db: &WalletDatabase, tx_hash: &[u8; 32], reason: &RemovalReason) {
+    if matches!(
+        reason,
+        RemovalReason::Confirmed | RemovalReason::IncludedInFruit
+    ) {
+        return;
+    }
+
     let queries = WalletQueries::new(db.connection());
 
     // Check if this was our tracked transaction
