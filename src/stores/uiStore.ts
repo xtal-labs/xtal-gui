@@ -28,6 +28,8 @@ interface UiState {
 
   // Sidebar
   sidebarCollapsed: boolean;
+  /** Whether the compact-viewport navigation drawer is open (overlay mode). */
+  mobileNavOpen: boolean;
 
   // Node connection
   nodeConnectionState: NodeConnectionState;
@@ -52,6 +54,8 @@ interface UiState {
   setIsInitializing: (initializing: boolean) => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleSidebar: () => void;
+  setMobileNavOpen: (open: boolean) => void;
+  closeMobileNav: () => void;
   setNodeConnectionState: (state: NodeConnectionState) => void;
   addToast: (toast: Omit<Toast, "id">) => void;
   removeToast: (id: string) => void;
@@ -75,6 +79,7 @@ const initialState = {
   needsSetup: null,
   isInitializing: true,
   sidebarCollapsed: false,
+  mobileNavOpen: false,
   nodeConnectionState: "disconnected" as NodeConnectionState,
   toasts: [],
   activeModal: null,
@@ -99,6 +104,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   toggleSidebar: () =>
     set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
+
+  setMobileNavOpen: (open) => set({ mobileNavOpen: open }),
+
+  closeMobileNav: () => set({ mobileNavOpen: false }),
 
   addToast: (toast) => {
     if (!get().toastsEnabled) return;

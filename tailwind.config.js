@@ -1,3 +1,21 @@
+/*
+ * Responsive conventions (stock Tailwind breakpoints — no `screens` override).
+ *
+ * The app has a single minimum-width contract of 640px (see `--app-min-width`
+ * in globals.css, the Tauri window `minWidth`, and `MIN_USABLE_WINDOW_WIDTH` in
+ * src-tauri/src/main.rs). Because the viewport never drops below 640, the
+ * meaningful breakpoints in this app are `md` (768) and `lg` (1024):
+ *
+ *   640–767  compact   sidebar is an overlay drawer; content blocks stack (1 col)
+ *   768–1023 desktop   docked sidebar; 2-col layouts
+ *   1024+    wide       3–4 col layouts
+ *
+ * Grid rule of thumb: heavy/side-by-side content uses
+ * `grid-cols-1 md:grid-cols-2 lg:grid-cols-N`. Compact stat strips of short
+ * values (≤3 items) may stay multi-col at all widths. Side panels render at a
+ * fixed ~420–480px regardless of viewport, so their internal grids are sized by
+ * column count (≤3, loosened to 2 on mid widths), not viewport breakpoints.
+ */
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: ['class', '[data-theme="amethyst"]'],

@@ -351,7 +351,7 @@ export function ContractDashboard({ contractAddress, abi }: ContractDashboardPro
 
   // Determine grid columns
   const cardCount = results.length;
-  const gridClass = cardCount === 1 ? "grid-cols-1" : "grid-cols-2";
+  const gridClass = cardCount === 1 ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2";
 
   return (
     <div className="space-y-4">

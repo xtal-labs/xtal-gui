@@ -98,6 +98,10 @@
   --radius: 0.625rem;
   --sidebar-width: 240px;
   --sidebar-collapsed: 64px;
+  /* Single source of truth for the app's minimum usable width/height.
+     Matches the Tauri window minWidth/minHeight and the adaptive startup floor. */
+  --app-min-width: 640px;
+  --app-min-height: 480px;
 
   /* Crystal palette anchors (static) */
   --celestite-blue: 217 91% 60%;

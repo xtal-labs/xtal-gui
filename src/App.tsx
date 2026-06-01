@@ -14,6 +14,8 @@ import {
   Layers,
   WifiOff,
   RotateCcw,
+  Menu,
+  X,
 } from "lucide-react";
 
 import { ThemeProvider, LoadingScreen, NodeStartupError, BootstrapScreen } from "@/components/common";
@@ -21,6 +23,38 @@ import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent, ToastContaine
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatXtalFull } from "@/lib/utils";
+
+import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore, type Tab, type NodeConnectionState } from "@/stores";
+import { useNodeWebSocket, useTauriEvent, useMediaQuery, type WebSocketMessage } from "@/hooks";
+import { tauriCommand } from "@/hooks/useTauriCommand";
+import { useDiagnosticMonitor, useRenderTracker } from "@/hooks/useDiagnosticMonitor";
+import type {
+  BlockSummary,
+  BootstrapPhase,
+  FruitProductionStats,
+  GuiEvent,
+  MinedBlock,
+  MiningStats,
+  StartupErrorInfo,
+  StartupStage,
+  StartupStatus,
+  SyncProgress,
+  GuiConfig,
+  WalletStatus,
+} from "@/types";
+
+// Panels
+import Dashboard from "@/components/Dashboard/Dashboard";
+const BlockExplorer = lazy(() => import("@/components/Explorer/BlockExplorer"));
+const Mining = lazy(() => import("@/components/Mining/Mining"));
+import Mempool from "@/components/Mempool/Mempool";
+const ValidatorPanel = lazy(() => import("@/components/Validator/Validator"));
+const WalletPanel = lazy(() => import("@/components/Wallet/Wallet"));
+const Gateway = lazy(() => import("@/components/Gateway/Gateway"));
+import Network from "@/components/Network/Network";
+import RpcConsole from "@/components/RpcConsole/RpcConsole";
+import SettingsPanel from "@/components/Settings/Settings";
+import { SetupWizard } from "@/components/SetupWizard";
 
 // Geometric Crystal Logo Component
 function CrystalLogo({ className, size = 32 }: { className?: string; size?: number }) {
@@ -87,40 +121,6 @@ function CrystalLogo({ className, size = 32 }: { className?: string; size?: numb
     </svg>
   );
 }
-
-import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore } from "@/stores";
-import { useNodeWebSocket, useTauriEvent, type WebSocketMessage } from "@/hooks";
-import { tauriCommand } from "@/hooks/useTauriCommand";
-import { useDiagnosticMonitor, useRenderTracker } from "@/hooks/useDiagnosticMonitor";
-import type {
-  BlockSummary,
-  BootstrapPhase,
-  FruitProductionStats,
-  GuiEvent,
-  MinedBlock,
-  MiningStats,
-  StartupErrorInfo,
-  StartupStage,
-  StartupStatus,
-  SyncProgress,
-  GuiConfig,
-  WalletStatus,
-} from "@/types";
-
-// Panels
-import Dashboard from "@/components/Dashboard/Dashboard";
-const BlockExplorer = lazy(() => import("@/components/Explorer/BlockExplorer"));
-const Mining = lazy(() => import("@/components/Mining/Mining"));
-import Mempool from "@/components/Mempool/Mempool";
-const ValidatorPanel = lazy(() => import("@/components/Validator/Validator"));
-const WalletPanel = lazy(() => import("@/components/Wallet/Wallet"));
-const Gateway = lazy(() => import("@/components/Gateway/Gateway"));
-import Network from "@/components/Network/Network";
-import RpcConsole from "@/components/RpcConsole/RpcConsole";
-import SettingsPanel from "@/components/Settings/Settings";
-import { SetupWizard } from "@/components/SetupWizard";
-
-type Tab = "dashboard" | "mining" | "mempool" | "validator" | "wallet" | "gateway" | "network" | "explorer" | "console" | "settings";
 
 interface NavItem {
   id: Tab;
@@ -194,6 +194,233 @@ function useThrottledCallback(callback: () => void, intervalMs: number) {
   );
 }
 
+// Viewport below which the docked sidebar becomes an overlay drawer.
+const COMPACT_MEDIA_QUERY = "(max-width: 767px)";
+
+interface SidebarNavProps {
+  /** "docked" renders the persistent rail; "overlay" renders inside the drawer. */
+  variant: "docked" | "overlay";
+  collapsed: boolean;
+  activeTab: Tab;
+  onSelectTab: (tab: Tab) => void;
+  onToggleCollapse: () => void;
+  onClose: () => void;
+  nodeConnectionState: NodeConnectionState;
+  isSynced: boolean;
+  peerCount: number;
+  syncProgress: SyncProgress;
+  isMining: boolean;
+}
+
+// Shared sidebar contents, rendered either in the docked rail or the compact
+// overlay drawer. In overlay mode the rail is always expanded (collapse is a
+// docked-only affordance).
+function SidebarNav({
+  variant,
+  collapsed,
+  activeTab,
+  onSelectTab,
+  onToggleCollapse,
+  onClose,
+  nodeConnectionState,
+  isSynced,
+  peerCount,
+  syncProgress,
+  isMining,
+}: SidebarNavProps) {
+  const isOverlay = variant === "overlay";
+  const effCollapsed = isOverlay ? false : collapsed;
+
+  return (
+    <>
+      {/* Logo */}
+      <div
+        className={cn(
+          "flex h-16 shrink-0 items-center px-4",
+          effCollapsed ? "justify-center" : "justify-between"
+        )}
+      >
+        {!effCollapsed ? (
+          <div className="flex items-center gap-3">
+            <CrystalLogo size={28} />
+            <span className="font-heading font-semibold text-lg tracking-wider gradient-text">
+              CRYSTAL
+            </span>
+          </div>
+        ) : (
+          <CrystalLogo size={24} />
+        )}
+        {isOverlay ? (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onClose}
+            aria-label="Close navigation"
+            className="text-foreground-muted hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        ) : (
+          !effCollapsed && (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={onToggleCollapse}
+              className="text-foreground-muted hover:text-foreground"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          )
+        )}
+      </div>
+
+      {/* Angular Divider */}
+      <div className="mx-3 shrink-0 divider-angular" />
+
+      {/* Navigation */}
+      <nav className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+        {navItems.map((item) => {
+          const Icon = item.icon;
+          const isActive = activeTab === item.id;
+
+          const button = (
+            <button
+              key={item.id}
+              onClick={() => onSelectTab(item.id)}
+              data-active={isActive}
+              className={cn(
+                "sidebar-nav-item relative w-full flex items-center gap-3 px-3 py-2.5 chamfered-sm",
+                "transition-all duration-200",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isActive
+                  ? "bg-primary/15 text-primary shadow-inner-glow"
+                  : "text-foreground-secondary hover:text-foreground hover:bg-muted/50"
+              )}
+            >
+              {/* Active indicator diamond */}
+              {isActive && (
+                <span className="status-diamond-sm bg-primary absolute -left-0.5" />
+              )}
+              <Icon className={cn("h-5 w-5 shrink-0", isActive && "text-primary")} />
+              {!effCollapsed && (
+                <span className="font-heading font-medium tracking-wide">{item.label}</span>
+              )}
+            </button>
+          );
+
+          if (!isOverlay && effCollapsed) {
+            return (
+              <Tooltip key={item.id} delayDuration={0}>
+                <TooltipTrigger asChild>{button}</TooltipTrigger>
+                <TooltipContent side="right" className="font-heading">
+                  {item.label}
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
+
+          return button;
+        })}
+      </nav>
+
+      {/* Collapse button when collapsed (docked only) */}
+      {!isOverlay && effCollapsed && (
+        <div className="shrink-0 p-2">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={onToggleCollapse}
+            className="w-full text-foreground-muted hover:text-foreground"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
+      {/* Angular Divider */}
+      <div className="mx-3 shrink-0 divider-angular" />
+
+      {/* Status Footer */}
+      <div className="shrink-0 p-3 space-y-2">
+        {/* Node Connection - only visible when disconnected */}
+        {nodeConnectionState !== "connected" && (
+          <div
+            className={cn(
+              "flex items-center gap-2",
+              effCollapsed ? "justify-center" : "justify-between"
+            )}
+          >
+            {!effCollapsed && (
+              <span className="text-xs font-heading text-foreground-muted tracking-wide">NODE</span>
+            )}
+            <Badge
+              variant={nodeConnectionState === "connecting" ? "syncing" : "offline"}
+              diamond
+              pulse={nodeConnectionState === "connecting"}
+            >
+              {effCollapsed
+                ? null
+                : nodeConnectionState === "connecting"
+                ? "Reconnecting"
+                : "Disconnected"}
+            </Badge>
+          </div>
+        )}
+
+        {/* Sync Status */}
+        <div
+          className={cn(
+            "flex items-center gap-2",
+            effCollapsed ? "justify-center" : "justify-between"
+          )}
+        >
+          {!effCollapsed && (
+            <span className="text-xs font-heading text-foreground-muted tracking-wide">STATUS</span>
+          )}
+          <Badge
+            variant={
+              isSynced ? "synced"
+              : peerCount === 0 ? "no_peers"
+              : syncProgress.phase === "Idle" ? "synced"
+              : "syncing"
+            }
+            diamond
+            pulse={!isSynced && peerCount > 0 && syncProgress.phase !== "Idle"}
+          >
+            {effCollapsed
+              ? null
+              : isSynced
+              ? "Synced"
+              : peerCount === 0
+              ? "No Peers"
+              : syncProgress.phase === "Idle"
+              ? "Synced"
+              : "Syncing"}
+          </Badge>
+        </div>
+
+        {/* Mining Status */}
+        {!effCollapsed && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-heading text-foreground-muted tracking-wide">MINING</span>
+            <Badge variant={isMining ? "mining" : "secondary"} diamond pulse={isMining}>
+              {isMining ? "Active" : "Stopped"}
+            </Badge>
+          </div>
+        )}
+
+        {/* Peer Count */}
+        {!effCollapsed && (
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-heading text-foreground-muted tracking-wide">PEERS</span>
+            <span className="text-xs font-heading font-semibold tabular-nums text-foreground">{peerCount}</span>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
 function AppContent() {
   // ── Phase 1 Diagnostics ──
   useDiagnosticMonitor();
@@ -208,6 +435,9 @@ function AppContent() {
   const setIsInitializing = useUiStore((state) => state.setIsInitializing);
   const sidebarCollapsed = useUiStore((state) => state.sidebarCollapsed);
   const toggleSidebar = useUiStore((state) => state.toggleSidebar);
+  const mobileNavOpen = useUiStore((state) => state.mobileNavOpen);
+  const setMobileNavOpen = useUiStore((state) => state.setMobileNavOpen);
+  const closeMobileNav = useUiStore((state) => state.closeMobileNav);
   const openModal = useUiStore((state) => state.openModal);
   const addToast = useUiStore((state) => state.addToast);
   const nodeConnectionState = useUiStore((state) => state.nodeConnectionState);
@@ -883,6 +1113,25 @@ function AppContent() {
     addToast,
   ]);
 
+  // Compact viewport → sidebar becomes an overlay drawer instead of a docked rail.
+  const isCompact = useMediaQuery(COMPACT_MEDIA_QUERY);
+
+  // Ensure the drawer never lingers open when growing back to desktop width.
+  useEffect(() => {
+    if (!isCompact && mobileNavOpen) {
+      closeMobileNav();
+    }
+  }, [isCompact, mobileNavOpen, closeMobileNav]);
+
+  // Selecting a tab also dismisses the compact drawer (no-op when docked).
+  const handleSelectTab = useCallback(
+    (tab: Tab) => {
+      setActiveTab(tab);
+      closeMobileNav();
+    },
+    [setActiveTab, closeMobileNav]
+  );
+
   // Show startup error overlay if node failed to start
   if (startupError) {
     return <NodeStartupError error={startupError} />;
@@ -903,7 +1152,7 @@ function AppContent() {
   // Show init failure card if initialization failed or timed out
   if (initError) {
     return (
-      <div className="min-h-dvh min-w-[800px] bg-background hex-grid-bg flex items-center justify-center overflow-auto p-4">
+      <div className="min-h-dvh min-w-[var(--app-min-width)] bg-background hex-grid-bg flex items-center justify-center overflow-auto p-4">
         <div className="max-w-md w-full">
           <div
             className="chamfered-lg p-[2px]"
@@ -969,192 +1218,90 @@ function AppContent() {
   }
 
   return (
-    <div className="flex h-dvh min-h-[480px] min-w-[800px] bg-background overflow-hidden">
-      {/* Sidebar */}
-      <aside
-        className={cn(
-          "flex h-full shrink-0 flex-col border-r border-border bg-background-secondary",
-          "min-h-0 overflow-hidden transition-all duration-300 ease-in-out",
-          sidebarCollapsed ? "w-[64px]" : "w-[240px]"
-        )}
-      >
-        {/* Logo */}
-        <div
+    <div className="flex h-dvh min-h-[var(--app-min-height)] min-w-[var(--app-min-width)] bg-background overflow-hidden">
+      {/* Docked sidebar (desktop ≥ md) */}
+      {!isCompact && (
+        <aside
           className={cn(
-            "flex h-16 shrink-0 items-center px-4",
-            sidebarCollapsed ? "justify-center" : "justify-between"
+            "flex h-full shrink-0 flex-col border-r border-border bg-background-secondary",
+            "min-h-0 overflow-hidden transition-all duration-300 ease-in-out",
+            sidebarCollapsed ? "w-[var(--sidebar-collapsed)]" : "w-[var(--sidebar-width)]"
           )}
         >
-          {!sidebarCollapsed ? (
-            <div className="flex items-center gap-3">
-              <CrystalLogo size={28} />
-              <span className="font-heading font-semibold text-lg tracking-wider gradient-text">
-                CRYSTAL
-              </span>
-            </div>
-          ) : (
-            <CrystalLogo size={24} />
-          )}
-          {!sidebarCollapsed && (
+          <SidebarNav
+            variant="docked"
+            collapsed={sidebarCollapsed}
+            activeTab={activeTab}
+            onSelectTab={handleSelectTab}
+            onToggleCollapse={toggleSidebar}
+            onClose={closeMobileNav}
+            nodeConnectionState={nodeConnectionState}
+            isSynced={isSynced}
+            peerCount={peerCount}
+            syncProgress={syncProgress}
+            isMining={isMining}
+          />
+        </aside>
+      )}
+
+      {/* Compact overlay drawer (< md) */}
+      {isCompact && (
+        <>
+          <div
+            className={cn(
+              "fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300",
+              mobileNavOpen ? "opacity-100" : "pointer-events-none opacity-0"
+            )}
+            aria-hidden={!mobileNavOpen}
+            onClick={closeMobileNav}
+          />
+          <aside
+            className={cn(
+              "fixed inset-y-0 left-0 z-50 flex w-[var(--sidebar-width)] max-w-[80vw] flex-col",
+              "border-r border-border bg-background-secondary text-foreground shadow-crystalline-lg",
+              "transition-transform duration-300 ease-in-out",
+              mobileNavOpen ? "translate-x-0" : "-translate-x-full"
+            )}
+            aria-hidden={!mobileNavOpen}
+          >
+            <SidebarNav
+              variant="overlay"
+              collapsed={false}
+              activeTab={activeTab}
+              onSelectTab={handleSelectTab}
+              onToggleCollapse={toggleSidebar}
+              onClose={closeMobileNav}
+              nodeConnectionState={nodeConnectionState}
+              isSynced={isSynced}
+              peerCount={peerCount}
+              syncProgress={syncProgress}
+              isMining={isMining}
+            />
+          </aside>
+        </>
+      )}
+
+      {/* Main Content */}
+      <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden hex-grid-bg text-foreground">
+        {/* Compact top bar with drawer toggle */}
+        {isCompact && (
+          <div className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background-secondary/90 px-4 backdrop-blur">
             <Button
               variant="ghost"
               size="icon-sm"
-              onClick={toggleSidebar}
+              onClick={() => setMobileNavOpen(true)}
+              aria-label="Open navigation"
               className="text-foreground-muted hover:text-foreground"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <Menu className="h-5 w-5" />
             </Button>
-          )}
-        </div>
-
-        {/* Angular Divider */}
-        <div className="mx-3 shrink-0 divider-angular" />
-
-        {/* Navigation */}
-        <nav className="mt-2 min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-
-            const button = (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                data-active={isActive}
-                className={cn(
-                  "sidebar-nav-item relative w-full flex items-center gap-3 px-3 py-2.5 chamfered-sm",
-                  "transition-all duration-200",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                  isActive
-                    ? "bg-primary/15 text-primary shadow-inner-glow"
-                    : "text-foreground-secondary hover:text-foreground hover:bg-muted/50"
-                )}
-              >
-                {/* Active indicator diamond */}
-                {isActive && (
-                  <span className="status-diamond-sm bg-primary absolute -left-0.5" />
-                )}
-                <Icon className={cn("h-5 w-5 shrink-0", isActive && "text-primary")} />
-                {!sidebarCollapsed && (
-                  <span className="font-heading font-medium tracking-wide">{item.label}</span>
-                )}
-              </button>
-            );
-
-            if (sidebarCollapsed) {
-              return (
-                <Tooltip key={item.id} delayDuration={0}>
-                  <TooltipTrigger asChild>{button}</TooltipTrigger>
-                  <TooltipContent side="right" className="font-heading">
-                    {item.label}
-                  </TooltipContent>
-                </Tooltip>
-              );
-            }
-
-            return button;
-          })}
-        </nav>
-
-        {/* Collapse button when collapsed */}
-        {sidebarCollapsed && (
-          <div className="shrink-0 p-2">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={toggleSidebar}
-              className="w-full text-foreground-muted hover:text-foreground"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+            <CrystalLogo size={22} />
+            <span className="font-heading font-semibold tracking-wider gradient-text">CRYSTAL</span>
           </div>
         )}
 
-        {/* Angular Divider */}
-        <div className="mx-3 shrink-0 divider-angular" />
-
-        {/* Status Footer */}
-        <div className="shrink-0 p-3 space-y-2">
-          {/* Node Connection - only visible when disconnected */}
-          {nodeConnectionState !== "connected" && (
-            <div
-              className={cn(
-                "flex items-center gap-2",
-                sidebarCollapsed ? "justify-center" : "justify-between"
-              )}
-            >
-              {!sidebarCollapsed && (
-                <span className="text-xs font-heading text-foreground-muted tracking-wide">NODE</span>
-              )}
-              <Badge
-                variant={nodeConnectionState === "connecting" ? "syncing" : "offline"}
-                diamond
-                pulse={nodeConnectionState === "connecting"}
-              >
-                {sidebarCollapsed
-                  ? null
-                  : nodeConnectionState === "connecting"
-                  ? "Reconnecting"
-                  : "Disconnected"}
-              </Badge>
-            </div>
-          )}
-
-          {/* Sync Status */}
-          <div
-            className={cn(
-              "flex items-center gap-2",
-              sidebarCollapsed ? "justify-center" : "justify-between"
-            )}
-          >
-            {!sidebarCollapsed && (
-              <span className="text-xs font-heading text-foreground-muted tracking-wide">STATUS</span>
-            )}
-            <Badge
-              variant={
-                isSynced ? "synced"
-                : peerCount === 0 ? "no_peers"
-                : syncProgress.phase === "Idle" ? "synced"
-                : "syncing"
-              }
-              diamond
-              pulse={!isSynced && peerCount > 0 && syncProgress.phase !== "Idle"}
-            >
-              {sidebarCollapsed
-                ? null
-                : isSynced
-                ? "Synced"
-                : peerCount === 0
-                ? "No Peers"
-                : syncProgress.phase === "Idle"
-                ? "Synced"
-                : "Syncing"}
-            </Badge>
-          </div>
-
-          {/* Mining Status */}
-          {!sidebarCollapsed && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-heading text-foreground-muted tracking-wide">MINING</span>
-              <Badge variant={isMining ? "mining" : "secondary"} diamond pulse={isMining}>
-                {isMining ? "Active" : "Stopped"}
-              </Badge>
-            </div>
-          )}
-
-          {/* Peer Count */}
-          {!sidebarCollapsed && (
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-heading text-foreground-muted tracking-wide">PEERS</span>
-              <span className="text-xs font-heading font-semibold tabular-nums text-foreground">{peerCount}</span>
-            </div>
-          )}
-        </div>
-      </aside>
-
-      {/* Main Content */}
-      <main className="h-full min-w-0 flex-1 overflow-y-auto overflow-x-hidden hex-grid-bg text-foreground">
-        <div className="relative min-h-full p-4 sm:p-6">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <div className="relative min-h-full p-4 sm:p-6">
           {activeTab === "dashboard" && <Dashboard />}
           {activeTab === "mining" && (
             <Suspense fallback={<div className="p-4 text-muted-foreground">Loading...</div>}>
@@ -1185,6 +1332,7 @@ function AppContent() {
           )}
           {activeTab === "console" && <RpcConsole />}
           {activeTab === "settings" && <SettingsPanel />}
+          </div>
         </div>
       </main>
     </div>

@@ -42,7 +42,7 @@ use state::{
 const PREFERRED_WINDOW_WIDTH: f64 = 1200.0;
 const PREFERRED_WINDOW_HEIGHT: f64 = 800.0;
 const MIN_USABLE_WINDOW_WIDTH: f64 = 640.0;
-const MIN_USABLE_WINDOW_HEIGHT: f64 = 320.0;
+const MIN_USABLE_WINDOW_HEIGHT: f64 = 480.0;
 const MAX_WORKAREA_RATIO: f64 = 0.9;
 
 fn adaptive_window_dimension(preferred: f64, minimum: f64, work_area: f64) -> f64 {
@@ -98,6 +98,20 @@ fn apply_adaptive_startup_window_size(app: &tauri::App) -> tauri::Result<()> {
         "Applying adaptive startup window size: {:.0}x{:.0} logical px (monitor work area: {:.0}x{:.0}, scale factor: {:.2})",
         target_width, target_height, work_area_width, work_area_height, scale_factor
     );
+
+    // On displays too small to host our minimum usable width (e.g. a 480px-wide
+    // Raspberry Pi panel), maximize instead of leaving a windowed layout that would
+    // be forced to horizontally scroll against the 640px content floor.
+    if work_area_width < MIN_USABLE_WINDOW_WIDTH || work_area_height < MIN_USABLE_WINDOW_HEIGHT {
+        info!(
+            "Work area {:.0}x{:.0} below minimum usable size {:.0}x{:.0}; maximizing window",
+            work_area_width, work_area_height, MIN_USABLE_WINDOW_WIDTH, MIN_USABLE_WINDOW_HEIGHT
+        );
+        if let Err(err) = window.maximize() {
+            warn!("Failed to maximize window on small display: {}", err);
+        }
+        return Ok(());
+    }
 
     if let Err(err) = window.set_size(LogicalSize::new(target_width, target_height)) {
         warn!("Failed to apply adaptive startup window size: {}", err);

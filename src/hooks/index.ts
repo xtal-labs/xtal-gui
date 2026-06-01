@@ -8,6 +8,7 @@ export {
   tauriCommandSafe,
 } from "./useTauriCommand";
 export { useTauriEvent, useTauriEmit } from "./useTauriEvent";
+export { useMediaQuery } from "./useMediaQuery";
 export { useNodeWebSocket } from "./useNodeWebSocket";
 export { useAnimatedBlockList } from "./useAnimatedBlockList";
 export type { AnimatedBlock } from "./useAnimatedBlockList";

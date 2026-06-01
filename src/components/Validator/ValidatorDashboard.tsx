@@ -13,7 +13,7 @@ interface DashboardStatsProps {
 
 function ValidatorDashboardStats({ networkStats, validatorEarnings, isValidatorLoaded, hideBalances }: DashboardStatsProps) {
   return (
-    <div className="grid grid-cols-2 gap-4 stagger-children">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 stagger-children">
       {/* EPOCH */}
       <Card variant="crystalline">
         <CardHeader className="flex flex-row items-center justify-between pb-2">

@@ -123,7 +123,7 @@ export function BootstrapScreen({
   const { configs: shardConfigs, visible: shardVisible } = useShardField();
 
   return (
-    <div className="relative min-h-dvh min-w-[800px] bg-background hex-grid-bg overflow-auto">
+    <div className="relative min-h-dvh min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients — primary/accent (healthy anticipation) */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"

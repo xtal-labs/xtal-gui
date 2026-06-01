@@ -177,7 +177,7 @@ export default function Network() {
             <CardTitle className="text-base font-heading tracking-wide">BANDWIDTH USAGE</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-heading tracking-wide text-foreground-secondary">DOWNLOADED</span>

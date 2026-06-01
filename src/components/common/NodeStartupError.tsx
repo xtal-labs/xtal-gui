@@ -230,7 +230,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
   };
 
   return (
-    <div className="relative min-h-dvh min-w-[800px] bg-background hex-grid-bg overflow-auto">
+    <div className="relative min-h-dvh min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients with slow pulse */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"

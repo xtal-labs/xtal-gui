@@ -145,7 +145,7 @@ export function BlockDetailPanel({
       open={isOpen}
       onClose={onClose}
       title="Block detail"
-      className="lg:w-[520px]"
+      className="lg:w-[480px]"
     >
         <TooltipProvider>
         {/* Gradient accent */}
