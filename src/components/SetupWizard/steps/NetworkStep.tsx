@@ -88,11 +88,11 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
               onClick={() => handleSelect(network)}
               disabled={isProcessing}
               className={`
-                group w-full chamfered p-4 sm:p-5 max-h-[560px]:p-3 text-left transition-all duration-300
+                group w-full chamfered crystalline p-4 sm:p-5 max-h-[560px]:p-3 text-left transition-all duration-300
                 border-2 relative overflow-hidden
                 ${isSelected
-                  ? 'border-accent bg-accent/5'
-                  : 'border-border bg-card/50 hover:border-accent/50 hover:bg-card'
+                  ? 'border-accent'
+                  : 'border-border hover:border-accent/60'
                 }
                 ${isProcessing && !isSelected ? 'opacity-50 cursor-not-allowed' : ''}
               `}

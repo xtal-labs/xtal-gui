@@ -251,7 +251,7 @@ export function SetupWizard() {
   };
 
   return (
-    <div className="relative h-dvh min-h-[480px] min-w-[800px] overflow-hidden bg-background">
+    <div className="setup-wizard relative h-dvh min-h-[var(--app-min-height)] min-w-[var(--app-min-width)] overflow-hidden bg-background">
       {/* Crystalline background effect */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         {/* Radial gradient backdrop */}

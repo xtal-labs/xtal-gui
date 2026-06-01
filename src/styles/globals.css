@@ -213,6 +213,37 @@
 }
 
 /* ============================================
+   SETUP WIZARD — Amethyst vibrance overrides
+   The global dark ramp loses saturation as it
+   lifts (30%→15%), so stacked surfaces read as
+   muddy grey. Scoped to the wizard only, we keep
+   saturation high across the ramp, widen the
+   lightness steps, and turn the near-invisible
+   border into a luminous, refractive crystal edge.
+   ============================================ */
+[data-theme="amethyst"] .setup-wizard {
+  /* Deeper, richer geode base */
+  --background: 264 44% 6%;
+  --background-secondary: 263 38% 10%;
+
+  /* Surface ramp: saturation now holds as layers lift,
+     and the card→elevated swing widens for visible faceting */
+  --card: 263 33% 15%;
+  --card-elevated: 262 36% 23%;
+  --muted: 261 27% 24%;
+  --input: 262 30% 17%;
+
+  /* A genuine luminous edge instead of near-invisible grey */
+  --border: 268 34% 35%;
+  --border-hover: 276 64% 60%;
+
+  /* Refractive crystal edges catch more light */
+  --crystal-facet-light: 280 84% 75%;
+  --crystal-facet-dark: 282 66% 50%;
+  --crystal-edge: 286 96% 80% / 0.5;
+}
+
+/* ============================================
    CELESTITE THEME (Light)
    Clean blue-white with crystalline clarity
    ============================================ */

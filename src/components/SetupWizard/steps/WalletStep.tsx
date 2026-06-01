@@ -59,11 +59,11 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
               onClick={() => !option.disabled && onSelect(option.id)}
               disabled={option.disabled}
               className={`
-                group w-full chamfered p-4 sm:p-5 max-h-[560px]:p-3 text-left transition-all duration-300
+                group w-full chamfered crystalline p-4 sm:p-5 max-h-[560px]:p-3 text-left transition-all duration-300
                 border relative overflow-hidden
                 ${option.disabled
-                  ? 'border-border/50 bg-card/30 opacity-60 cursor-not-allowed'
-                  : 'border-border bg-card/50 hover:border-accent/70 hover:bg-card'
+                  ? 'border-border/50 opacity-60 cursor-not-allowed'
+                  : 'border-border hover:border-accent/70'
                 }
               `}
               style={{
