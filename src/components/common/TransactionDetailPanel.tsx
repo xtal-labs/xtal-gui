@@ -363,6 +363,7 @@ function IORow({
   isMine,
   label,
   rewardType,
+  redeemScriptType,
 }: {
   address?: string;
   amount?: number;
@@ -370,6 +371,7 @@ function IORow({
   isMine?: boolean;
   label?: string;
   rewardType?: "leaf" | "stem" | "fruit";
+  redeemScriptType?: string;
 }) {
   return (
     <div
@@ -403,6 +405,14 @@ function IORow({
                   : rewardType === "stem"
                     ? "Stem"
                     : "Fruit"}
+              </Badge>
+            )}
+            {redeemScriptType && (
+              <Badge
+                variant="outline"
+                className="shrink-0 text-[10px] px-1.5 py-0 text-violet-400 border-violet-400/40"
+              >
+                P2SH · {redeemScriptType}
               </Badge>
             )}
           </div>
@@ -465,6 +475,7 @@ function UtxoDetailBody({
                   address={input.address}
                   amount={input.amount}
                   isMine={input.isMine ?? false}
+                  redeemScriptType={input.redeemScriptType}
                 />
               ))
             )}
@@ -683,7 +694,7 @@ function VmDetailBody({
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
           <Card variant="crystalline">
             <CardContent className="p-3 text-center">
               <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase mb-1">

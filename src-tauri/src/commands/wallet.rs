@@ -368,6 +368,9 @@ pub struct TransactionInput {
     /// Whether this input belongs to the loaded wallet
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_mine: bool,
+    /// Decoded redeem-script label for a P2SH spend (e.g. "2-of-3 multisig").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redeem_script_type: Option<String>,
 }
 
 /// Detailed output information for transaction viewer

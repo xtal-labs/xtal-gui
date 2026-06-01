@@ -1,9 +1,12 @@
 //! Shared transaction detail helpers for wallet + explorer commands.
 
-use xtal::address_format::format_utxo_address;
+use xtal::address_format::{format_script_address, format_utxo_address};
 use xtal::crypto::hash_public_key;
 use xtal::interfaces::ChainDataProvider;
-use xtal::script::{extract_pkh_from_script, extract_pubkey_from_script_sig};
+use xtal::script::{
+    extract_p2sh_redeem_script, extract_pubkey_from_script_sig, parse_multisig_script,
+    p2sh_script_hash, p2sh_script_pubkey, Script,
+};
 use xtal::transaction::receipt::TransactionReceipt;
 use xtal::transaction::{Transaction, TxIn, TxOut, MIN_GAS_PRICE};
 use xtal::vm::cage_contract::CAGE_CONTRACT_ADDRESS;
@@ -71,12 +74,18 @@ pub fn extract_transaction_details(
                 if details.iter().all(|d| d.address.is_some()) {
                     return Ok(details
                         .into_iter()
-                        .map(|d| TransactionInput {
+                        .zip(tx_inputs.iter())
+                        .map(|(d, inp)| TransactionInput {
                             txid: d.txid,
                             output_index: d.index,
                             address: d.address,
                             amount: Some(d.amount),
                             is_mine: false,
+                            // Redeem details aren't persisted; decode them from the
+                            // live unlocking script so the P2SH badge survives the
+                            // stored fast-path too.
+                            redeem_script_type: decode_p2sh_input(&inp.script_sig)
+                                .map(|(_, label)| label),
                         })
                         .collect());
                 }
@@ -222,6 +231,7 @@ pub fn extract_transaction_details(
                         address,
                         amount,
                         is_mine: false,
+                        redeem_script_type: None,
                     }];
 
                     let fee = vm_transaction_fee(tx);
@@ -290,6 +300,33 @@ pub fn extract_transaction_details(
     }
 }
 
+/// Decode P2SH redeem-script details from a spending input's `script_sig`.
+///
+/// Returns `(p2sh_address, redeem_label)` when the unlocking script carries a
+/// redeem script that classifies as a recognized type. Requiring a recognized
+/// redeem type doubles as the P2SH guard: a plain P2PKH/stake `<sig> <pubkey>`
+/// unlocking script's final push (a 32-byte pubkey) does not parse as a known
+/// script, so it is never mistaken for a P2SH spend.
+fn decode_p2sh_input(script_sig: &Script) -> Option<(String, String)> {
+    let redeem = extract_p2sh_redeem_script(script_sig)?;
+    let label = redeem_script_label(&redeem)?;
+    let address = format_script_address(&p2sh_script_pubkey(&p2sh_script_hash(&redeem)))?;
+    Some((address, label))
+}
+
+/// Human-readable label for a recognized P2SH redeem script, or `None` when the
+/// script is not a type we surface (which also rejects non-P2SH unlocking data).
+fn redeem_script_label(redeem: &Script) -> Option<String> {
+    // classify_type() is the unified discriminant; only the multisig arm needs the extra
+    // m-of-n detail layered on via parse_multisig_script.
+    match redeem.classify_type() {
+        "unknown" => None,
+        "multisig" => parse_multisig_script(redeem)
+            .map(|info| format!("{}-of-{} multisig", info.threshold, info.total_signers)),
+        other => Some(other.to_string()),
+    }
+}
+
 /// Extract input details from TxIn array
 pub fn extract_inputs(
     tx_inputs: &[TxIn],
@@ -297,21 +334,22 @@ pub fn extract_inputs(
 ) -> Result<Vec<TransactionInput>, String> {
     let mut inputs = Vec::new();
     for inp in tx_inputs {
-        // Try to resolve the referenced output from the live UTXO set first,
-        // then fall back to the source transaction once it has been spent.
-        let (amount, address) =
-            match resolve_referenced_utxo(blockchain, &inp.tx_id, inp.output_index) {
-                resolved @ (Some(_), _) => resolved,
-                resolved @ (_, Some(_)) => resolved,
-                _ => {
-                    // Last resort: extract address from script_sig (pubkey is embedded in signature)
-                    let addr = extract_pubkey_from_script_sig(&inp.script_sig).map(|vk| {
-                        let pkh = hash_public_key(&vk);
-                        format_utxo_address(&pkh)
-                    });
-                    (None, addr)
-                }
-            };
+        // Decode any P2SH redeem script in the unlocking script up front: it both labels
+        // the input and lets us reconstruct the address when the referenced output is gone.
+        let p2sh = decode_p2sh_input(&inp.script_sig);
+
+        // Resolve the referenced output from the live UTXO set first, then the source
+        // transaction once it has been spent.
+        let (amount, resolved_address) =
+            resolve_referenced_utxo(blockchain, &inp.tx_id, inp.output_index);
+
+        // Address precedence: resolved output -> reconstructed P2SH -> embedded pubkey.
+        let address = resolved_address
+            .or_else(|| p2sh.as_ref().map(|(addr, _)| addr.clone()))
+            .or_else(|| {
+                extract_pubkey_from_script_sig(&inp.script_sig)
+                    .map(|vk| format_utxo_address(&hash_public_key(&vk)))
+            });
 
         inputs.push(TransactionInput {
             txid: hex::encode(inp.tx_id),
@@ -319,6 +357,7 @@ pub fn extract_inputs(
             address,
             amount,
             is_mine: false,
+            redeem_script_type: p2sh.map(|(_, label)| label),
         });
     }
     Ok(inputs)
@@ -342,6 +381,7 @@ fn vm_deposit_input_from_receipt(receipt: &TransactionReceipt) -> Option<(Transa
         address: Some(format_utxo_address(&consumed.owner)),
         amount: Some(consumed.amount),
         is_mine: false,
+        redeem_script_type: None,
     };
     Some((input, consumed.amount))
 }
@@ -352,8 +392,7 @@ fn resolve_referenced_utxo(
     output_index: u16,
 ) -> (Option<u64>, Option<String>) {
     if let Ok(Some(utxo)) = blockchain.get_utxo(txid, output_index) {
-        let addr =
-            extract_pkh_from_script(&utxo.script_pubkey).map(|pkh| format_utxo_address(&pkh));
+        let addr = format_script_address(&utxo.script_pubkey);
         return (Some(utxo.amount), addr);
     }
 
@@ -372,8 +411,7 @@ pub fn extract_output_from_transaction(
     let outputs = tx.utxo_outputs();
 
     if let Some(output) = outputs.get(output_index as usize) {
-        let addr =
-            extract_pkh_from_script(&output.script_pubkey).map(|pkh| format_utxo_address(&pkh));
+        let addr = format_script_address(&output.script_pubkey);
         (Some(output.amount), addr)
     } else {
         (None, None)
@@ -385,20 +423,32 @@ pub fn extract_outputs(tx_outputs: &[TxOut], script_type: &str) -> Vec<Transacti
     tx_outputs
         .iter()
         .enumerate()
-        .map(|(idx, out)| TransactionOutput {
-            index: idx as u16,
-            amount: out.amount,
-            currency: format!("{:?}", out.currency),
-            address: extract_address_from_txout(out),
-            script_type: script_type.to_string(),
-            is_mine: false,
+        .map(|(idx, out)| {
+            // A standard transaction can pay to a P2SH (e.g. multisig) address, so label
+            // those correctly instead of inheriting the transaction-level default.
+            // classify_type() is the single script classifier reused for both outputs and
+            // redeem scripts; we use it only to detect the structural P2SH exception so the
+            // tx-context default (coinbase/account/stake/…) still passes through otherwise.
+            let resolved_type = if out.script_pubkey.classify_type() == "p2sh" {
+                "p2sh"
+            } else {
+                script_type
+            };
+            TransactionOutput {
+                index: idx as u16,
+                amount: out.amount,
+                currency: format!("{:?}", out.currency),
+                address: extract_address_from_txout(out),
+                script_type: resolved_type.to_string(),
+                is_mine: false,
+            }
         })
         .collect()
 }
 
 /// Extract address from a TxOut
 pub fn extract_address_from_txout(out: &TxOut) -> Option<String> {
-    extract_pkh_from_script(&out.script_pubkey).map(|pkh| format_utxo_address(&pkh))
+    format_script_address(&out.script_pubkey)
 }
 
 #[cfg(test)]

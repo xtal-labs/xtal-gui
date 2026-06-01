@@ -124,6 +124,8 @@ export interface TransactionInput {
   amount?: number;
   /** Whether this input belongs to the loaded wallet */
   isMine?: boolean;
+  /** Decoded redeem-script label for a P2SH spend (e.g. "2-of-3 multisig") */
+  redeemScriptType?: string;
 }
 
 /**

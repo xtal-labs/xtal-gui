@@ -56,7 +56,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast;
 
-use xtal::address_format::{format_utxo_address, parse_address_input};
+use xtal::address_format::{format_script_address, parse_address_input};
 use xtal::blockchain::events::BlockchainEvent;
 use xtal::crypto::hash_public_key;
 use xtal::fruit::codec::Encode;
@@ -523,8 +523,7 @@ fn store_incoming_mempool_tx(
             for inp in inputs {
                 let (amount, address) =
                     if let Ok(Some(utxo)) = blockchain.get_utxo(&inp.tx_id, inp.output_index) {
-                        let addr = extract_pkh_from_script(&utxo.script_pubkey)
-                            .map(|pkh| format_utxo_address(&pkh));
+                        let addr = format_script_address(&utxo.script_pubkey);
                         (Some(utxo.amount), addr)
                     } else {
                         (None, None)

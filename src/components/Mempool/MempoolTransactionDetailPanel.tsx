@@ -171,10 +171,12 @@ function IORow({
   address,
   amount,
   index,
+  redeemScriptType,
 }: {
   address?: string;
   amount?: number;
   index: number;
+  redeemScriptType?: string;
 }) {
   return (
     <div
@@ -188,12 +190,22 @@ function IORow({
           #{index}
         </span>
         {address ? (
-          <HashDisplay
-            hash={address}
-            truncate
-            showTooltip
-            className="text-xs min-w-0"
-          />
+          <div className="flex items-center gap-2 min-w-0">
+            <HashDisplay
+              hash={address}
+              truncate
+              showTooltip
+              className="text-xs min-w-0"
+            />
+            {redeemScriptType && (
+              <Badge
+                variant="outline"
+                className="shrink-0 text-[10px] px-1.5 py-0 text-violet-400 border-violet-400/40"
+              >
+                P2SH · {redeemScriptType}
+              </Badge>
+            )}
+          </div>
         ) : (
           <span className="text-xs text-foreground-muted italic">Unknown</span>
         )}
@@ -404,6 +416,7 @@ export function MempoolTransactionDetailPanel({
                             index={idx}
                             address={input.address}
                             amount={input.amount}
+                            redeemScriptType={input.redeemScriptType}
                           />
                         ))
                       )}
@@ -566,7 +579,7 @@ export function MempoolTransactionDetailPanel({
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
                       <Card variant="crystalline">
                         <CardContent className="p-3 text-center">
                           <p className="text-[10px] font-heading text-foreground-muted tracking-wider uppercase mb-1">
