@@ -26,7 +26,7 @@ import {
   parseXtalToShards,
 } from "@/lib/utils";
 import { parseAddressInput, formatVmAddress } from "@/lib/address";
-import { tauriCommand } from "@/hooks";
+import { tauriCommand, tauriCommandSafe } from "@/hooks";
 import { useUiStore, useWalletStore } from "@/stores";
 
 interface VmSendModalProps {
@@ -50,8 +50,24 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
   const [gasConfig, setGasConfig] = useState<GasConfig | null>(null);
 
   useEffect(() => {
-    tauriCommand<GasConfig>("get_gas_config").then(setGasConfig);
-  }, []);
+    let cancelled = false;
+    tauriCommandSafe<GasConfig>("get_gas_config").then(([config, error]) => {
+      if (cancelled) return;
+      if (config) {
+        setGasConfig(config);
+      } else {
+        addToast({
+          type: "error",
+          title: "Failed to load gas config",
+          message: error ?? "Could not fetch gas settings from the node",
+          duration: 5000,
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [addToast]);
 
   // Form state
   const [step, setStep] = useState<SendStep>("form");

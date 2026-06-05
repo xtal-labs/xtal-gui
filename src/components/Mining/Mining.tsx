@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/common";
 import { useMiningStore, useUiStore, useWalletStore } from "@/stores";
-import { tauriCommand } from "@/hooks";
+import { tauriCommand, tauriCommandSafe } from "@/hooks";
 import { formatHashRateMH, formatDuration, formatTimeAgo, cn } from "@/lib/utils";
 import type { MinedBlock, MiningStatus, MiningStats } from "@/types";
 
@@ -68,15 +68,23 @@ export default function Mining() {
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("5m");
   // Fetch mining status and stats on mount to get maxThreads and initial statistics from the backend
   useEffect(() => {
-    tauriCommand<MiningStatus>("get_mining_status")
-      .then((status) => setStatus(status))
-      .catch(() => {});
+    let cancelled = false;
 
-    tauriCommand<MiningStats | null>("get_mining_stats")
-      .then((stats) => {
-        if (stats) setStats(stats);
-      })
-      .catch(() => {});
+    tauriCommandSafe<MiningStatus>("get_mining_status").then(([status, error]) => {
+      if (cancelled) return;
+      if (status) setStatus(status);
+      else console.warn("[Mining] Failed to load mining status:", error);
+    });
+
+    tauriCommandSafe<MiningStats | null>("get_mining_stats").then(([stats, error]) => {
+      if (cancelled) return;
+      if (stats) setStats(stats);
+      else if (error) console.warn("[Mining] Failed to load mining stats:", error);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [setStatus, setStats]);
 
   // Load historical mined blocks from wallet database

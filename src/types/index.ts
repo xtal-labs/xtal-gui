@@ -12,3 +12,4 @@ export * from "./rpc";
 export * from "./startup";
 export * from "./contract";
 export * from "./gui";
+export * from "./ws";

@@ -31,16 +31,15 @@ import { useDiagnosticMonitor, useRenderTracker } from "@/hooks/useDiagnosticMon
 import type {
   BlockSummary,
   BootstrapPhase,
-  FruitProductionStats,
   GuiEvent,
   MinedBlock,
-  MiningStats,
   StartupErrorInfo,
   StartupStage,
   StartupStatus,
   SyncProgress,
   GuiConfig,
   WalletStatus,
+  NodeWsMessage,
 } from "@/types";
 
 // Panels
@@ -561,24 +560,19 @@ function AppContent() {
   // Handle WebSocket messages
   const handleWebSocketMessage = useCallback(
     (msg: WebSocketMessage) => {
-      switch (msg.type) {
+      // Narrow the generic envelope once at the boundary; each case below then
+      // gets `message.data` typed to the matching payload (see types/ws.ts).
+      const message = msg as NodeWsMessage;
+      switch (message.type) {
         case "blockchain_info":
-          handleWsBlockchainInfo(msg.data as Parameters<typeof handleWsBlockchainInfo>[0]);
+          handleWsBlockchainInfo(message.data);
           break;
         case "stem_provider_info":
-          handleWsStemProviderInfo(msg.data as Parameters<typeof handleWsStemProviderInfo>[0]);
+          handleWsStemProviderInfo(message.data);
           break;
         case "new_block": {
-          const raw = msg.data as {
-            hash: string;
-            height: number;
-            leafHeight: number;
-            blockType: string;
-            timestamp: number;
-            txCount?: number;
-            fruitCount?: number;
-          };
-          const minedByLocal = (msg as { mined_by_local_node?: boolean }).mined_by_local_node === true;
+          const raw = message.data;
+          const minedByLocal = message.mined_by_local_node === true;
 
           const blockSummary: BlockSummary = raw.blockType === "Stem"
             ? {
@@ -635,44 +629,11 @@ function AppContent() {
           break;
         }
         case "mining_stats": {
-          const stats = msg.data as MiningStats;
-          setMiningStats(stats);
+          setMiningStats(message.data);
           break;
         }
         case "sync_progress": {
-          const progress = msg.data as {
-            phase: string;
-            progress_percent: number;
-            started_at?: number;
-            // Headers phase
-            headers_received?: number;
-            target_headers?: number;
-            // Stem bodies phase
-            stems_pending?: number;
-            stems_complete?: number;
-            // Leaves phase
-            leaves_received?: number;
-            total_leaves?: number;
-            current_epoch?: number;
-            // State sync
-            pivot_height?: number;
-            state_root?: string;
-            downloaded_chunks?: number;
-            total_chunks?: number;
-            // Execution
-            blocks_executed?: number;
-            target_height?: number;
-            // Speed/ETA
-            items_per_second?: number;
-            estimated_seconds_remaining?: number;
-            bytes_downloaded?: number;
-            bytes_total?: number;
-            // Error
-            failure_reason?: string;
-            // Peer info
-            sync_peer?: string;
-            peer_count?: number;
-          };
+          const progress = message.data;
           scheduleSyncProgress({
             phase: progress.phase as SyncProgress["phase"],
             progressPercent: progress.progress_percent ?? 0,
@@ -701,30 +662,11 @@ function AppContent() {
           break;
         }
         case "peer_update": {
-          const peerData = msg.data as { peer_count: number };
-          setPeerCount(peerData.peer_count, 0, 0);
+          setPeerCount(message.data.peer_count, 0, 0);
           break;
         }
         case "peers_update": {
-          const data = msg.data as {
-            peerCount: number;
-            inboundCount: number;
-            outboundCount: number;
-            peers: Array<{
-              peer_id: string;
-              addresses: string[];
-              direction: string;
-              state: string;
-              connected_at?: number;
-              last_seen: number;
-              bytes_sent: number;
-              bytes_received: number;
-              latency: number;
-              best_height: number;
-              protocol_version?: number;
-              user_agent?: string;
-            }>;
-          };
+          const data = message.data;
           // Transform backend PeerStats to frontend Peer format
           const peers = data.peers.map((p) => {
             // Parse first address to extract host and port
@@ -762,13 +704,7 @@ function AppContent() {
           break;
         }
         case "fruit_produced": {
-          const fruitData = msg.data as {
-            fruitHash: string;
-            fruitType: string;
-            transactionCount: number;
-            timestamp: number;
-            stemHash: string;
-          };
+          const fruitData = message.data;
 
           addToast({
             type: "fruit",
@@ -790,12 +726,7 @@ function AppContent() {
           break;
         }
         case "validator_network_stats": {
-          const data = msg.data as {
-            currentEpoch: number;
-            totalStaked: number;
-            validatorCount: number;
-            productionStats?: FruitProductionStats[];
-          };
+          const data = message.data;
           setValidatorNetworkStats({
             currentEpoch: data.currentEpoch,
             totalStaked: data.totalStaked,
@@ -814,6 +745,7 @@ function AppContent() {
           break;
         default:
           console.debug("[WebSocket] Unhandled message type:", msg.type);
+          break;
       }
     },
     [handleWsBlockchainInfo, handleWsStemProviderInfo, setMiningStats, scheduleSyncProgress, setPeerCount, setPeers, addMinedBlock, addToast, walletIsLoaded, requestWalletRefresh, validatorIsLoaded, requestValidatorRefresh, setValidatorNetworkStats, setValidatorProductionStats, addValidatorProductionStatsSnapshot, requestBlockchainRefresh]
@@ -1043,43 +975,43 @@ function AppContent() {
   // This is more reliable than Tauri events for menu → frontend communication
   useEffect(() => {
     // Open create wallet modal
-    (window as any).openWalletCreate = () => {
+    window.openWalletCreate = () => {
       setActiveTab("wallet");
       openModal("wallet-create");
     };
 
     // Open load wallet modal with specific wallet name
-    (window as any).openWalletLoad = (walletName: string) => {
+    window.openWalletLoad = (walletName: string) => {
       setActiveTab("wallet");
       openModal("wallet-load", walletName);
     };
 
-    (window as any).openWalletChangePassword = () => {
+    window.openWalletChangePassword = () => {
       setActiveTab("wallet");
       openModal("wallet-change-password");
     };
 
-    (window as any).openWalletMultisig = () => {
+    window.openWalletMultisig = () => {
       setActiveTab("wallet");
       openModal("wallet-multisig");
     };
 
     // Import wallet from native menu
-    (window as any).openWalletImportMnemonic = () => {
+    window.openWalletImportMnemonic = () => {
       setActiveTab("wallet");
       openModal("wallet-import", { mode: "mnemonic" });
     };
-    (window as any).openWalletImportKey = () => {
+    window.openWalletImportKey = () => {
       setActiveTab("wallet");
       openModal("wallet-import", { mode: "key" });
     };
-    (window as any).openWalletImportFile = () => {
+    window.openWalletImportFile = () => {
       setActiveTab("wallet");
       openModal("wallet-import-file");
     };
 
     // Unload wallet from menu
-    (window as any).unloadWallet = async () => {
+    window.unloadWallet = async () => {
       if (walletIsLoaded) {
         try {
           await tauriCommand("unload_wallet");
@@ -1097,14 +1029,14 @@ function AppContent() {
 
     // Cleanup on unmount
     return () => {
-      delete (window as any).openWalletCreate;
-      delete (window as any).openWalletLoad;
-      delete (window as any).openWalletChangePassword;
-      delete (window as any).openWalletMultisig;
-      delete (window as any).openWalletImportMnemonic;
-      delete (window as any).openWalletImportKey;
-      delete (window as any).openWalletImportFile;
-      delete (window as any).unloadWallet;
+      delete window.openWalletCreate;
+      delete window.openWalletLoad;
+      delete window.openWalletChangePassword;
+      delete window.openWalletMultisig;
+      delete window.openWalletImportMnemonic;
+      delete window.openWalletImportKey;
+      delete window.openWalletImportFile;
+      delete window.unloadWallet;
     };
   }, [
     setActiveTab,

@@ -3,35 +3,9 @@ import type {
   BlockchainInfo,
   SyncProgress,
   SyncPhase,
+  WsBlockchainInfo,
+  WsStemProviderInfo,
 } from "@/types";
-
-/**
- * WebSocket blockchain_info response (snake_case from Rust API)
- */
-interface WsBlockchainInfo {
-  leaf_height: number;
-  height: number;
-  latest_leaf?: {
-    hash: string;
-    leaf_height: number;
-  };
-  stem_work_info?: {
-    stems_since_last_leaf: number;
-  };
-}
-
-/**
- * WebSocket stem_provider_info response (snake_case from Rust API)
- */
-interface WsStemProviderInfo {
-  latest_stem_hash?: string;
-  current_epoch: number;
-  stems_since_last_leaf: Array<{
-    hash: string;
-    nonce: number;
-    timestamp: number;
-  }>;
-}
 
 interface BlockchainState {
   // Chain state
