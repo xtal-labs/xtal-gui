@@ -56,8 +56,29 @@ impl AbiCache {
         Ok(Self { dir, index })
     }
 
+    /// Infallible last-resort cache with no backing directory.
+    ///
+    /// Used when no cache directory (not even the temp dir) can be opened, so
+    /// `AppState` construction never panics on a degraded cache. The index lives
+    /// only in memory and all persistence becomes a no-op; reads of on-disk ABIs
+    /// simply miss. An empty `dir` is the ephemeral marker (see `is_ephemeral`).
+    pub fn ephemeral() -> Self {
+        Self {
+            dir: PathBuf::new(),
+            index: HashMap::new(),
+        }
+    }
+
+    /// Whether this cache has no backing directory (see `ephemeral`).
+    fn is_ephemeral(&self) -> bool {
+        self.dir.as_os_str().is_empty()
+    }
+
     /// Persist the index to disk.
     fn flush_index(&self) -> Result<(), String> {
+        if self.is_ephemeral() {
+            return Ok(());
+        }
         let json = serde_json::to_string_pretty(&self.index)
             .map_err(|e| format!("Failed to serialize ABI index: {}", e))?;
         std::fs::write(self.dir.join("index.json"), json)
@@ -86,11 +107,13 @@ impl AbiCache {
     ) -> Result<(), String> {
         let addr = normalize_address(address);
 
-        // Write ABI file
+        // Write ABI file (skipped for an ephemeral cache with no backing dir)
         let json = serde_json::to_string_pretty(abi)
             .map_err(|e| format!("Failed to serialize ABI: {}", e))?;
-        std::fs::write(self.dir.join(format!("{}.abi.json", addr)), &json)
-            .map_err(|e| format!("Failed to write ABI file: {}", e))?;
+        if !self.is_ephemeral() {
+            std::fs::write(self.dir.join(format!("{}.abi.json", addr)), &json)
+                .map_err(|e| format!("Failed to write ABI file: {}", e))?;
+        }
 
         // Update index using raw JSON bytes for content hash and CID
         let now = std::time::SystemTime::now()

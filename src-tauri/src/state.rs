@@ -93,7 +93,12 @@ impl AppState {
     ) -> Self {
         let mut abi_cache = AbiCache::open(&data_dir).unwrap_or_else(|e| {
             log::warn!("Failed to open ABI cache: {}", e);
-            AbiCache::open(&std::env::temp_dir()).expect("temp dir must work")
+            AbiCache::open(&std::env::temp_dir()).unwrap_or_else(|e2| {
+                // Last resort: run with an in-memory cache rather than panicking
+                // during AppState construction (which would hang startup at 99%).
+                log::error!("Failed to open ABI cache in temp dir: {} — using ephemeral cache", e2);
+                AbiCache::ephemeral()
+            })
         });
 
         if let Err(e) = abi_cache.seed_builtins() {
@@ -269,9 +274,16 @@ impl SharedStartupStatus {
         }
     }
 
-    /// Read a snapshot of the current status
+    /// Read a snapshot of the current status.
+    ///
+    /// Recovers the inner data even if a writer ever panicked and poisoned the
+    /// lock, matching the defensive `if let Ok` style used by the writers above —
+    /// status reads drive the loading UI and must never themselves panic.
     pub fn snapshot(&self) -> StartupStatusInner {
-        self.0.read().unwrap().clone()
+        match self.0.read() {
+            Ok(guard) => guard.clone(),
+            Err(poisoned) => poisoned.into_inner().clone(),
+        }
     }
 }
 

@@ -675,10 +675,21 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                                 99,
                             );
 
-                            // Subscribe to sync state
-                            let sync_rx = services
-                                .subscribe_sync_state()
-                                .expect("Sync state must be available for GUI");
+                            // Subscribe to sync state. This runs on the startup task
+                            // itself (not the node thread), so a panic here would leave
+                            // the loader stuck at 99% with no failure screen — route the
+                            // error to set_failed instead, matching the Disconnected arm.
+                            let sync_rx = match services.subscribe_sync_state() {
+                                Some(rx) => rx,
+                                None => {
+                                    let msg =
+                                        "Sync state unavailable — node services not ready"
+                                            .to_string();
+                                    error!("Node startup failed: {}", msg);
+                                    status.set_failed(make_startup_error(msg, network));
+                                    return;
+                                }
+                            };
 
                             // Create and register AppState dynamically
                             let app_state = AppState::new(
@@ -974,7 +985,15 @@ fn spawn_node_thread(
         .spawn(move || {
             info!("Node thread starting...");
 
-            let rt = Runtime::new().expect("Failed to create tokio runtime for node");
+            let rt = match Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let msg = format!("Failed to create tokio runtime for node: {}", e);
+                    error!("{}", msg);
+                    let _ = error_tx.send(msg);
+                    return;
+                }
+            };
 
             rt.block_on(async {
                 let _ = progress_tx.send(StartupUpdate::Stage {
