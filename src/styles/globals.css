@@ -396,6 +396,34 @@
    ============================================ */
 
 @layer utilities {
+  /* Full-viewport min-height with a static fallback.
+     `dvh` is unsupported on WebKit < 15.4 (older macOS WKWebView); the `vh`
+     base keeps these containers full-height there, and the @supports override
+     upgrades to `dvh` where available. The override must live in @supports
+     rather than a second declaration in the same rule — esbuild's minifier
+     dedupes within-rule declarations and would drop the `vh` fallback.
+     Required for screens whose children are all absolutely positioned (no
+     in-flow content to give the container height) — otherwise they collapse
+     to 0px. */
+  .min-h-viewport {
+    min-height: 100vh;
+  }
+
+  @supports (height: 100dvh) {
+    .min-h-viewport {
+      min-height: 100dvh;
+    }
+  }
+
+  /* Staggered entrance animation as a pure enhancement.
+     Duration/delay are set per-element via --anim-duration / --anim-delay so
+     usage stays declarative. Content's resting state is fully visible, so a
+     stalled or disabled animation never hides it (see reduced-motion reset). */
+  .anim-entrance {
+    animation: fade-in-up var(--anim-duration, 0.4s) ease-out
+      var(--anim-delay, 0ms) backwards;
+  }
+
   /* Crystalline glow effect */
   .crystal-glow {
     box-shadow: 0 0 20px hsl(var(--glow-color)),
@@ -631,6 +659,14 @@
     }
 
     .block-enter-content {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+
+    .anim-entrance,
+    .fade-in-up,
+    .stagger-children > * {
       animation: none;
       opacity: 1;
       transform: none;

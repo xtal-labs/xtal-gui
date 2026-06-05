@@ -230,7 +230,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
   };
 
   return (
-    <div className="relative min-h-dvh min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
+    <div className="relative min-h-viewport min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients with slow pulse */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"
@@ -275,8 +275,8 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
       {/* Card layer — no scroll, flex-fit */}
       <div className="absolute inset-0 flex items-start min-[900px]:items-center justify-center overflow-auto p-4">
         <div
-          className="relative max-w-md w-full max-h-full flex flex-col"
-          style={{ animation: "fade-in-up 0.6s ease-out 0.3s backwards" }}
+          className="anim-entrance relative max-w-md w-full max-h-full flex flex-col"
+          style={{ "--anim-duration": "0.6s", "--anim-delay": "0.3s" } as React.CSSProperties}
         >
         {/* Outer border — red (destructive) to purple gradient */}
         <div
@@ -301,8 +301,8 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
 
           {/* Crystal icon with gradient — dramatic centerpiece */}
           <div
-            className="flex justify-center shrink-0"
-            style={{ animation: "fade-in-up 0.5s ease-out 0.5s backwards" }}
+            className="anim-entrance flex justify-center shrink-0"
+            style={{ "--anim-duration": "0.5s", "--anim-delay": "0.5s" } as React.CSSProperties}
           >
             <div className="relative">
               {/* Outer glow ring */}
@@ -417,8 +417,8 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
 
           {/* Title */}
           <div
-            className="text-center space-y-1.5 shrink-0"
-            style={{ animation: "fade-in-up 0.4s ease-out 0.7s backwards" }}
+            className="anim-entrance text-center space-y-1.5 shrink-0"
+            style={{ "--anim-delay": "0.7s" } as React.CSSProperties}
           >
             <h1 className="font-heading text-lg font-semibold tracking-wider text-destructive">
               Node Failed to Start
@@ -430,14 +430,14 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
 
           {/* Divider */}
           <div
-            className="divider-angular shrink-0"
-            style={{ animation: "fade-in-up 0.4s ease-out 0.8s backwards" }}
+            className="anim-entrance divider-angular shrink-0"
+            style={{ "--anim-delay": "0.8s" } as React.CSSProperties}
           />
 
           {/* Error message */}
           <div
-            className="chamfered-border-wrap min-h-0 shrink"
-            style={{ animation: "fade-in-up 0.4s ease-out 0.9s backwards" }}
+            className="anim-entrance chamfered-border-wrap min-h-0 shrink"
+            style={{ "--anim-delay": "0.9s" } as React.CSSProperties}
           >
           <div
             className="relative chamfered bg-background-secondary p-4 pr-10 min-h-0 overflow-y-auto"
@@ -458,8 +458,8 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
           {/* Suggestions */}
           <div className="space-y-2.5 min-h-0 shrink overflow-y-auto">
             <p
-              className="font-heading text-xs font-medium tracking-wider text-foreground-secondary uppercase"
-              style={{ animation: "fade-in-up 0.4s ease-out 1.0s backwards" }}
+              className="anim-entrance font-heading text-xs font-medium tracking-wider text-foreground-secondary uppercase"
+              style={{ "--anim-delay": "1.0s" } as React.CSSProperties}
             >
               Suggested Actions
             </p>
@@ -467,8 +467,8 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
               {info.suggestions.map((suggestion, i) => (
                 <li
                   key={i}
-                  className="flex items-start gap-2.5 text-sm text-foreground-secondary"
-                  style={{ animation: `fade-in-up 0.4s ease-out ${1.1 + i * 0.1}s backwards` }}
+                  className="anim-entrance flex items-start gap-2.5 text-sm text-foreground-secondary"
+                  style={{ "--anim-delay": `${1.1 + i * 0.1}s` } as React.CSSProperties}
                 >
                   <span className="status-diamond-sm bg-destructive/40 mt-1.5 shrink-0" />
                   <span>{suggestion}</span>
@@ -479,8 +479,8 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
 
           {/* Path info */}
           <div
-            className="chamfered-sm-border-wrap shrink-0"
-            style={{ animation: "fade-in-up 0.4s ease-out 1.4s backwards" }}
+            className="anim-entrance chamfered-sm-border-wrap shrink-0"
+            style={{ "--anim-delay": "1.4s" } as React.CSSProperties}
           >
           <div
             className="chamfered-sm bg-background-secondary p-3 space-y-1.5"
@@ -537,14 +537,14 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
 
           {/* Divider */}
           <div
-            className="divider-angular shrink-0"
-            style={{ animation: "fade-in-up 0.4s ease-out 1.5s backwards" }}
+            className="anim-entrance divider-angular shrink-0"
+            style={{ "--anim-delay": "1.5s" } as React.CSSProperties}
           />
 
           {/* Action buttons */}
           <div
-            className="flex gap-3 shrink-0"
-            style={{ animation: "fade-in-up 0.4s ease-out 1.6s backwards" }}
+            className="anim-entrance flex gap-3 shrink-0"
+            style={{ "--anim-delay": "1.6s" } as React.CSSProperties}
           >
             <Button
               variant="outline"

@@ -123,7 +123,7 @@ export function BootstrapScreen({
   const { configs: shardConfigs, visible: shardVisible } = useShardField();
 
   return (
-    <div className="relative min-h-dvh min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
+    <div className="relative min-h-viewport min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients — primary/accent (healthy anticipation) */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"
@@ -168,8 +168,8 @@ export function BootstrapScreen({
       {/* Card layer */}
       <div className="absolute inset-0 flex items-start min-[900px]:items-center justify-center overflow-auto p-4">
         <div
-          className="relative max-w-sm w-full"
-          style={{ animation: "fade-in-up 0.6s ease-out 0.3s backwards" }}
+          className="anim-entrance relative max-w-sm w-full"
+          style={{ "--anim-duration": "0.6s", "--anim-delay": "0.3s" } as React.CSSProperties}
         >
           {/* Outer border — primary to accent gradient */}
           <div
@@ -192,8 +192,8 @@ export function BootstrapScreen({
 
             {/* ═══ CRYSTAL ICON CENTERPIECE ═══ */}
             <div
-              className="flex justify-center shrink-0"
-              style={{ animation: "fade-in-up 0.5s ease-out 0.5s backwards" }}
+              className="anim-entrance flex justify-center shrink-0"
+              style={{ "--anim-duration": "0.5s", "--anim-delay": "0.5s" } as React.CSSProperties}
             >
               <div className="relative">
                 {/* Outer glow ring */}
@@ -276,8 +276,8 @@ export function BootstrapScreen({
 
             {/* ═══ TITLE ═══ */}
             <div
-              className="text-center space-y-1.5 shrink-0"
-              style={{ animation: "fade-in-up 0.4s ease-out 0.7s backwards" }}
+              className="anim-entrance text-center space-y-1.5 shrink-0"
+              style={{ "--anim-delay": "0.7s" } as React.CSSProperties}
             >
               <div className="flex items-center justify-center gap-2 text-[10px] uppercase tracking-[0.24em] text-foreground-secondary">
                 {startupStage ? <span>{formatLabel(startupStage)}</span> : null}
@@ -298,14 +298,14 @@ export function BootstrapScreen({
 
             {/* ═══ DIVIDER ═══ */}
             <div
-              className="divider-angular shrink-0"
-              style={{ animation: "fade-in-up 0.4s ease-out 0.8s backwards" }}
+              className="anim-entrance divider-angular shrink-0"
+              style={{ "--anim-delay": "0.8s" } as React.CSSProperties}
             />
 
             {/* ═══ PROGRESS BAR ═══ */}
             <div
-              className="space-y-2.5 shrink-0"
-              style={{ animation: "fade-in-up 0.4s ease-out 0.9s backwards" }}
+              className="anim-entrance space-y-2.5 shrink-0"
+              style={{ "--anim-delay": "0.9s" } as React.CSSProperties}
             >
               {/* Percentage display */}
               <div className="flex items-baseline justify-between">
@@ -342,8 +342,8 @@ export function BootstrapScreen({
 
             {/* ═══ ANIMATED DOTS ═══ */}
             <div
-              className="flex justify-center gap-1.5 shrink-0"
-              style={{ animation: "fade-in-up 0.4s ease-out 1.0s backwards" }}
+              className="anim-entrance flex justify-center gap-1.5 shrink-0"
+              style={{ "--anim-delay": "1.0s" } as React.CSSProperties}
             >
               <span className="status-diamond-sm bg-primary animate-pulse" style={{ animationDelay: "0ms" }} />
               <span className="status-diamond-sm bg-primary animate-pulse" style={{ animationDelay: "150ms" }} />
