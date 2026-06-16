@@ -66,6 +66,20 @@ export default function Mining() {
 
   const [isStarting, setIsStarting] = useState(false);
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("5m");
+
+  // Quantized clock for the chart's time axis. Deriving the window start from a
+  // 1s-stepped value (instead of raw Date.now() on every render) means re-renders
+  // within the same second produce identical x-positions, so the line advances in
+  // steady 1s steps rather than jittering by an arbitrary delta on each render
+  // (the cause of the first-load and ongoing chart jitter).
+  const [nowBucket, setNowBucket] = useState(() => Math.floor(Date.now() / 1000) * 1000);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setNowBucket(Math.floor(Date.now() / 1000) * 1000);
+    }, 1000);
+    return () => clearInterval(id);
+  }, []);
+
   // Fetch mining status and stats on mount to get maxThreads and initial statistics from the backend
   useEffect(() => {
     let cancelled = false;
@@ -206,7 +220,7 @@ export default function Mining() {
   // Prepare chart data - filter to selected time window and downsample
   const { chartData, domain } = useMemo(() => {
     const { ms, downsample } = TIME_WINDOWS[timeWindow];
-    const now = Date.now();
+    const now = nowBucket;
     const windowStart = now - ms;
 
     // Filter to time window
@@ -226,7 +240,7 @@ export default function Mining() {
       chartData: data,
       domain: [0, ms] as [number, number], // Fixed domain for stable axis
     };
-  }, [hashRateHistory, timeWindow]);
+  }, [hashRateHistory, timeWindow, nowBucket]);
 
   // Format relative time for x-axis ticks based on window size
   const formatXAxisTick = (relativeMs: number): string => {
@@ -254,8 +268,9 @@ export default function Mining() {
   const formatTooltipLabel = (label: React.ReactNode): string => {
     const relativeMs = Number(label);
     const { ms } = TIME_WINDOWS[timeWindow];
-    const now = Date.now();
-    const actualTime = now - ms + relativeMs;
+    // Use the same quantized clock as the axis so the reconstructed time matches
+    // the point's real timestamp (windowStart + relativeMs === point.timestamp).
+    const actualTime = nowBucket - ms + relativeMs;
     return new Date(actualTime).toLocaleTimeString();
   };
 
