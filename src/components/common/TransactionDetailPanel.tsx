@@ -376,7 +376,7 @@ function IORow({
   return (
     <div
       className={cn(
-        "flex items-center justify-between py-2 px-3 text-foreground",
+        "flex items-center justify-between gap-3 py-2 px-3 text-foreground",
         "chamfered-sm bg-background/50 border-l-2",
         isMine ? "border-l-success" : "border-l-border"
       )}
@@ -399,7 +399,7 @@ function IORow({
               className="text-xs min-w-0"
             />
             {rewardType && (
-              <Badge variant={rewardType} className="text-[10px] px-1.5 py-0">
+              <Badge variant={rewardType} className="shrink-0 text-[10px] px-1.5 py-0">
                 {rewardType === "leaf"
                   ? "Leaf"
                   : rewardType === "stem"
@@ -421,7 +421,7 @@ function IORow({
         )}
       </div>
       {amount !== undefined && (
-        <AmountDisplay amount={amount} size="sm" className="shrink-0 ml-2" />
+        <AmountDisplay amount={amount} size="sm" className="shrink-0" />
       )}
     </div>
   );

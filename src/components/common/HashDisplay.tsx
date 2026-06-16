@@ -46,9 +46,9 @@ export function HashDisplay({
       )}
       onClick={copyable ? handleCopy : undefined}
     >
-      <span>{displayHash}</span>
+      <span className="min-w-0 truncate">{displayHash}</span>
       {copyable && (
-        <span className="text-foreground-muted">
+        <span className="shrink-0 text-foreground-muted">
           {copied ? (
             <Check className="h-3.5 w-3.5 text-success" />
           ) : (
