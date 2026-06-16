@@ -56,6 +56,27 @@ const initialState = {
   minedBlocks: [] as MinedBlock[],
 };
 
+/**
+ * Field-wise equality for mining stats. The backend re-broadcasts the full
+ * stats object every 500ms (poll-driven, not change-driven), so most ticks
+ * carry identical values — especially while stopped. Comparing here lets us
+ * skip no-op store updates and avoid re-rendering the Mining panel twice a
+ * second when nothing has actually changed.
+ */
+function miningStatsEqual(a: MiningStats, b: MiningStats): boolean {
+  return (
+    a.isRunning === b.isRunning &&
+    a.hashRate === b.hashRate &&
+    a.hashRateMH === b.hashRateMH &&
+    a.stemsFound === b.stemsFound &&
+    a.leavesFound === b.leavesFound &&
+    a.staleBlocks === b.staleBlocks &&
+    a.uptime === b.uptime &&
+    a.lastBlockTime === b.lastBlockTime &&
+    a.averageBlockTime === b.averageBlockTime
+  );
+}
+
 export const useMiningStore = create<MiningState>((set) => ({
   ...initialState,
 
@@ -69,6 +90,15 @@ export const useMiningStore = create<MiningState>((set) => ({
 
   setStats: (stats) =>
     set((state) => {
+      // Skip no-op updates: the backend re-sends identical stats every 500ms.
+      // Returning the *same* state reference makes Zustand's Object.is check
+      // short-circuit and notify no listeners — important because Mining and
+      // Dashboard subscribe to the whole store (no selector), so any new top-level
+      // state object would re-render them. This kills the idle 500ms render churn.
+      if (miningStatsEqual(state.stats, stats)) {
+        return state;
+      }
+
       // Only add history points when actively mining with non-zero hashrate
       if (stats.isRunning && stats.hashRate > 0) {
         const newPoint: MiningHistoryPoint = {
