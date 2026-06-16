@@ -329,12 +329,11 @@ function parseAddressList(hex: string): string[] {
 // ---------------------------------------------------------------------------
 
 export function ContractDashboard({ contractAddress, abi }: ContractDashboardProps) {
-  const { results, lastUpdated, hasDashboard, refresh } = useContractDashboard(
+  const { results, lastUpdated, isRefreshing, hasDashboard, refresh } = useContractDashboard(
     contractAddress,
     abi,
   );
   const timeAgo = useTimeAgo(lastUpdated);
-  const isRefreshing = results.some((r) => r.status === "loading");
 
   // No zero-param read methods — fall back to default placeholder
   if (!hasDashboard) {

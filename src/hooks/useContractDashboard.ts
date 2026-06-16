@@ -26,9 +26,16 @@ export interface DashboardQueryResult {
 // Hook
 // ---------------------------------------------------------------------------
 
+/** How a query pass should affect the UI. */
+type QueryMode = "initial" | "background" | "manual";
+
 /**
  * Analyses an ABI, finds zero-param read methods, and auto-queries them.
  * Re-queries on blockchain refreshTrigger changes (debounced 2s).
+ *
+ * Background re-queries are stale-while-revalidate: prior values stay on screen
+ * (no skeleton flash) and results are only replaced when a value actually
+ * changed, so a contract dashboard doesn't flicker on every new block.
  */
 export function useContractDashboard(
   contractAddress: string | null,
@@ -36,6 +43,7 @@ export function useContractDashboard(
 ) {
   const [results, setResults] = useState<DashboardQueryResult[]>([]);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshTrigger = useBlockchainStore((s) => s.refreshTrigger);
   const cancelledRef = useRef(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
@@ -45,29 +53,26 @@ export function useContractDashboard(
     (m) => m.mutability === "read" && m.params.length === 0 && m.returns,
   ) ?? [];
 
-  const queryAll = useCallback(async () => {
+  const queryAll = useCallback(async (mode: QueryMode = "initial") => {
     if (!contractAddress || dashboardMethods.length === 0) return;
 
-    // Set all to loading
-    setResults(
-      dashboardMethods.map((m) => ({
-        methodName: m.name,
-        displayName: m.displayName || m.name,
-        returnType: m.returns!.type,
-        returnDescription: m.returns!.description,
-        display: m.returns!.display,
-        status: "loading" as const,
-      })),
-    );
+    // Only the first load shows skeletons. Background/manual refreshes keep the
+    // prior values visible (stale-while-revalidate); manual refreshes spin the
+    // footer icon, background refreshes are silent.
+    if (mode === "initial") {
+      setResults(dashboardMethods.map(loadingResult));
+    } else if (mode === "manual") {
+      setIsRefreshing(true);
+    }
 
-    const settled = await Promise.allSettled(
-      dashboardMethods.map((method) => queryMethod(contractAddress, method)),
-    );
+    try {
+      const settled = await Promise.allSettled(
+        dashboardMethods.map((method) => queryMethod(contractAddress, method)),
+      );
 
-    if (cancelledRef.current) return;
+      if (cancelledRef.current) return;
 
-    setResults(
-      dashboardMethods.map((m, i) => {
+      const next = dashboardMethods.map((m, i) => {
         const result = settled[i];
         if (result.status === "fulfilled" && result.value.success) {
           const returnType = m.returns!.type;
@@ -109,29 +114,34 @@ export function useContractDashboard(
           status: "error" as const,
           errorMessage,
         };
-      }),
-    );
+      });
 
-    setLastUpdated(Date.now());
+      // Only swap in new results when something actually changed, so unchanged
+      // blocks don't re-render the dashboard.
+      setResults((prev) => (resultsEqual(prev, next) ? prev : next));
+      setLastUpdated(Date.now());
+    } finally {
+      if (mode === "manual") setIsRefreshing(false);
+    }
     // We intentionally exclude dashboardMethods from deps — we re-derive from abi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractAddress, abi]);
 
-  // Initial query on mount
+  // Initial query on mount / contract change
   useEffect(() => {
     cancelledRef.current = false;
-    queryAll();
+    queryAll("initial");
     return () => {
       cancelledRef.current = true;
     };
   }, [queryAll]);
 
-  // Re-query on blockchain refresh (debounced 2s)
+  // Re-query on blockchain refresh (debounced 2s), stale-while-revalidate
   useEffect(() => {
     if (refreshTrigger === 0) return;
     clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      queryAll();
+      queryAll("background");
     }, 2000);
     return () => clearTimeout(debounceRef.current);
   }, [refreshTrigger, queryAll]);
@@ -139,8 +149,9 @@ export function useContractDashboard(
   return {
     results,
     lastUpdated,
+    isRefreshing,
     hasDashboard: dashboardMethods.length > 0,
-    refresh: queryAll,
+    refresh: () => queryAll("manual"),
   };
 }
 
@@ -154,4 +165,36 @@ async function queryMethod(contractAddress: string, method: AbiMethod): Promise<
     method: method.name,
     data: "",
   });
+}
+
+/** Build a placeholder (loading) result for a dashboard method. */
+function loadingResult(m: AbiMethod): DashboardQueryResult {
+  return {
+    methodName: m.name,
+    displayName: m.displayName || m.name,
+    returnType: m.returns!.type,
+    returnDescription: m.returns!.description,
+    display: m.returns!.display,
+    status: "loading",
+  };
+}
+
+/** Shallow value-equality across the fields that affect rendering. */
+function resultsEqual(a: DashboardQueryResult[], b: DashboardQueryResult[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (
+      x.methodName !== y.methodName ||
+      x.status !== y.status ||
+      x.decodedValue !== y.decodedValue ||
+      x.rawHex !== y.rawHex ||
+      x.numericValue !== y.numericValue ||
+      x.errorMessage !== y.errorMessage
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
