@@ -6,6 +6,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
+use xtal::fruit::FruitType;
 use xtal::utils::NetworkType;
 
 use crate::config::{
@@ -81,12 +82,21 @@ pub struct NodeConfigInfo {
 pub async fn get_node_config() -> Result<NodeConfigInfo, String> {
     let config = load_node_config().map_err(|e| format!("Failed to load config: {}", e))?;
 
+    // An empty `subscribed_fruits` is the sentinel for a full node subscribed to
+    // every shard (see NodeConfig docs / node builder). Expand it to the full
+    // fruit list so the Settings panel reads "9/9" instead of "0/9".
+    let subscribed_fruits = if config.subscribed_fruits.is_empty() {
+        FruitType::all().map(|f| f.to_string()).collect()
+    } else {
+        config.subscribed_fruits
+    };
+
     Ok(NodeConfigInfo {
         archival: config.storage.archival,
         tx_index: config.storage.enable_tx_index,
         sync_mode: config.sync_mode.to_string(),
         stem_retention_epochs: config.pruning.stem_epochs_to_keep,
-        subscribed_fruits: config.subscribed_fruits,
+        subscribed_fruits,
     })
 }
 
