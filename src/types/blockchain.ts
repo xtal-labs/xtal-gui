@@ -195,3 +195,59 @@ export interface LeafBlockDetail extends BlockDetailBase {
 }
 
 export type BlockDetail = StemBlockDetail | LeafBlockDetail;
+
+/**
+ * Chain-strip visualizer types (backbone + fruit body availability).
+ *
+ * The view distinguishes a fruit whose body (tx payload) is retrievable from one
+ * that is only *referenced* — its carrier stem's receipt says it carried
+ * transactions, but the body failed to archive. `bodyTxCount` is what is actually
+ * present; `receiptTxCount` is what the receipt says it should be.
+ */
+export interface StripFruit {
+  hash: string;
+  fruitType: string;
+  bodyPresent: boolean;
+  /** Transactions actually in the body; undefined when the body is missing. */
+  bodyTxCount?: number;
+  /** Transactions the stem receipt recorded; undefined for empty attestation fruits. */
+  receiptTxCount?: number;
+}
+
+export interface StripStem {
+  hash: string;
+  height: number;
+  timestamp: number;
+  fruits: StripFruit[];
+}
+
+export interface StripLeaf {
+  hash: string;
+  leafHeight: number;
+  timestamp: number;
+  txCount: number;
+  froot: string;
+}
+
+/** One (stems → leaf) interval; `leaf` is undefined for the open tail at the tip. */
+export interface StripInterval {
+  leaf?: StripLeaf;
+  stems: StripStem[];
+}
+
+/** One epoch page: its (stems → leaf) intervals in order. */
+export interface EpochStrip {
+  epoch: number;
+  isCurrent: boolean;
+  intervals: StripInterval[];
+}
+
+/**
+ * Body-availability classification that drives the fruit glyph encoding:
+ * - `payload` — body present with transactions (filled)
+ * - `empty`   — body present, zero transactions (hollow)
+ * - `missing` — body NOT retrievable but the receipt says it carried a payload
+ *               (the archival bug; rendered dashed + ⚠)
+ * - `orphan`  — body not retrievable and no payload was recorded (faint/ghost)
+ */
+export type FruitBodyState = "payload" | "empty" | "missing" | "orphan";

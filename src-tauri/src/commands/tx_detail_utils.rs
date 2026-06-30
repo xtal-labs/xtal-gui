@@ -4,8 +4,8 @@ use xtal::address_format::{format_script_address, format_utxo_address};
 use xtal::crypto::hash_public_key;
 use xtal::interfaces::ChainDataProvider;
 use xtal::script::{
-    extract_p2sh_redeem_script, extract_pubkey_from_script_sig, parse_multisig_script,
-    p2sh_script_hash, p2sh_script_pubkey, Script,
+    extract_p2sh_redeem_script, extract_pubkey_from_script_sig, p2sh_script_hash,
+    p2sh_script_pubkey, parse_multisig_script, Script,
 };
 use xtal::transaction::receipt::TransactionReceipt;
 use xtal::transaction::{Transaction, TxIn, TxOut, MIN_GAS_PRICE};

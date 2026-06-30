@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 
-export type Tab = "dashboard" | "mining" | "mempool" | "validator" | "wallet" | "gateway" | "network" | "explorer" | "console" | "settings";
+export type Tab = "dashboard" | "mining" | "mempool" | "validator" | "wallet" | "gateway" | "network" | "explorer" | "visualizer" | "console" | "settings";
 
 export type NodeConnectionState = "connecting" | "connected" | "disconnected";
 

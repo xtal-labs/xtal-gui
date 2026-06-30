@@ -357,6 +357,7 @@ fn run_setup_mode(context: tauri::Context) {
             // Setup-only commands (no node required)
             commands::check_first_run,
             commands::get_available_networks,
+            commands::get_active_network,
             commands::initialize_node,
             commands::set_node_config,
             commands::create_setup_wallet,
@@ -682,9 +683,8 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                             let sync_rx = match services.subscribe_sync_state() {
                                 Some(rx) => rx,
                                 None => {
-                                    let msg =
-                                        "Sync state unavailable — node services not ready"
-                                            .to_string();
+                                    let msg = "Sync state unavailable — node services not ready"
+                                        .to_string();
                                     error!("Node startup failed: {}", msg);
                                     status.set_failed(make_startup_error(msg, network));
                                     return;
@@ -755,6 +755,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             // Setup commands (still available for check_first_run)
             commands::check_first_run,
             commands::get_available_networks,
+            commands::get_active_network,
             // Startup status commands (available during loading + degraded)
             commands::get_startup_status,
             commands::open_directory,
@@ -774,6 +775,8 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_block,
             commands::get_block_detail,
             commands::get_fruit_detail,
+            commands::get_epoch_strip,
+            commands::get_current_epoch,
             commands::get_transaction_detail_explorer,
             // Mempool commands
             commands::get_mempool_info,
@@ -949,7 +952,7 @@ enum StartupUpdate {
     Bootstrap(BootstrapProgress),
 }
 
-fn gui_startup_cli_config(network: NetworkType, config_path: PathBuf) -> CliConfig {
+fn gui_startup_cli_config(network: NetworkType) -> CliConfig {
     CliConfig {
         network_port: 0,
         api_port: 0,
@@ -957,7 +960,6 @@ fn gui_startup_cli_config(network: NetworkType, config_path: PathBuf) -> CliConf
         mining_threads: 0,
         metrics_port: 0,
         network: Some(network),
-        config_path: config_path.to_string_lossy().to_string(),
         ..CliConfig::for_network(network)
     }
 }
@@ -1013,17 +1015,9 @@ fn spawn_node_thread(
                     }
                 };
 
-                let config_path = match node_config_path() {
-                    Ok(path) => path,
-                    Err(e) => {
-                        let msg = format!("Failed to resolve node config path: {}", e);
-                        error!("{}", msg);
-                        let _ = error_tx.send(msg);
-                        return;
-                    }
-                };
-
-                let cli_config = gui_startup_cli_config(network, config_path);
+                // NodeBuilder derives the config path from dir_config, which is
+                // already network-scoped — no need to pass one in.
+                let cli_config = gui_startup_cli_config(network);
 
                 // Create wallet manager
                 let wallet = match load_wallet_manager(network) {
@@ -1144,11 +1138,9 @@ mod tests {
 
     #[test]
     fn gui_startup_cli_config_preserves_persisted_node_settings() {
-        let cli_config =
-            gui_startup_cli_config(NetworkType::Testnet, PathBuf::from("/tmp/config.json"));
+        let cli_config = gui_startup_cli_config(NetworkType::Testnet);
 
         assert_eq!(cli_config.network, Some(NetworkType::Testnet));
-        assert_eq!(cli_config.config_path, "/tmp/config.json");
         assert_eq!(cli_config.network_port, 0);
         assert_eq!(cli_config.api_port, 0);
         assert_eq!(cli_config.rpc_port, 0);

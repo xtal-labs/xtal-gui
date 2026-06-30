@@ -96,7 +96,10 @@ impl AppState {
             AbiCache::open(&std::env::temp_dir()).unwrap_or_else(|e2| {
                 // Last resort: run with an in-memory cache rather than panicking
                 // during AppState construction (which would hang startup at 99%).
-                log::error!("Failed to open ABI cache in temp dir: {} — using ephemeral cache", e2);
+                log::error!(
+                    "Failed to open ABI cache in temp dir: {} — using ephemeral cache",
+                    e2
+                );
                 AbiCache::ephemeral()
             })
         });

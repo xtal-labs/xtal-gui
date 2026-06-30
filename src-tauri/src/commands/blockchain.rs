@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use tauri::State;
 use xtal::address::encode_pkh;
+use xtal::blockchain::epoch_manager::EpochManager;
 use xtal::blockchain::{Block, BlockType, Blockchain};
 use xtal::consensus::validation::COINBASE_MATURITY;
 use xtal::crypto::hash_public_key;
@@ -16,11 +17,13 @@ use xtal::interfaces::ChainDataProvider;
 use xtal::node::sync::SyncState;
 use xtal::storage::block_io::calculate_block_size;
 use xtal::transaction::receipt::TransactionReceipt;
+use xtal::transaction::BlockReceipts;
 use xtal::transaction::Transaction;
 
 use crate::commands::tx_detail_utils::extract_transaction_details;
 use crate::commands::wallet::{
-    build_transaction_detail_response, MaturityStatus, TransactionDetail, TransactionReceiptDetail,
+    build_transaction_detail_response, find_transaction_in_block_or_fruits,
+    resolve_transaction_context, MaturityStatus, TransactionDetail, TransactionReceiptDetail,
 };
 use crate::state::AppState;
 
@@ -546,65 +549,66 @@ pub async fn get_transaction_detail_explorer(
     let leaf_index = build_leaf_index(&blockchain);
     let txid_bytes = parse_hash(&txid)?;
     let txid_hex = hex::encode(txid_bytes);
+    let current_leaf_height = blockchain.get_current_leaf_height();
 
-    let (block, block_hash_hex, leaf_height_opt) = if let Some(hash) = block_hash {
-        let cleaned = hash.trim_start_matches("0x").to_string();
-        let block = match blockchain.get_block(&cleaned) {
-            Ok(Some(block)) => block,
-            Ok(None) => return Ok(None),
-            Err(e) => return Err(format!("Failed to get block: {}", e)),
-        };
-        let leaf_height = resolve_leaf_height(&blockchain, &block, &leaf_index);
-        (block, cleaned, leaf_height)
-    } else {
-        let idx = blockchain
-            .get_transaction_index(&txid_bytes)
-            .map_err(|e| format!("Failed to lookup transaction index: {}", e))?;
-        let idx = match idx {
-            Some(idx) => idx,
-            None => return Ok(None),
-        };
-        let block = blockchain
-            .get_block_by_hash_arc(&idx.block_hash)
-            .map_err(|e| format!("Failed to load block: {}", e))?;
-        let leaf_height =
-            resolve_leaf_height(&blockchain, &block, &leaf_index).or(Some(idx.block_height));
-        (block, hex::encode(idx.block_hash), leaf_height)
-    };
-
-    let mut tx = block
-        .transactions
-        .iter()
-        .find_map(|tx: &Transaction| match tx.id() {
-            Ok(id) if id == txid_bytes => Some(tx.clone()),
-            _ => None,
-        });
-
-    if tx.is_none() {
-        for fruit_hash in &block.fruit_hashes {
-            let Some(fruit) = blockchain.get_fruit_by_hash(fruit_hash, None) else {
-                continue;
+    // Resolve the raw tx + block context.
+    //
+    // Fruits carry only VM transactions, which live in a stem's fruits (never the
+    // leaf/UTXO tx-index). When an explicit block is given (block explorer) we search
+    // it directly. Otherwise — e.g. a VM tx opened from the fruit detail panel, which
+    // only knows the txid — resolve it the same way the wallet does: by scanning active
+    // stems' fruits and the mempool via `resolve_transaction_context`.
+    let (tx, block_hash_hex, leaf_height_opt, timestamp, confirmations, is_pending) =
+        if let Some(hash) = block_hash {
+            let cleaned = hash.trim_start_matches("0x").to_string();
+            let block = match blockchain.get_block(&cleaned) {
+                Ok(Some(block)) => block,
+                Ok(None) => return Ok(None),
+                Err(e) => return Err(format!("Failed to get block: {}", e)),
             };
-
-            if let Some(fruit_tx) = fruit
-                .transactions
-                .iter()
-                .find(|fruit_tx| fruit_tx.hash() == txid_bytes)
-            {
-                tx = Some(match fruit_tx {
-                    FruitTx::AccountTransfer(tx) => Transaction::AccountTransfer(tx.clone()),
-                    FruitTx::ContractCall(tx) => Transaction::ContractCall(tx.clone()),
-                    FruitTx::ContractDeploy(tx) => Transaction::ContractDeploy(tx.clone()),
-                });
-                break;
-            }
-        }
-    }
-
-    let tx = match tx {
-        Some(tx) => tx,
-        None => return Ok(None),
-    };
+            let leaf_height = resolve_leaf_height(&blockchain, &block, &leaf_index);
+            let Some(tx) = find_transaction_in_block_or_fruits(&blockchain, &block, &txid_bytes)
+            else {
+                return Ok(None);
+            };
+            let confirmations = leaf_height
+                .map(|height| current_leaf_height.saturating_sub(height) as u32 + 1)
+                .unwrap_or(0);
+            (
+                tx,
+                Some(cleaned),
+                leaf_height,
+                block.header.timestamp,
+                confirmations,
+                false,
+            )
+        } else {
+            let mempool_tx = state
+                .services
+                .mempool()
+                .get_transaction_by_hash(&txid_bytes)
+                .map(|tx| tx.as_ref().clone());
+            let resolved = match resolve_transaction_context(
+                &blockchain,
+                &txid_bytes,
+                current_leaf_height,
+                None,
+                None,
+                mempool_tx,
+                0,
+            ) {
+                Ok(resolved) => resolved,
+                Err(_) => return Ok(None),
+            };
+            (
+                resolved.tx,
+                resolved.block_hash,
+                resolved.block_height,
+                resolved.timestamp,
+                resolved.confirmations,
+                resolved.is_pending,
+            )
+        };
 
     let stored_receipt = blockchain
         .get_receipt(&txid_bytes)
@@ -619,12 +623,7 @@ pub async fn get_transaction_detail_explorer(
     let execution_status = receipt.as_ref().map(|detail| detail.status.clone());
 
     let (tx_type, inputs, outputs, total_input, total_output, fee) =
-        extract_transaction_details(&tx, &blockchain, false, 0, None, raw_receipt.as_ref())?;
-
-    let current_leaf_height = blockchain.get_current_leaf_height();
-    let confirmations = leaf_height_opt
-        .map(|height| current_leaf_height.saturating_sub(height) as u32 + 1)
-        .unwrap_or(0);
+        extract_transaction_details(&tx, &blockchain, is_pending, 0, None, raw_receipt.as_ref())?;
 
     let maturity_status = if tx_type_has_maturity(&tx_type) && leaf_height_opt.is_some() {
         let creation_height = leaf_height_opt.unwrap();
@@ -650,8 +649,8 @@ pub async fn get_transaction_detail_explorer(
         total_output,
         fee,
         confirmations,
-        block.header.timestamp,
-        Some(block_hash_hex),
+        timestamp,
+        block_hash_hex,
         leaf_height_opt,
         &HashSet::new(),
         execution_status,
@@ -788,4 +787,244 @@ pub async fn get_fruit_detail(
     }
 
     Ok(None)
+}
+
+// ─── Chain-strip visualizer (backbone + fruit body availability) ─────────────
+
+/// One fruit as seen by the chain-strip visualizer.
+///
+/// The view exists to distinguish a fruit whose body (tx payload) is retrievable
+/// from one that is only *referenced* — its carrier stem's receipt says it
+/// carried transactions, but the body itself failed to archive. That gap is the
+/// bug this surfaces, so both the "should have" count (`receipt_tx_count`) and the
+/// actually-present count (`body_tx_count`) are reported.
+#[derive(Debug, Clone, Serialize)]
+pub struct StripFruit {
+    pub hash: String,
+    pub fruit_type: String,
+    /// Whether the full fruit body is retrievable locally.
+    pub body_present: bool,
+    /// Transactions actually present in the body (None when the body is missing).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_tx_count: Option<usize>,
+    /// Transactions the carrier stem's receipt recorded for this fruit — what the
+    /// body *should* contain. None for empty attestation fruits (no receipt).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receipt_tx_count: Option<usize>,
+}
+
+/// One stem on the backbone, with every fruit it references.
+#[derive(Debug, Clone, Serialize)]
+pub struct StripStem {
+    pub hash: String,
+    pub height: u64,
+    pub timestamp: u64,
+    pub fruits: Vec<StripFruit>,
+}
+
+/// The gold leaf that caps a (stems → leaf) interval.
+#[derive(Debug, Clone, Serialize)]
+pub struct StripLeaf {
+    pub hash: String,
+    pub leaf_height: u64,
+    pub timestamp: u64,
+    pub tx_count: usize,
+    pub froot: String,
+}
+
+/// One (stems → leaf) interval within an epoch. `leaf` is None for the open
+/// interval at the chain tip: stems mined since the last leaf, not yet finalized.
+#[derive(Debug, Clone, Serialize)]
+pub struct StripInterval {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub leaf: Option<StripLeaf>,
+    pub stems: Vec<StripStem>,
+}
+
+/// One epoch page for the visualizer: its (stems → leaf) intervals in order.
+#[derive(Debug, Clone, Serialize)]
+pub struct EpochStrip {
+    pub epoch: u32,
+    pub is_current: bool,
+    pub intervals: Vec<StripInterval>,
+}
+
+/// Classify a single referenced fruit by body availability. `receipts` is the
+/// carrier stem's receipt set, used to recover the fruit type when the body is
+/// gone and to report the "should have had a payload" count.
+fn summarize_strip_fruit(
+    blockchain: &Blockchain,
+    fruit_hash: &[u8; 32],
+    probe_leaf_height: u64,
+    receipts: Option<&BlockReceipts>,
+) -> StripFruit {
+    // Receipt cross-reference: authoritative fruit_hash → type → executed-tx count.
+    let mut receipt_type: Option<String> = None;
+    let mut receipt_tx_count: Option<usize> = None;
+    if let Some(r) = receipts {
+        for (fruit_type, subtree) in &r.fruit_subtrees {
+            if subtree.fruit_hash == *fruit_hash {
+                receipt_type = Some(fruit_type.to_string());
+                receipt_tx_count =
+                    Some(r.receipts_by_fruit.get(fruit_type).map_or(0, |v| v.len()));
+                break;
+            }
+        }
+    }
+
+    // Body availability: the whole point — is the tx payload actually retrievable?
+    // Search ALL on-disk epochs (None), not just the carrier epoch: a fruit body can
+    // be keyed under a different epoch, and an epoch-scoped miss would be a FALSE
+    // "missing" alarm. This mirrors `cf_medic::audit_fruit_bodies`.
+    let body = blockchain.get_fruit_by_hash(fruit_hash, None);
+    let body_present = body.is_some();
+    let body_tx_count = body.as_ref().map(|f| f.transactions.len());
+
+    // Fruit type for coloring: body → persisted header → receipt subtree → unknown.
+    let fruit_type = body
+        .as_ref()
+        .map(|f| f.fruit_type().to_string())
+        .or_else(|| {
+            blockchain
+                .get_fruit_header_at(probe_leaf_height, fruit_hash)
+                .ok()
+                .flatten()
+                .map(|hdr| hdr.fruit_type().to_string())
+        })
+        .or(receipt_type)
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    StripFruit {
+        hash: hex::encode(fruit_hash),
+        fruit_type,
+        body_present,
+        body_tx_count,
+        receipt_tx_count,
+    }
+}
+
+/// Summarize a run of stems (by hash) into backbone nodes with their fruits.
+fn summarize_strip_stems(
+    blockchain: &Blockchain,
+    stem_hashes: &[[u8; 32]],
+    probe_leaf_height: u64,
+) -> Result<Vec<StripStem>, String> {
+    let mut stems = Vec::with_capacity(stem_hashes.len());
+    for stem_hash in stem_hashes {
+        let stem_block = blockchain.get_block_by_hash(stem_hash).map_err(|e| {
+            format!("get_block_by_hash({}) failed: {}", hex::encode(stem_hash), e)
+        })?;
+        let height = blockchain.get_block_height_by_hash(stem_hash).unwrap_or(0);
+        let snapshot = blockchain.get_stem_metadata(stem_hash);
+        let receipts = snapshot.as_ref().map(|s| &s.block_receipts);
+
+        let fruits = stem_block
+            .fruit_hashes
+            .iter()
+            .map(|fruit_hash| {
+                summarize_strip_fruit(blockchain, fruit_hash, probe_leaf_height, receipts)
+            })
+            .collect();
+
+        stems.push(StripStem {
+            hash: hex::encode(stem_hash),
+            height,
+            timestamp: stem_block.header.timestamp,
+            fruits,
+        });
+    }
+    Ok(stems)
+}
+
+/// Build the per-epoch "chain strip" for the backbone / fruit-body visualizer.
+///
+/// For each epoch in `[from_epoch, to_epoch]`, returns its (stems → leaf)
+/// intervals with every referenced fruit classified by body availability — so the
+/// UI can flag fruits whose payload failed to archive (header/receipt present,
+/// body gone). Read-only.
+#[tauri::command]
+pub async fn get_epoch_strip(
+    state: State<'_, AppState>,
+    from_epoch: u32,
+    to_epoch: u32,
+) -> Result<Vec<EpochStrip>, String> {
+    // Cap a single request so a stray range can't sweep the whole chain.
+    const MAX_EPOCHS_PER_REQUEST: u32 = 16;
+
+    if from_epoch > to_epoch {
+        return Err(format!(
+            "from_epoch ({}) must be <= to_epoch ({})",
+            from_epoch, to_epoch
+        ));
+    }
+    if to_epoch - from_epoch + 1 > MAX_EPOCHS_PER_REQUEST {
+        return Err(format!(
+            "requested {} epochs; max {} per request",
+            to_epoch - from_epoch + 1,
+            MAX_EPOCHS_PER_REQUEST
+        ));
+    }
+
+    let blockchain = state.services.blockchain();
+    let current_epoch = blockchain.get_current_epoch();
+
+    let mut strips = Vec::with_capacity((to_epoch - from_epoch + 1) as usize);
+
+    for epoch in from_epoch..=to_epoch {
+        // Any height inside the epoch resolves the per-epoch fruit store, so a
+        // single probe height works for every stem in the epoch.
+        let probe_leaf_height = EpochManager::epoch_start_height(epoch);
+        let end_h = EpochManager::epoch_end_height(epoch);
+        let mut intervals: Vec<StripInterval> = Vec::new();
+
+        for h in probe_leaf_height..=end_h {
+            let leaf_block = match blockchain.get_leaf_by_height(h) {
+                Ok(Some(b)) => b,
+                Ok(None) => break, // no further persisted leaves in this epoch
+                Err(e) => return Err(format!("get_leaf_by_height({}) failed: {}", h, e)),
+            };
+            let stem_hashes = blockchain
+                .find_intervening_stem_hashes(leaf_block.hash())
+                .map_err(|e| format!("find_intervening_stem_hashes failed: {}", e))?;
+            let stems = summarize_strip_stems(blockchain, &stem_hashes, probe_leaf_height)?;
+            intervals.push(StripInterval {
+                leaf: Some(StripLeaf {
+                    hash: hex::encode(leaf_block.hash()),
+                    leaf_height: h,
+                    timestamp: leaf_block.header.timestamp,
+                    tx_count: leaf_block.transactions.len(),
+                    froot: hex::encode(leaf_block.header.froot),
+                }),
+                stems,
+            });
+        }
+
+        // Open tail: stems mined since the last leaf (only the current epoch has one).
+        if epoch == current_epoch {
+            let open_stem_hashes: Vec<[u8; 32]> = blockchain
+                .get_stems_since_last_leaf()
+                .into_iter()
+                .map(|((stem_hash, _nonce), _height)| stem_hash)
+                .collect();
+            if !open_stem_hashes.is_empty() {
+                let stems =
+                    summarize_strip_stems(blockchain, &open_stem_hashes, probe_leaf_height)?;
+                intervals.push(StripInterval { leaf: None, stems });
+            }
+        }
+
+        strips.push(EpochStrip {
+            epoch,
+            is_current: epoch == current_epoch,
+            intervals,
+        });
+    }
+
+    Ok(strips)
+}
+
+/// Current epoch at the chain tip — the right-edge anchor for the visualizer.
+#[tauri::command]
+pub async fn get_current_epoch(state: State<'_, AppState>) -> Result<u32, String> {
+    Ok(state.services.blockchain().get_current_epoch())
 }

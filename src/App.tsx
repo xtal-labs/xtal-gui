@@ -16,6 +16,7 @@ import {
   RotateCcw,
   Menu,
   X,
+  Orbit,
 } from "lucide-react";
 
 import { ThemeProvider, LoadingScreen, NodeStartupError, BootstrapScreen } from "@/components/common";
@@ -50,6 +51,7 @@ import Mempool from "@/components/Mempool/Mempool";
 const ValidatorPanel = lazy(() => import("@/components/Validator/Validator"));
 const WalletPanel = lazy(() => import("@/components/Wallet/Wallet"));
 const Gateway = lazy(() => import("@/components/Gateway/Gateway"));
+const ChainVisualizer = lazy(() => import("@/components/Visualizer"));
 import Network from "@/components/Network/Network";
 import RpcConsole from "@/components/RpcConsole/RpcConsole";
 import SettingsPanel from "@/components/Settings/Settings";
@@ -136,6 +138,7 @@ const navItems: NavItem[] = [
   { id: "gateway", label: "Gateway", icon: Waypoints },
   { id: "network", label: "Network", icon: Globe },
   { id: "explorer", label: "Explorer", icon: Blocks },
+  { id: "visualizer", label: "Visualizer", icon: Orbit },
   { id: "console", label: "Console", icon: Terminal },
   { id: "settings", label: "Settings", icon: Settings },
 ];
@@ -1260,6 +1263,11 @@ function AppContent() {
           {activeTab === "explorer" && (
             <Suspense fallback={<div className="p-4 text-muted-foreground">Loading...</div>}>
               <BlockExplorer />
+            </Suspense>
+          )}
+          {activeTab === "visualizer" && (
+            <Suspense fallback={<div className="p-4 text-muted-foreground">Loading...</div>}>
+              <ChainVisualizer />
             </Suspense>
           )}
           {activeTab === "console" && <RpcConsole />}
