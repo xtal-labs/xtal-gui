@@ -16,7 +16,10 @@ use xtal::wallet::WalletManager;
 use crate::commands::wallet::{
     create_wallet_impl, wallet_from_mnemonic_impl, WalletCreationResult,
 };
-use crate::config::{node_config_exists, node_config_path, set_node_sync_preferences, GuiConfig};
+use crate::config::{
+    node_config_exists, node_config_path_for, set_active_network, set_node_sync_preferences,
+    GuiConfig,
+};
 
 /// Network information for selection
 #[derive(Debug, Clone, Serialize)]
@@ -41,26 +44,51 @@ pub async fn check_first_run() -> Result<bool, String> {
     Ok(!node_config_exists())
 }
 
+/// Build the display info for a network.
+fn network_info_for(network: NetworkType) -> NetworkInfo {
+    let (id, name, description) = match network {
+        NetworkType::Mainnet => (
+            "mainnet",
+            "Mainnet",
+            "Crystal main network for real transactions",
+        ),
+        NetworkType::Testnet => (
+            "testnet",
+            "Testnet",
+            "Test network for development and testing",
+        ),
+        NetworkType::Regtest => ("regtest", "Regtest", "Local regression testing network"),
+    };
+
+    NetworkInfo {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: description.to_string(),
+    }
+}
+
 /// Get available networks for selection
 #[tauri::command]
 pub async fn get_available_networks() -> Result<Vec<NetworkInfo>, String> {
     Ok(vec![
-        NetworkInfo {
-            id: "mainnet".to_string(),
-            name: "Mainnet".to_string(),
-            description: "Crystal main network for real transactions".to_string(),
-        },
-        NetworkInfo {
-            id: "testnet".to_string(),
-            name: "Testnet".to_string(),
-            description: "Test network for development and testing".to_string(),
-        },
-        NetworkInfo {
-            id: "regtest".to_string(),
-            name: "Regtest".to_string(),
-            description: "Local regression testing network".to_string(),
-        },
+        network_info_for(NetworkType::Mainnet),
+        network_info_for(NetworkType::Testnet),
+        network_info_for(NetworkType::Regtest),
     ])
+}
+
+/// Get the active/pending network (the active-network pointer), if any.
+///
+/// Returns `Some` when a network is already selected — e.g. the user switched to
+/// an uninitialized network in Settings and was restarted into the wizard, which
+/// uses this to pre-select that network and skip the network step. Returns `None`
+/// on a genuine first run so the wizard shows the network picker.
+#[tauri::command]
+pub async fn get_active_network() -> Result<Option<NetworkInfo>, String> {
+    let network = GuiConfig::load_or_create()
+        .ok()
+        .and_then(|config| config.last_network);
+    Ok(network.map(network_info_for))
 }
 
 /// Initialize the node with selected network
@@ -89,13 +117,14 @@ pub async fn initialize_node(network: String) -> Result<InitResult, String> {
 
     log::info!("Created directories at: {:?}", dirs.data_dir);
 
-    let config_path = node_config_path()
+    let config_path = node_config_path_for(network_type)
         .map_err(|e| format!("Failed to resolve node configuration path: {}", e))?;
     write_default_config(&config_path, network_type)
         .map_err(|e| format!("Failed to save node configuration: {}", e))?;
 
-    GuiConfig::load_or_create()
-        .map_err(|e| format!("Failed to prepare GUI configuration: {}", e))?;
+    // Point the app at this network so the wizard's later steps and the next
+    // boot resolve to this network's per-network config.
+    set_active_network(network_type).map_err(|e| format!("Failed to set active network: {}", e))?;
 
     log::info!("Node configuration saved");
 

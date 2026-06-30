@@ -10,7 +10,7 @@ use xtal::fruit::FruitType;
 use xtal::utils::NetworkType;
 
 use crate::config::{
-    load_node_config, node_config_path, set_node_storage_preferences, switch_node_network,
+    load_node_config, node_config_path, set_active_network, set_node_storage_preferences,
     update_gui_config, GuiConfig,
 };
 use crate::state::{SharedStartupStatus, StartupStatusInner};
@@ -115,7 +115,12 @@ pub async fn set_node_storage_flags(archival: bool, tx_index: bool) -> Result<()
     Ok(())
 }
 
-/// Switch the network in config (saves to disk, does not restart)
+/// Switch the active network (saves the pointer to disk, does not restart).
+///
+/// This only repoints the app at `network`; it does not touch any per-network
+/// node config. After the caller restarts, `main.rs` boots normal mode if that
+/// network's config already exists, or the setup wizard (pre-selected to it)
+/// if it has never been set up.
 #[tauri::command]
 pub async fn switch_network(network: String) -> Result<(), String> {
     let network_type = match network.to_lowercase().as_str() {
@@ -125,10 +130,11 @@ pub async fn switch_network(network: String) -> Result<(), String> {
         other => return Err(format!("Unknown network: {}", other)),
     };
 
-    switch_node_network(network_type).map_err(|e| format!("Failed to save config: {}", e))?;
+    set_active_network(network_type)
+        .map_err(|e| format!("Failed to save active network: {}", e))?;
 
     log::info!(
-        "Network switched to {:?} in config (restart required)",
+        "Active network set to {:?} (restart required)",
         network_type
     );
     Ok(())

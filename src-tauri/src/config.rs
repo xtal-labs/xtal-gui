@@ -14,11 +14,23 @@ use xtal::utils::{DirectoryConfig, NetworkType};
 use crate::ipfs::IpfsConfig;
 
 /// GUI configuration persisted to disk.
+///
+/// This file is global (network-independent). Per-network node settings live in
+/// each network's own `<base>/<network>/config/config.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GuiConfig {
     /// Whether in-app toast notifications are enabled.
     #[serde(default = "default_toasts_enabled")]
     pub toasts_enabled: bool,
+
+    /// The network the app should boot into. Acts as the active-network pointer:
+    /// the GUI resolves per-network config/data from it before any node config is
+    /// read. `None` on a genuine first run (no network set up yet).
+    ///
+    /// Declared before `ipfs` so this scalar serializes ahead of the table —
+    /// TOML requires plain values to precede tables.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_network: Option<NetworkType>,
 
     /// IPFS ABI distribution settings.
     #[serde(default)]
@@ -34,6 +46,7 @@ impl Default for GuiConfig {
         Self {
             toasts_enabled: default_toasts_enabled(),
             ipfs: IpfsConfig::default(),
+            last_network: None,
         }
     }
 }
@@ -111,21 +124,49 @@ fn base_data_dir() -> Result<PathBuf, ConfigError> {
         })
 }
 
-/// Get the persisted node config path: `~/.crystal/config/config.json`.
-pub fn node_config_path() -> Result<PathBuf, ConfigError> {
-    Ok(base_data_dir()?.join("config").join("config.json"))
+/// The network the app should boot into (the active-network pointer).
+///
+/// Defaults to Mainnet if the GUI config is missing/unreadable or no network
+/// has been selected yet.
+pub fn active_network() -> NetworkType {
+    GuiConfig::load_or_create()
+        .ok()
+        .and_then(|config| config.last_network)
+        .unwrap_or(NetworkType::Mainnet)
 }
 
-/// Check whether the persisted node config exists.
+/// Persist the active-network pointer in the global GUI config.
+pub fn set_active_network(network: NetworkType) -> Result<GuiConfig, ConfigError> {
+    update_gui_config(|config| config.last_network = Some(network))
+}
+
+/// Resolve the node config path for an explicit network:
+/// `<base>/<network>/config/config.json`.
+pub fn node_config_path_for(network: NetworkType) -> Result<PathBuf, ConfigError> {
+    DirectoryConfig::platform_default(network)
+        .map(|config| config.config_file_path())
+        .map_err(|e| ConfigError::Io {
+            path: PathBuf::from("."),
+            source: e,
+        })
+}
+
+/// Get the persisted node config path for the active network.
+pub fn node_config_path() -> Result<PathBuf, ConfigError> {
+    node_config_path_for(active_network())
+}
+
+/// Check whether the active network's node config exists.
 pub fn node_config_exists() -> bool {
     node_config_path()
         .map(|path| path.exists())
         .unwrap_or(false)
 }
 
-/// Load the persisted node config from disk.
+/// Load the active network's node config from disk.
 pub fn load_node_config() -> Result<NodeConfig, ConfigError> {
-    let path = node_config_path()?;
+    let network = active_network();
+    let path = node_config_path_for(network)?;
 
     if !path.exists() {
         return Err(ConfigError::Io {
@@ -134,7 +175,7 @@ pub fn load_node_config() -> Result<NodeConfig, ConfigError> {
         });
     }
 
-    NodeConfig::load_for_network(&path.to_string_lossy(), NetworkType::Mainnet).map_err(|e| {
+    NodeConfig::load_for_network(&path.to_string_lossy(), network).map_err(|e| {
         ConfigError::NodeConfig {
             path,
             message: e.to_string(),
@@ -196,28 +237,6 @@ pub fn apply_node_sync_preferences(
     apply_node_storage_preferences(config, archival, tx_index);
 }
 
-/// Apply a network switch while preserving any user-customized ports.
-pub fn apply_node_network_change(config: &mut NodeConfig, network_type: NetworkType) {
-    let previous_network = config.network_type;
-
-    if previous_network != network_type {
-        let previous_defaults = NodeConfig::for_network(previous_network);
-        let new_defaults = NodeConfig::for_network(network_type);
-
-        if config.network.default_port == previous_defaults.network.default_port {
-            config.network.default_port = new_defaults.network.default_port;
-        }
-        if config.api.api_port == previous_defaults.api.api_port {
-            config.api.api_port = new_defaults.api.api_port;
-        }
-        if config.api.rpc_port == previous_defaults.api.rpc_port {
-            config.api.rpc_port = new_defaults.api.rpc_port;
-        }
-    }
-
-    config.network_type = network_type;
-}
-
 /// Persist setup-time node preferences.
 pub fn set_node_sync_preferences(
     fruits: Vec<String>,
@@ -236,11 +255,6 @@ pub fn set_node_storage_preferences(
     tx_index: bool,
 ) -> Result<NodeConfig, ConfigError> {
     update_node_config(|config| apply_node_storage_preferences(config, archival, tx_index))
-}
-
-/// Persist a node network switch.
-pub fn switch_node_network(network_type: NetworkType) -> Result<NodeConfig, ConfigError> {
-    update_node_config(|config| apply_node_network_change(config, network_type))
 }
 
 /// Errors that can occur when loading or saving configuration.
@@ -273,33 +287,46 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_node_storage_preferences_restores_default_retention() {
+    fn test_apply_node_storage_preferences_pins_archival_for_full_sync() {
+        // Full sync is the default and always retains fruits archivally, so the
+        // archival flag can't turn it off — apply_node_storage_preferences forces
+        // it on for any full-sync node regardless of the requested value.
         let mut config = NodeConfig::for_network(NetworkType::Mainnet);
+        assert_eq!(config.sync_mode, SyncMode::Full);
         config.pruning.stem_epochs_to_keep += 10;
         apply_node_storage_preferences(&mut config, false, true);
 
         assert!(config.storage.enable_tx_index);
-        assert!(!config.storage.archival);
+        assert!(config.storage.archival);
         assert!(config.pruning.enable_pruning);
         assert_eq!(config.pruning.stem_epochs_to_keep, 12);
     }
 
     #[test]
-    fn test_apply_node_network_change_updates_default_ports_only() {
-        let mut config = NodeConfig::for_network(NetworkType::Mainnet);
-        let testnet_defaults = NodeConfig::for_network(NetworkType::Testnet);
+    fn test_gui_config_round_trips_last_network() {
+        let mut config = GuiConfig::default();
+        config.last_network = Some(NetworkType::Testnet);
+        let serialized = toml::to_string(&config).unwrap();
+        let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.last_network, Some(NetworkType::Testnet));
+    }
 
-        let custom_rpc_port = config.api.rpc_port + 10;
-        config.api.rpc_port = custom_rpc_port;
+    #[test]
+    fn test_gui_config_omits_unset_last_network() {
+        let config = GuiConfig::default();
+        let serialized = toml::to_string(&config).unwrap();
+        assert!(!serialized.contains("last_network"));
+        let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.last_network, None);
+    }
 
-        apply_node_network_change(&mut config, NetworkType::Testnet);
+    #[test]
+    fn test_node_config_path_for_is_network_scoped() {
+        let mainnet = node_config_path_for(NetworkType::Mainnet).unwrap();
+        let testnet = node_config_path_for(NetworkType::Testnet).unwrap();
 
-        assert_eq!(config.network_type, NetworkType::Testnet);
-        assert_eq!(
-            config.network.default_port,
-            testnet_defaults.network.default_port
-        );
-        assert_eq!(config.api.api_port, testnet_defaults.api.api_port);
-        assert_eq!(config.api.rpc_port, custom_rpc_port);
+        assert!(mainnet.ends_with("mainnet/config/config.json"));
+        assert!(testnet.ends_with("testnet/config/config.json"));
+        assert_ne!(mainnet, testnet);
     }
 }
