@@ -250,6 +250,13 @@ export function formatBytes(bytes: number): string {
   return `${value.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
+/** Abbreviate a gas amount (e.g. 1_500_000 → "1.5M", 2_400 → "2.4K"). */
+export function formatGas(gas: number): string {
+  if (gas >= 1_000_000) return `${(gas / 1_000_000).toFixed(1)}M`;
+  if (gas >= 1_000) return `${(gas / 1_000).toFixed(1)}K`;
+  return gas.toLocaleString();
+}
+
 /**
  * Copy text to clipboard
  */

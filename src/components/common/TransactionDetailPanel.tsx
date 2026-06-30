@@ -1,10 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   AlertTriangle,
   ArrowDown,
   ArrowRightLeft,
-  ChevronDown,
-  ChevronRight,
   Clock,
   Download,
   FileCode,
@@ -17,7 +15,6 @@ import {
   Package,
   Pickaxe,
   Send,
-  Sparkles,
   Unlock,
   Upload,
   X,
@@ -28,7 +25,11 @@ import { Badge } from "@/components/ui/badge";
 import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { AmountDisplay } from "./AmountDisplay";
 import { HashDisplay } from "./HashDisplay";
-import { cn, formatTimeAgo } from "@/lib/utils";
+import {
+  CollapsibleSection,
+  IORow,
+} from "@/components/common/TransactionDetailPrimitives";
+import { cn, formatTimeAgo, formatBytes, formatGas } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import { getMaturityDisplay } from "@/lib/maturity";
 import type { TransactionDetail, UTXODetail, VMDetail } from "@/types";
@@ -38,18 +39,6 @@ interface TransactionDetailPanelProps {
   isOpen: boolean;
   onClose: () => void;
   isLoading?: boolean;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function formatGas(gas: number): string {
-  if (gas >= 1_000_000) return `${(gas / 1_000_000).toFixed(1)}M`;
-  if (gas >= 1_000) return `${(gas / 1_000).toFixed(1)}K`;
-  return gas.toLocaleString();
 }
 
 function getTransactionStyle(
@@ -306,127 +295,6 @@ function getFlowSectionConfig(txType: string) {
   };
 }
 
-function CollapsibleSection({
-  title,
-  count,
-  defaultOpen = true,
-  children,
-}: {
-  title: string;
-  count: number;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-
-  return (
-    <div className="space-y-2">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          "w-full flex items-center justify-between px-3 py-2",
-          "chamfered-sm bg-muted/30 hover:bg-muted/50 transition-colors",
-          "text-sm font-heading tracking-wide text-foreground-secondary"
-        )}
-      >
-        <span className="flex items-center gap-2">
-          {isOpen ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-          {title}
-        </span>
-        <Badge variant="outline" className="font-mono text-xs">
-          {count}
-        </Badge>
-      </button>
-
-      <div
-        className={cn(
-          "transition-all duration-300 ease-out",
-          isOpen
-            ? "max-h-[400px] opacity-100 overflow-y-auto"
-            : "max-h-0 opacity-0 overflow-hidden"
-        )}
-      >
-        <div className="space-y-1 pl-2">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function IORow({
-  address,
-  amount,
-  index,
-  isMine,
-  label,
-  rewardType,
-  redeemScriptType,
-}: {
-  address?: string;
-  amount?: number;
-  index: number;
-  isMine?: boolean;
-  label?: string;
-  rewardType?: "leaf" | "stem" | "fruit";
-  redeemScriptType?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center justify-between gap-3 py-2 px-3 text-foreground",
-        "chamfered-sm bg-background/50 border-l-2",
-        isMine ? "border-l-success" : "border-l-border"
-      )}
-    >
-      <div className="flex items-center gap-3 min-w-0">
-        <span className="text-xs font-mono text-foreground-muted w-5 shrink-0">
-          #{index}
-        </span>
-        {label ? (
-          <span className="text-sm font-heading text-warning flex items-center gap-1.5">
-            <Sparkles className="h-3.5 w-3.5" />
-            {label}
-          </span>
-        ) : address ? (
-          <div className="flex items-center gap-2 min-w-0">
-            <HashDisplay
-              hash={address}
-              truncate
-              showTooltip
-              className="text-xs min-w-0"
-            />
-            {rewardType && (
-              <Badge variant={rewardType} className="shrink-0 text-[10px] px-1.5 py-0">
-                {rewardType === "leaf"
-                  ? "Leaf"
-                  : rewardType === "stem"
-                    ? "Stem"
-                    : "Fruit"}
-              </Badge>
-            )}
-            {redeemScriptType && (
-              <Badge
-                variant="outline"
-                className="shrink-0 text-[10px] px-1.5 py-0 text-violet-400 border-violet-400/40"
-              >
-                P2SH · {redeemScriptType}
-              </Badge>
-            )}
-          </div>
-        ) : (
-          <span className="text-xs text-foreground-muted italic">Unknown</span>
-        )}
-      </div>
-      {amount !== undefined && (
-        <AmountDisplay amount={amount} size="sm" className="shrink-0" />
-      )}
-    </div>
-  );
-}
-
 function DetailRow({
   label,
   children,
@@ -455,6 +323,7 @@ function UtxoDetailBody({
 }) {
   const flowConfig = getFlowSectionConfig(detail.txType);
   const maturityDisplay = getMaturityDisplay(utxoDetail.maturityStatus);
+  const pending = detail.confirmations === 0;
 
   return (
     <>
@@ -466,7 +335,13 @@ function UtxoDetailBody({
             defaultOpen={utxoDetail.inputs.length <= 5}
           >
             {utxoDetail.inputs.length === 0 ? (
-              <IORow index={0} label={flowConfig.inputEmptyLabel} isMine={false} />
+              <IORow
+                index={0}
+                label={flowConfig.inputEmptyLabel}
+                isMine={false}
+                flow="input"
+                pending={pending}
+              />
             ) : (
               utxoDetail.inputs.map((input, idx) => (
                 <IORow
@@ -475,6 +350,8 @@ function UtxoDetailBody({
                   address={input.address}
                   amount={input.amount}
                   isMine={input.isMine ?? false}
+                  flow="input"
+                  pending={pending}
                   redeemScriptType={input.redeemScriptType}
                 />
               ))
@@ -497,7 +374,13 @@ function UtxoDetailBody({
             defaultOpen={utxoDetail.outputs.length <= 5}
           >
             {utxoDetail.outputs.length === 0 ? (
-              <IORow index={0} label={flowConfig.outputEmptyLabel} isMine={false} />
+              <IORow
+                index={0}
+                label={flowConfig.outputEmptyLabel}
+                isMine={false}
+                flow="output"
+                pending={pending}
+              />
             ) : (
               utxoDetail.outputs.map((output) => {
                 let rewardType: "leaf" | "stem" | "fruit" | undefined;
@@ -518,6 +401,8 @@ function UtxoDetailBody({
                     address={output.address}
                     amount={output.amount}
                     isMine={output.isMine ?? false}
+                    flow="output"
+                    pending={pending}
                     rewardType={rewardType}
                   />
                 );
@@ -599,9 +484,17 @@ function VmDetailBody({
               address={vmDetail.bridge.sourceInput.address}
               amount={vmDetail.bridge.sourceInput.amount}
               isMine={vmDetail.bridge.sourceInput.isMine ?? false}
+              flow="input"
+              pending={detail.confirmations === 0}
             />
           ) : (
-            <IORow index={0} label="Deposit source unavailable" isMine={false} />
+            <IORow
+              index={0}
+              label="Deposit source unavailable"
+              isMine={false}
+              flow="input"
+              pending={detail.confirmations === 0}
+            />
           )}
         </CollapsibleSection>
       )}
@@ -793,7 +686,13 @@ export function TransactionDetailPanel({
     ? getTransactionStyle(visibleDetail.txType, netAmount, preferredFruitType)
     : getTransactionStyle("standard", 0);
   const Icon = style.icon;
-  const executionBadge = getExecutionStatusBadge(visibleDetail?.executionStatus);
+  // Only VM-kind transactions carry a receipt/execution status. A VmWithdrawal is a
+  // UTXO-kind settlement tx (its own txid) with no receipt of its own — the originating
+  // CAGE call is the separate VM tx that does. Show only what this tx actually carries.
+  const executionBadge =
+    payload?.kind === "vm"
+      ? getExecutionStatusBadge(visibleDetail?.executionStatus)
+      : null;
   const amountPresentation = visibleDetail
     ? getAmountPresentation(visibleDetail)
     : { label: "Net Amount", amount: 0, positive: false, negative: false };
@@ -852,7 +751,9 @@ export function TransactionDetailPanel({
             </div>
           ) : visibleDetail && payload ? (
             <>
-              {visibleDetail.executionStatus === "failed" && visibleDetail.receipt?.error && (
+              {payload.kind === "vm" &&
+                visibleDetail.executionStatus === "failed" &&
+                visibleDetail.receipt?.error && (
                 <div className="chamfered-sm border border-destructive/40 bg-destructive/10 px-4 py-3">
                   <div className="mb-2 flex items-center gap-2 text-destructive">
                     <AlertTriangle className="h-4 w-4" />

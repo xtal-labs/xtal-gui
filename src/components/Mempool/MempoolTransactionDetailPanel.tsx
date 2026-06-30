@@ -1,8 +1,6 @@
 import { useState, useEffect } from "react";
 import {
   X,
-  ChevronDown,
-  ChevronRight,
   FileCode,
   ArrowRightLeft,
   Send,
@@ -22,7 +20,11 @@ import { Badge } from "@/components/ui/badge";
 import { SidePanelShell } from "@/components/ui/side-panel-shell";
 import { AmountDisplay } from "@/components/common/AmountDisplay";
 import { HashDisplay } from "@/components/common/HashDisplay";
-import { cn } from "@/lib/utils";
+import {
+  CollapsibleSection,
+  IORow,
+} from "@/components/common/TransactionDetailPrimitives";
+import { cn, formatBytes, formatGas } from "@/lib/utils";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import type { MempoolTransactionDetail } from "@/types/wallet";
 
@@ -101,120 +103,6 @@ function formatAge(secs: number): string {
   if (secs < 60) return `${secs}s`;
   if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-}
-
-function formatGas(gas: number): string {
-  if (gas >= 1_000_000) return `${(gas / 1_000_000).toFixed(1)}M`;
-  if (gas >= 1_000) return `${(gas / 1_000).toFixed(1)}K`;
-  return gas.toLocaleString();
-}
-
-/** Collapsible section for UTXO I/O */
-function CollapsibleSection({
-  title,
-  count,
-  defaultOpen = true,
-  children,
-}: {
-  title: string;
-  count: number;
-  defaultOpen?: boolean;
-  children: React.ReactNode;
-}) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-
-  return (
-    <div className="space-y-2">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className={cn(
-          "w-full flex items-center justify-between px-3 py-2",
-          "chamfered-sm bg-muted/30 hover:bg-muted/50 transition-colors",
-          "text-sm font-heading tracking-wide text-foreground-secondary"
-        )}
-      >
-        <span className="flex items-center gap-2">
-          {isOpen ? (
-            <ChevronDown className="h-4 w-4" />
-          ) : (
-            <ChevronRight className="h-4 w-4" />
-          )}
-          {title}
-        </span>
-        <Badge variant="outline" className="font-mono text-xs">
-          {count}
-        </Badge>
-      </button>
-
-      <div
-        className={cn(
-          "transition-all duration-300 ease-out",
-          isOpen
-            ? "max-h-[400px] opacity-100 overflow-y-auto"
-            : "max-h-0 opacity-0 overflow-hidden"
-        )}
-      >
-        <div className="space-y-1 pl-2">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-/** I/O row for UTXO transactions */
-function IORow({
-  address,
-  amount,
-  index,
-  redeemScriptType,
-}: {
-  address?: string;
-  amount?: number;
-  index: number;
-  redeemScriptType?: string;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex items-center justify-between py-2 px-3 text-foreground",
-        "chamfered-sm bg-background/50 border-l-2 border-l-border"
-      )}
-    >
-      <div className="flex items-center gap-3 min-w-0">
-        <span className="text-xs font-mono text-foreground-muted w-5 shrink-0">
-          #{index}
-        </span>
-        {address ? (
-          <div className="flex items-center gap-2 min-w-0">
-            <HashDisplay
-              hash={address}
-              truncate
-              showTooltip
-              className="text-xs min-w-0"
-            />
-            {redeemScriptType && (
-              <Badge
-                variant="outline"
-                className="shrink-0 text-[10px] px-1.5 py-0 text-violet-400 border-violet-400/40"
-              >
-                P2SH · {redeemScriptType}
-              </Badge>
-            )}
-          </div>
-        ) : (
-          <span className="text-xs text-foreground-muted italic">Unknown</span>
-        )}
-      </div>
-      {amount !== undefined && (
-        <AmountDisplay amount={amount} size="sm" className="shrink-0 ml-2" />
-      )}
-    </div>
-  );
 }
 
 /** Labeled detail row */
@@ -408,7 +296,7 @@ export function MempoolTransactionDetailPanel({
                       defaultOpen={detail.inputs.length <= 5}
                     >
                       {detail.inputs.length === 0 ? (
-                        <IORow index={0} />
+                        <IORow index={0} flow="input" pending />
                       ) : (
                         detail.inputs.map((input, idx) => (
                           <IORow
@@ -416,6 +304,9 @@ export function MempoolTransactionDetailPanel({
                             index={idx}
                             address={input.address}
                             amount={input.amount}
+                            isMine={input.isMine ?? false}
+                            flow="input"
+                            pending
                             redeemScriptType={input.redeemScriptType}
                           />
                         ))
@@ -436,7 +327,7 @@ export function MempoolTransactionDetailPanel({
                       defaultOpen={detail.outputs.length <= 5}
                     >
                       {detail.outputs.length === 0 ? (
-                        <IORow index={0} />
+                        <IORow index={0} flow="output" pending />
                       ) : (
                         detail.outputs.map((output) => (
                           <IORow
@@ -444,6 +335,9 @@ export function MempoolTransactionDetailPanel({
                             index={output.index}
                             address={output.address}
                             amount={output.amount}
+                            isMine={output.isMine ?? false}
+                            flow="output"
+                            pending
                           />
                         ))
                       )}
