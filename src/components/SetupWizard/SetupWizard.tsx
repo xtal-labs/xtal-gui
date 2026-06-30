@@ -170,6 +170,16 @@ export function SetupWizard() {
 
   // Render current step
   const renderStep = () => {
+    // Hold the UI until the active-network pointer check resolves so a pending
+    // switch lands directly on the wallet step without flashing the welcome step.
+    if (state.initializing) {
+      return (
+        <div className="flex items-center justify-center py-16">
+          <div className="h-8 w-8 rotate-45 animate-spin border-2 border-accent border-t-transparent" />
+        </div>
+      );
+    }
+
     switch (state.step) {
       case 'welcome':
         return (

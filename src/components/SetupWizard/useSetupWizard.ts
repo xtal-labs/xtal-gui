@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 // Types
@@ -51,6 +51,9 @@ export interface WizardState {
   archival: boolean;
   txIndex: boolean;
   syncMode: SyncModeOption;
+  // True until the initial active-network pointer check resolves. Prevents a
+  // flash of the welcome step when a network is already pending (switch flow).
+  initializing: boolean;
 }
 
 const CREATE_STEP_ORDER: WizardStep[] = [
@@ -90,6 +93,7 @@ const initialState: WizardState = {
   archival: true,
   txIndex: false,
   syncMode: 'full',
+  initializing: true,
 };
 
 export function useSetupWizard() {
@@ -313,6 +317,29 @@ export function useSetupWizard() {
   const canGoBack = useCallback(() => {
     return state.step !== 'welcome' && !state.isProcessing;
   }, [state.step, state.isProcessing]);
+
+  // On mount, check for a pending/active network (set when the user switches to
+  // an uninitialized network in Settings and is restarted into the wizard). If
+  // present, pre-select it and skip straight to the wallet step. On a genuine
+  // first run the pointer is unset and the normal welcome → network flow shows.
+  const didBootstrap = useRef(false);
+  useEffect(() => {
+    if (didBootstrap.current) return;
+    didBootstrap.current = true;
+
+    (async () => {
+      try {
+        const pending = await invoke<NetworkInfo | null>('get_active_network');
+        if (pending) {
+          await selectNetwork(pending);
+        }
+      } catch {
+        // No pointer or command unavailable — fall through to the normal flow.
+      } finally {
+        setState(s => ({ ...s, initializing: false }));
+      }
+    })();
+  }, [selectNetwork]);
 
   return {
     state,
