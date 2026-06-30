@@ -1,5 +1,5 @@
 import { Play, Plus, X, Eye, EyeOff, RefreshCw, AlertCircle, Minus, Download } from "lucide-react";
-import { CardContent, CardHeader, CardTitle, CardDescription, ModalShell } from "@/components/ui";
+import { CardContent, CardHeader, CardTitle, CardDescription, ModalShell, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AmountDisplay } from "@/components/common";
@@ -408,6 +408,7 @@ function StakeModal({
   availableBalance,
   totalStake,
   effectiveStake,
+  withdrawableStake,
   pendingStake,
   feeEstimate,
   isFeeEstimating,
@@ -424,6 +425,7 @@ function StakeModal({
   availableBalance: number;
   totalStake: number;
   effectiveStake: number;
+  withdrawableStake: number;
   pendingStake: number;
   feeEstimate: FeeEstimate | null;
   isFeeEstimating: boolean;
@@ -475,11 +477,24 @@ function StakeModal({
           </div>
           <div className="text-sm text-foreground-muted bg-muted/50 p-3 chamfered-sm space-y-1">
             <p>Available: <span className="font-mono font-semibold text-foreground">{shardsToXtal(availableBalance).toLocaleString()} XTAL</span></p>
-            <p>Total stake: <span className="font-mono">{shardsToXtal(totalStake).toLocaleString()} XTAL</span></p>
-            <p>Active stake: <span className="font-mono">{shardsToXtal(effectiveStake).toLocaleString()} XTAL</span></p>
+            <p className="flex items-center gap-1.5">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-help decoration-dotted underline-offset-4 [text-decoration-line:underline]">Active stake</span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[16rem] text-center">
+                  Active stake is what consensus counts for fruit production right now. It refreshes at each epoch boundary, so newly-matured stake activates on the next epoch.
+                </TooltipContent>
+              </Tooltip>
+              <span>(producing now):</span>
+              <span className="font-mono">{shardsToXtal(effectiveStake).toLocaleString()} XTAL</span>
+            </p>
+            <p>Mature stake <span className="text-foreground-muted">(withdrawable)</span>: <span className="font-mono">{shardsToXtal(withdrawableStake).toLocaleString()} XTAL</span></p>
             {pendingStake > 0 && (
-              <p className="text-warning">Pending stake: <span className="font-mono">{shardsToXtal(pendingStake).toLocaleString()} XTAL</span></p>
+              <p className="text-warning">Pending stake <span className="opacity-80">(locked, maturing)</span>: <span className="font-mono">{shardsToXtal(pendingStake).toLocaleString()} XTAL</span></p>
             )}
+            <div className="h-px bg-border/60 my-2" />
+            <p>Total stake <span className="text-foreground-muted">(mature + pending)</span>: <span className="font-mono font-semibold text-foreground">{shardsToXtal(totalStake).toLocaleString()} XTAL</span></p>
             <div className="h-px bg-border/60 my-2" />
             <div className="flex items-center justify-between">
               <span>Network fee:</span>

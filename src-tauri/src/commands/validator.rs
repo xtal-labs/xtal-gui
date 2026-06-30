@@ -1066,15 +1066,32 @@ pub async fn get_fruit_production_stats(
             .get_derived_fruit_difficulty(fruit_type, current_epoch)
             .unwrap_or_else(|_| spec.reference_difficulty());
 
+        // `network_stake_units` (whole threshold-units) is kept for the
+        // informational stat field only. The rate itself must NOT floor stake:
+        // count validators that meet the threshold and scale the difficulty by
+        // their *fractional* stake (the same whole-XTAL accounting as the
+        // personal estimate below), then treat the network as one aggregate
+        // entrant (units = 1). Flooring here made the sole-staker network rate
+        // diverge from that validator's own rate.
         let network_stake_units: u64 = stake_table
             .values()
             .map(|stake| stake.total / spec.min_stake_threshold)
             .sum();
+        let qualifying_stake: u64 = stake_table
+            .values()
+            .map(|stake| stake.total)
+            .filter(|total| *total >= spec.min_stake_threshold)
+            .sum();
+        let network_difficulty = if qualifying_stake >= spec.min_stake_threshold {
+            calculate_effective_difficulty(fruit_type, qualifying_stake, current_difficulty)
+        } else {
+            current_difficulty
+        };
         let network_estimate = estimate_production_rate(
-            current_difficulty.bits(),
+            network_difficulty.bits(),
             cadence_numerator_secs,
             cadence_denominator,
-            network_stake_units,
+            1,
         );
 
         // Calculate personalized rates from effective difficulty. The

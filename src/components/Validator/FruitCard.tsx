@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useLayoutEffect, useRef, useMemo } from "react";
-import { Lock, AlertCircle, Timer, TrendingUp, TrendingDown, Info } from "lucide-react";
+import { Lock, AlertCircle, Timer, Info } from "lucide-react";
 import {
   Area,
   AreaChart,
@@ -11,6 +11,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { cn, shardsToXtal, formatDuration, formatNumber } from "@/lib/utils";
 import { FRUIT_COLORS } from "@/lib/fruitColors";
+import { difficultyDelta } from "@/lib/difficulty";
 import type { FruitDifficultyHistoryPoint } from "@/types";
 
 interface FruitCardProps {
@@ -28,8 +29,6 @@ interface FruitCardProps {
   personalExpectedTimeSecs?: number;
   expectedTimeLabel?: string;
   personalExpectedTimeLabel?: string;
-  difficultyChanged?: boolean;
-  difficultyUp?: boolean;  // true = harder, false = easier
   // Info tooltip data
   targetIntervalSecs?: number;
   difficultyHistory?: FruitDifficultyHistoryPoint[];
@@ -51,8 +50,6 @@ function FruitCard({
   personalExpectedTimeSecs,
   expectedTimeLabel,
   personalExpectedTimeLabel,
-  difficultyChanged,
-  difficultyUp,
   targetIntervalSecs,
   difficultyHistory = [],
   maxSizeBytes,
@@ -115,6 +112,15 @@ function FruitCard({
   );
   const latestDifficulty = difficultyHistory[difficultyHistory.length - 1];
   const hasDifficultyTrend = difficultyChartData.length > 1;
+  const delta = useMemo(() => {
+    const n = difficultyHistory.length;
+    return n >= 2
+      ? difficultyDelta(
+          difficultyHistory[n - 1].difficultyBits,
+          difficultyHistory[n - 2].difficultyBits
+        )
+      : null;
+  }, [difficultyHistory]);
 
   useLayoutEffect(() => {
     if (!showTooltip) return;
@@ -233,22 +239,18 @@ function FruitCard({
                 )}
               </div>
 
-              {/* Difficulty Indicator */}
-              {difficultyChanged && (
+              {/* Difficulty change vs previous epoch */}
+              {delta && (
                 <div
                   className={cn(
-                    "flex items-center gap-0.5 px-1.5 py-0.5 rounded-sm text-xs font-mono",
-                    difficultyUp
-                      ? "bg-success/20 text-success"
-                      : "bg-destructive/20 text-destructive"
+                    "px-1.5 py-0.5 rounded-sm text-[11px] font-mono tabular-nums",
+                    delta.harder
+                      ? "bg-destructive/20 text-destructive"
+                      : "bg-success/20 text-success"
                   )}
-                  title={difficultyUp ? "Difficulty increased" : "Difficulty decreased"}
+                  title="Production difficulty this epoch vs last epoch"
                 >
-                  {difficultyUp ? (
-                    <TrendingUp className="h-3 w-3" />
-                  ) : (
-                    <TrendingDown className="h-3 w-3" />
-                  )}
+                  {delta.label}
                 </div>
               )}
             </div>

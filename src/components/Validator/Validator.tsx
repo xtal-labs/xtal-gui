@@ -82,25 +82,6 @@ interface WalletCTACardProps {
   addToast: (toast: any) => void;
 }
 
-function mergeValidatorTransactions(
-  previous: Transaction[],
-  next: Transaction[],
-): Transaction[] {
-  const merged = new Map(next.map((tx) => [tx.txid, tx]));
-
-  for (const tx of previous) {
-    const isStableIncomingReceive =
-      tx.confirmations > 0 &&
-      (tx.txType === "receive" || (tx.txType === "standard" && tx.amount > 0));
-
-    if (isStableIncomingReceive && !merged.has(tx.txid)) {
-      merged.set(tx.txid, tx);
-    }
-  }
-
-  return Array.from(merged.values()).sort((a, b) => b.timestamp - a.timestamp);
-}
-
 function WalletCTACard({ availableWallets, onSelectWallet, onCreateWallet, onImportWallet, addToast }: WalletCTACardProps) {
   const [copiedAddress, setCopiedAddress] = useState<string | null>(null);
 
@@ -660,7 +641,7 @@ export default function Validator() {
         limit: 50,
         address: address,
       });
-      setTransactions((previous) => mergeValidatorTransactions(previous, response.transactions));
+      setTransactions(response.transactions);
     } catch (err) {
       console.error("Failed to fetch transactions:", err);
     }
@@ -1184,7 +1165,6 @@ export default function Validator() {
         <>
           {/* Stake Card - at top when validator is loaded */}
           <StakeCard
-            totalStake={totalStake}
             withdrawableStake={withdrawableStake}
             activeStake={effectiveStake}
             pendingStake={pendingStake}
@@ -1222,8 +1202,6 @@ export default function Validator() {
               {Object.values(productions).map((prod) => {
                 // Find production stats for this fruit type
                 const stats = productionStats.find((s) => s.fruitType === prod.fruitType);
-                const difficultyChanged = stats && stats.currentDifficultyBits !== stats.referenceDifficultyBits;
-                const difficultyUp = difficultyChanged && stats.currentDifficultyBits < stats.referenceDifficultyBits;
 
                 return (
                   <FruitCard
@@ -1241,8 +1219,6 @@ export default function Validator() {
                     personalExpectedTimeSecs={stats?.personalExpectedTimeSecs}
                     expectedTimeLabel={stats?.expectedTimeLabel}
                     personalExpectedTimeLabel={stats?.personalExpectedTimeLabel}
-                    difficultyChanged={difficultyChanged}
-                    difficultyUp={difficultyUp}
                     targetIntervalSecs={stats?.targetIntervalSecs}
                     difficultyHistory={fruitDifficultyHistory[prod.fruitType] ?? []}
                     maxSizeBytes={fruitSpecs.find((s) => s.fruitType === prod.fruitType)?.maxSizeBytes}
@@ -1444,6 +1420,7 @@ export default function Validator() {
         availableBalance={availableBalance}
         totalStake={totalStake}
         effectiveStake={effectiveStake}
+        withdrawableStake={withdrawableStake}
         pendingStake={pendingStake}
         feeEstimate={stakeFeeEstimate}
         isFeeEstimating={isStakeFeeEstimating}

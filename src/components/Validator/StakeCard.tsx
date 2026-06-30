@@ -1,11 +1,11 @@
 import { Eye, EyeOff, Plus, Minus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AmountDisplay } from "@/components/common";
 import { shardsToXtal } from "@/lib/utils";
 
 interface StakeCardProps {
-  totalStake: number;
   withdrawableStake: number;
   activeStake: number;
   pendingStake: number;
@@ -20,8 +20,11 @@ interface StakeCardProps {
 
 const MASKED_VALUE = "••••••";
 
+const ACTIVE_STAKE_HINT =
+  "Active stake is what consensus counts for fruit production right now. " +
+  "It refreshes at each epoch boundary, so newly-matured stake activates on the next epoch.";
+
 function StakeCard({
-  totalStake,
   withdrawableStake,
   activeStake,
   pendingStake,
@@ -34,7 +37,6 @@ function StakeCard({
   onUnstake,
 }: StakeCardProps) {
   const otherPending = pendingUnstake + immatureBalance;
-  const inactiveStake = Math.max(totalStake - activeStake, 0);
 
   return (
     <Card variant="crystalline" className="bg-gradient-to-br from-primary/10 via-transparent to-accent/10 border-primary/20 relative">
@@ -52,9 +54,16 @@ function StakeCard({
 
         <div className="text-center space-y-4">
           <div>
-            <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2">
-              YOUR ACTIVE STAKE
-            </p>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2 cursor-help decoration-dotted underline-offset-4 [text-decoration-line:underline]">
+                  YOUR ACTIVE STAKE
+                </p>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-[16rem] text-center">
+                {ACTIVE_STAKE_HINT}
+              </TooltipContent>
+            </Tooltip>
             {hideBalances ? (
               <span className="text-2xl font-heading font-bold text-foreground">{MASKED_VALUE}</span>
             ) : (
@@ -67,13 +76,19 @@ function StakeCard({
                   {hideBalances ? MASKED_VALUE : shardsToXtal(availableBalance).toLocaleString()} XTAL
                 </span>
               </div>
-              {inactiveStake > 0 && (
-                <div className="flex items-center justify-between gap-3">
-                  <span className={pendingStake > 0 ? "text-warning" : "text-foreground-muted"}>
-                    {pendingStake > 0 ? "Pending activation" : "Inactive stake"}
-                  </span>
+              {withdrawableStake > 0 && (
+                <div className="flex items-center justify-between gap-3 text-foreground-muted">
+                  <span>Mature stake</span>
                   <span className="text-foreground">
-                    {hideBalances ? MASKED_VALUE : shardsToXtal(inactiveStake).toLocaleString()} XTAL
+                    {hideBalances ? MASKED_VALUE : shardsToXtal(withdrawableStake).toLocaleString()} XTAL
+                  </span>
+                </div>
+              )}
+              {pendingStake > 0 && (
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-warning">Pending stake</span>
+                  <span className="text-foreground">
+                    {hideBalances ? MASKED_VALUE : shardsToXtal(pendingStake).toLocaleString()} XTAL
                   </span>
                 </div>
               )}
