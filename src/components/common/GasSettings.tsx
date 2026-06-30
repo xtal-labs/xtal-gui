@@ -10,6 +10,8 @@ export interface GasConfig {
   maxGasLimit: number;
   defaultGasLimit: number;
   defaultGasPrice: number;
+  /** Minimum gas limit for a contract call (e.g. CAGE withdraw). */
+  minCallGas: number;
 }
 
 export interface GasSettingsProps {
@@ -18,6 +20,12 @@ export interface GasSettingsProps {
   onGasLimitChange: (value: string) => void;
   onGasPriceChange: (value: string) => void;
   config: GasConfig;
+  /**
+   * Minimum gas limit accepted in this context. Defaults to the intrinsic
+   * floor (`config.defaultGasLimit`); contract-call flows pass
+   * `config.minCallGas` since the builder rejects calls below that.
+   */
+  minGasLimit?: number;
   defaultOpen?: boolean;
   className?: string;
 }
@@ -28,19 +36,21 @@ export function GasSettings({
   onGasLimitChange,
   onGasPriceChange,
   config,
+  minGasLimit,
   defaultOpen = false,
   className,
 }: GasSettingsProps) {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
-  const gasLimitNum = parseInt(gasLimit) || config.defaultGasLimit;
+  const minLimit = minGasLimit ?? config.defaultGasLimit;
+  const gasLimitNum = parseInt(gasLimit) || minLimit;
   const gasPriceNum = parseInt(gasPrice) || config.defaultGasPrice;
   const maxFee = gasLimitNum * gasPriceNum;
 
   // Validation
   const gasLimitError =
-    gasLimit && parseInt(gasLimit) < config.defaultGasLimit
-      ? `Min: ${config.defaultGasLimit.toLocaleString()}`
+    gasLimit && parseInt(gasLimit) < minLimit
+      ? `Min: ${minLimit.toLocaleString()}`
       : gasLimit && parseInt(gasLimit) > config.maxGasLimit
         ? `Max: ${config.maxGasLimit.toLocaleString()}`
         : null;
@@ -83,11 +93,11 @@ export function GasSettings({
             </label>
             <Input
               type="number"
-              placeholder={config.defaultGasLimit.toLocaleString()}
+              placeholder={minLimit.toLocaleString()}
               value={gasLimit}
               onChange={(e) => onGasLimitChange(e.target.value)}
               className="font-mono text-sm"
-              min={config.defaultGasLimit}
+              min={minLimit}
               max={config.maxGasLimit}
               step={1000}
               error={!!gasLimitError}
@@ -96,7 +106,7 @@ export function GasSettings({
               <p className="text-xs text-destructive">{gasLimitError}</p>
             ) : (
               <p className="text-xs text-foreground-muted">
-                Max computation units ({config.defaultGasLimit.toLocaleString()}&ndash;{config.maxGasLimit.toLocaleString()})
+                Max computation units ({minLimit.toLocaleString()}&ndash;{config.maxGasLimit.toLocaleString()})
               </p>
             )}
           </div>

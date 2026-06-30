@@ -23,7 +23,7 @@ use xtal::script::extract_pkh_from_script;
 use xtal::storage::trie::RocksDBBackend;
 use xtal::storage::UnifiedMPT;
 use xtal::transaction::builders::{
-    ContractCallTransactionBuilder, ContractDeployTransactionBuilder,
+    ContractCallTransactionBuilder, ContractDeployTransactionBuilder, MIN_CALL_GAS,
 };
 use xtal::transaction::{CurrencyType, MAX_GAS_LIMIT, MIN_GAS_PRICE};
 use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
@@ -439,8 +439,8 @@ pub async fn call_contract(
     password: String,
 ) -> Result<SendResult, String> {
     let gas_price = gas_price.unwrap_or(MIN_GAS_PRICE);
-    if gas_limit < TX_BASE_GAS {
-        return Err(format!("Gas limit must be at least {}", TX_BASE_GAS));
+    if gas_limit < MIN_CALL_GAS {
+        return Err(format!("Gas limit must be at least {}", MIN_CALL_GAS));
     }
     if gas_limit > MAX_GAS_LIMIT {
         return Err(format!("Gas limit cannot exceed {}", MAX_GAS_LIMIT));

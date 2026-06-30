@@ -28,7 +28,7 @@ use xtal::script::{
 };
 use xtal::storage::types::UtxoEntry;
 use xtal::storage::UnifiedMPT;
-use xtal::transaction::builders::TransferBuilder;
+use xtal::transaction::builders::{TransferBuilder, MIN_CALL_GAS};
 use xtal::transaction::receipt::{BlockReceipts, StoredReceipt, TransactionReceipt};
 use xtal::transaction::{
     ContractCallTransaction, CurrencyType, Transaction, TxOut, MAX_GAS_LIMIT, MIN_GAS_PRICE,
@@ -154,6 +154,18 @@ pub struct FeeEstimate {
     pub input_count: usize,
     pub output_count: usize,
     pub fee_rate: u64,
+}
+
+/// Send-specific fee estimate: the shared [`FeeEstimate`] plus the max amount that can
+/// be sent at this fee rate. Embedded via `flatten` so the JSON stays flat and the
+/// shared struct (also used by the validator stake/unstake commands) is untouched.
+#[derive(Debug, Clone, Serialize)]
+pub struct SendFeeEstimate {
+    #[serde(flatten)]
+    pub estimate: FeeEstimate,
+    /// Max amount sendable at this fee rate after spending every spendable UTXO
+    /// (total spendable minus the full-drain fee). Amount-independent.
+    pub max_sendable: u64,
 }
 
 /// Maturity status for coinbase/withdrawal transactions
@@ -748,13 +760,13 @@ enum WalletHistorySurface {
     Vm,
 }
 
-struct ResolvedTransactionContext {
-    tx: Transaction,
-    block_height: Option<u64>,
-    block_hash: Option<String>,
-    timestamp: u64,
-    confirmations: u32,
-    is_pending: bool,
+pub(crate) struct ResolvedTransactionContext {
+    pub(crate) tx: Transaction,
+    pub(crate) block_height: Option<u64>,
+    pub(crate) block_hash: Option<String>,
+    pub(crate) timestamp: u64,
+    pub(crate) confirmations: u32,
+    pub(crate) is_pending: bool,
 }
 
 struct DecodedCageWithdrawalCall {
@@ -781,6 +793,10 @@ pub struct GasConfig {
     pub max_gas_limit: u64,
     pub default_gas_limit: u64,
     pub default_gas_price: u64,
+    /// Minimum gas limit accepted for a contract *call* (e.g. CAGE withdraw).
+    /// Higher than `default_gas_limit`, which is the intrinsic floor for plain
+    /// account transfers.
+    pub min_call_gas: u64,
 }
 
 /// Get gas configuration constants for the frontend
@@ -791,6 +807,7 @@ pub fn get_gas_config() -> GasConfig {
         max_gas_limit: MAX_GAS_LIMIT,
         default_gas_limit: TX_BASE_GAS,
         default_gas_price: MIN_GAS_PRICE,
+        min_call_gas: MIN_CALL_GAS,
     }
 }
 
@@ -1887,7 +1904,7 @@ pub async fn estimate_send_transaction_fee(
     to_address: String,
     amount: u64,
     fee_rate: u64,
-) -> Result<FeeEstimate, String> {
+) -> Result<SendFeeEstimate, String> {
     if amount == 0 {
         return Err("Amount must be greater than 0".to_string());
     }
@@ -1908,20 +1925,49 @@ pub async fn estimate_send_transaction_fee(
     }
 
     let spent = state.services.mempool().spent_outpoints();
-    let estimate = TransactionBuilder::new()
+    let n_inputs = available_utxos.len();
+    let total_spendable: u64 = available_utxos.iter().map(|utxo| utxo.output.amount).sum();
+
+    let builder = TransactionBuilder::new()
         .add_utxos(available_utxos)
         .exclude_outpoints(spent)
         .add_recipient(recipient, amount)
-        .fee_strategy(FeeStrategy::PerByte(fee_rate))
-        .estimate()
-        .map_err(|e| format!("Failed to estimate transaction fee: {}", e))?;
+        .fee_strategy(FeeStrategy::PerByte(fee_rate));
 
-    Ok(FeeEstimate {
-        fee: estimate.fee,
-        tx_size: estimate.tx_size,
-        input_count: estimate.selected_inputs.len(),
-        output_count: estimate.transaction.utxo_outputs().len(),
-        fee_rate,
+    // Drain fee = fee to spend every spendable UTXO (amount-independent). It matches
+    // what the eventual send pays at the maximum, so max_sendable = total - drain_fee.
+    let drain_fee = builder.calculate_required_fee();
+    let drain_size = builder.estimate_final_size();
+    let max_sendable = total_spendable.saturating_sub(drain_fee);
+
+    let estimate = if amount <= max_sendable {
+        // amount <= max_sendable guarantees the selection build succeeds.
+        let est = builder
+            .estimate()
+            .map_err(|e| format!("Failed to estimate transaction fee: {}", e))?;
+
+        FeeEstimate {
+            fee: est.fee,
+            tx_size: est.tx_size,
+            input_count: est.selected_inputs.len(),
+            output_count: est.transaction.utxo_outputs().len(),
+            fee_rate,
+        }
+    } else {
+        // Requested amount exceeds the spendable max: report the full-drain fee so the
+        // UI still flags insufficient funds while surfacing the correct max_sendable.
+        FeeEstimate {
+            fee: drain_fee,
+            tx_size: drain_size,
+            input_count: n_inputs,
+            output_count: 2,
+            fee_rate,
+        }
+    };
+
+    Ok(SendFeeEstimate {
+        estimate,
+        max_sendable,
     })
 }
 
@@ -2134,49 +2180,56 @@ pub async fn get_transaction_history(
     let limit = limit.unwrap_or(50);
     let mut transactions = Vec::new();
     let mut seen_txids = std::collections::HashSet::new();
-    let mut wallet_db_ref = state.services.wallet.as_ref().and_then(|w| w.database());
+    let main_db = state.services.wallet.as_ref().and_then(|w| w.database());
+    let main_pair = || {
+        (
+            main_db.clone(),
+            state
+                .services
+                .wallet
+                .as_ref()
+                .and_then(|w| w.current_wallet_id()),
+        )
+    };
 
-    // Determine the wallet_id to use for querying transactions:
-    // 1. If explicit wallet_id is provided, use it
-    // 2. If address is provided, check if it matches a validator and use validator's wallet_id
-    // 3. Otherwise, fall back to the regular wallet's current_wallet_id
-    let query_wallet_id: Option<String> = if let Some(wid) = wallet_id.clone() {
-        Some(wid)
-    } else if let Some(ref addr) = address {
-        // Check if this address belongs to a validator
-        state
+    // Resolve the (database, wallet_id) pair as a single unit. We routinely run a main
+    // wallet and a validator wallet at the same time, so the DB and the id must always
+    // come from the same source — querying a validator's DB with the main wallet's id (or
+    // vice-versa) makes list_all_confirmed return nothing and silently falls back to the
+    // live-UTXO scan, which drops receives once they are spent.
+    // 1. Explicit wallet_id  -> its matching validator DB, else the main DB.
+    // 2. Validator address   -> that validator's (db, id) bound together, else main pair.
+    // 3. Otherwise           -> the main wallet pair.
+    let (wallet_db_ref, query_wallet_id) = if let Some(wid) = wallet_id.clone() {
+        let validator_db = state
             .services
             .validators
             .iter()
-            .find(|entry| {
-                if let Ok(status) = entry.value().get_status() {
-                    status.validator_address == *addr
-                } else {
-                    false
-                }
-            })
-            .and_then(|entry| {
-                wallet_db_ref = entry
-                    .value()
-                    .get_wallet_database()
-                    .or_else(|| wallet_db_ref.clone());
-                entry.value().get_wallet_id()
-            })
-            .or_else(|| {
-                // Not a validator address, use regular wallet
-                state
-                    .services
-                    .wallet
-                    .as_ref()
-                    .and_then(|w| w.current_wallet_id())
-            })
-    } else {
-        // No address specified, use regular wallet
+            .find(|entry| entry.value().get_wallet_id().as_deref() == Some(wid.as_str()))
+            .and_then(|entry| entry.value().get_wallet_database());
+        (validator_db.or_else(|| main_db.clone()), Some(wid))
+    } else if let Some(ref addr) = address {
+        // Validators are keyed by address, so resolve by that key directly instead of
+        // scanning with get_status() — get_status() can fail and silently drop us onto the
+        // main wallet pair. That mismatch makes list_all_confirmed query the wrong wallet id
+        // and miss the durable receive row, leaving only the live-UTXO scan, so a receive
+        // disappears the moment it is spent (e.g. staked).
         state
             .services
-            .wallet
-            .as_ref()
-            .and_then(|w| w.current_wallet_id())
+            .validators
+            .get(addr.as_str())
+            .and_then(|entry| {
+                match (
+                    entry.value().get_wallet_database(),
+                    entry.value().get_wallet_id(),
+                ) {
+                    (Some(db), Some(id)) => Some((Some(db), Some(id))),
+                    _ => None,
+                }
+            })
+            .unwrap_or_else(main_pair)
+    } else {
+        main_pair()
     };
 
     let wallet_pkhs: std::collections::HashSet<[u8; 20]> = if let Some(addr) = address.as_ref() {
@@ -2348,6 +2401,36 @@ pub async fn get_transaction_history(
                             Some(&wallet_pkhs),
                         ),
                     });
+                }
+            }
+        }
+
+        // Promote pending incoming receives to confirmed using the on-chain transaction
+        // index — independent of whether the output is still unspent. This is what keeps a
+        // receive visible after it is later spent (e.g. staked): once confirmed here it is
+        // returned by list_all_confirmed below regardless of UTXO state, instead of relying
+        // on the live-UTXO scan (which can no longer see a spent output).
+        if let Ok(pending_incoming) = queries.list_pending_incoming(&wallet_id) {
+            for rec in pending_incoming {
+                if let Ok(Some(idx)) = blockchain.get_transaction_index(&rec.txid) {
+                    let height = blockchain
+                        .get_leaf_height_for_hash(&idx.block_hash)
+                        .unwrap_or(idx.block_height);
+                    let timestamp = get_block_timestamp(
+                        &blockchain,
+                        &rec.txid,
+                        Some(height),
+                        rec.created_at as u64,
+                    );
+                    if let Err(e) = queries
+                        .set_transaction_confirmed(&rec.txid, Some((timestamp as i64, height)))
+                    {
+                        log::warn!(
+                            "Failed to confirm on-chain incoming tx {} in wallet DB: {}",
+                            hex::encode(rec.txid),
+                            e
+                        );
+                    }
                 }
             }
         }
@@ -3099,7 +3182,7 @@ fn current_unix_timestamp() -> u64 {
         .unwrap_or(0)
 }
 
-fn annotate_transaction_io_ownership(
+pub(crate) fn annotate_transaction_io_ownership(
     inputs: &mut [TransactionInput],
     outputs: &mut [TransactionOutput],
     wallet_addresses: &HashSet<String>,
@@ -3517,12 +3600,11 @@ fn cage_deposit_amount(
     call_tx: &ContractCallTransaction,
     stored_input_details: Option<&str>,
 ) -> Option<u64> {
-    amount_from_stored_inputs(stored_input_details)
-        .or_else(|| {
-            let blockchain = blockchain?;
-            let (txid, output_index) = decode_cage_deposit_outpoint(call_tx)?;
-            resolve_referenced_output_amount(blockchain, &txid, output_index)
-        })
+    amount_from_stored_inputs(stored_input_details).or_else(|| {
+        let blockchain = blockchain?;
+        let (txid, output_index) = decode_cage_deposit_outpoint(call_tx)?;
+        resolve_referenced_output_amount(blockchain, &txid, output_index)
+    })
 }
 
 fn classify_vm_wallet_transaction(
@@ -3753,7 +3835,7 @@ fn pending_transaction_context(tx: Transaction, timestamp: u64) -> ResolvedTrans
     }
 }
 
-fn find_transaction_in_block_or_fruits(
+pub(crate) fn find_transaction_in_block_or_fruits(
     blockchain: &xtal::blockchain::Blockchain,
     block: &xtal::blockchain::Block,
     txid: &[u8; 32],
@@ -3775,15 +3857,20 @@ fn find_transaction_in_block_or_fruits(
             .iter()
             .find(|fruit_tx| fruit_tx.hash() == *txid)
         {
-            return Some(match fruit_tx {
-                FruitTx::AccountTransfer(tx) => Transaction::AccountTransfer(tx.clone()),
-                FruitTx::ContractCall(tx) => Transaction::ContractCall(tx.clone()),
-                FruitTx::ContractDeploy(tx) => Transaction::ContractDeploy(tx.clone()),
-            });
+            return Some(fruit_tx_to_transaction(fruit_tx));
         }
     }
 
     None
+}
+
+/// Lift a fruit-carried VM transaction into the unified `Transaction` enum.
+pub(crate) fn fruit_tx_to_transaction(fruit_tx: &FruitTx) -> Transaction {
+    match fruit_tx {
+        FruitTx::AccountTransfer(tx) => Transaction::AccountTransfer(tx.clone()),
+        FruitTx::ContractCall(tx) => Transaction::ContractCall(tx.clone()),
+        FruitTx::ContractDeploy(tx) => Transaction::ContractDeploy(tx.clone()),
+    }
 }
 
 fn resolve_active_stem_transaction_context(
@@ -3810,6 +3897,50 @@ fn resolve_active_stem_transaction_context(
     }
 
     None
+}
+
+/// Resolve a VM transaction (carried in a fruit) via the dedicated `vm_tx_index`,
+/// covering historical epochs that `resolve_active_stem_transaction_context` (current
+/// epoch only) and `resolve_finalized_transaction_context` (leaf `tx_index`) both miss.
+fn resolve_vm_indexed_transaction_context(
+    blockchain: &xtal::blockchain::Blockchain,
+    txid: &[u8; 32],
+    current_leaf_height: u64,
+) -> Option<ResolvedTransactionContext> {
+    let location = blockchain.get_vm_transaction_location(txid)?;
+
+    // Carrier stem — for block_hash/timestamp display, and as the fallback search target
+    // for legacy index rows written before fruit hashes were recorded.
+    let stem_block = blockchain
+        .get_block_by_height(location.stem_height)
+        .ok()
+        .flatten();
+
+    // Primary: jump straight to the indexed fruit body (archival, epoch-independent).
+    let tx = location
+        .fruit_hash
+        .and_then(|fruit_hash| blockchain.get_fruit_by_hash(&fruit_hash, None))
+        .and_then(|fruit| {
+            fruit
+                .transactions
+                .iter()
+                .find(|fruit_tx| fruit_tx.hash() == *txid)
+                .map(fruit_tx_to_transaction)
+        })
+        .or_else(|| {
+            stem_block
+                .as_ref()
+                .and_then(|block| find_transaction_in_block_or_fruits(blockchain, block, txid))
+        })?;
+
+    Some(ResolvedTransactionContext {
+        tx,
+        block_height: Some(location.leaf_height),
+        block_hash: stem_block.as_ref().map(|block| hex::encode(block.hash())),
+        timestamp: stem_block.as_ref().map_or(0, |block| block.header.timestamp),
+        confirmations: current_leaf_height.saturating_sub(location.leaf_height) as u32 + 1,
+        is_pending: false,
+    })
 }
 
 fn resolve_finalized_transaction_context(
@@ -3976,7 +4107,7 @@ fn resolve_utxo_transaction_context(
     }))
 }
 
-fn resolve_transaction_context(
+pub(crate) fn resolve_transaction_context(
     blockchain: &xtal::blockchain::Blockchain,
     txid: &[u8; 32],
     current_leaf_height: u64,
@@ -3991,6 +4122,12 @@ fn resolve_transaction_context(
             .map_err(|e| format!("Failed to decode transaction: {:?}", e))?;
 
         if let Some(context) = resolve_active_stem_transaction_context(blockchain, txid) {
+            return Ok(context);
+        }
+
+        if let Some(context) =
+            resolve_vm_indexed_transaction_context(blockchain, txid, current_leaf_height)
+        {
             return Ok(context);
         }
 
@@ -4023,6 +4160,12 @@ fn resolve_transaction_context(
     }
 
     if let Some(context) = resolve_active_stem_transaction_context(blockchain, txid) {
+        return Ok(context);
+    }
+
+    if let Some(context) =
+        resolve_vm_indexed_transaction_context(blockchain, txid, current_leaf_height)
+    {
         return Ok(context);
     }
 
@@ -4064,8 +4207,17 @@ fn lookup_persisted_receipt(
     txid: &[u8; 32],
 ) -> Option<StoredReceipt> {
     let stored_receipt = blockchain.get_receipt(txid).ok().flatten()?;
+
+    // Validate canonicity from the receipt's stem_hash rather than its stored
+    // stem_height: resolve the stem's height from the chain index so the check
+    // holds even for receipts persisted with a placeholder height. Re-resolving
+    // by height then yields the canonical block at that height, so a reorged-out
+    // stem fails the containment check below and is dropped as stale.
+    let stem_height = blockchain
+        .get_block_height_by_hash(&stored_receipt.stem_hash)
+        .ok()?;
     let block_receipts = blockchain
-        .get_receipts_by_height(stored_receipt.stem_height)
+        .get_receipts_by_height(stem_height)
         .ok()
         .flatten()?;
 
@@ -4073,9 +4225,9 @@ fn lookup_persisted_receipt(
         Some(stored_receipt)
     } else {
         log::debug!(
-            "Ignoring stale VM receipt for tx {} at non-canonical height {}",
+            "Ignoring stale VM receipt for tx {} from non-canonical stem {}",
             hex::encode(txid),
-            stored_receipt.stem_height
+            hex::encode(stored_receipt.stem_hash)
         );
         None
     }
@@ -4250,7 +4402,7 @@ fn collect_active_stem_vm_transactions(
 /// Uses the wallet database (public keys table) as the primary source,
 /// which works regardless of wallet lock state. Falls back to HD wallet
 /// derivation if the database is unavailable.
-fn get_wallet_addresses(
+pub(crate) fn get_wallet_addresses(
     wallet: &xtal::wallet::WalletManager,
 ) -> Result<std::collections::HashSet<String>, String> {
     let mut addresses = std::collections::HashSet::new();
@@ -4832,9 +4984,7 @@ mod tests {
     use xtal::blockchain::processing::utxo_verifier::ConsumedUtxo;
     use xtal::config::SHARDS_PER_XTAL;
     use xtal::fruit::core::FruitType;
-    use xtal::storage::{
-        trie::RocksDBBackend as XtalRocksDbBackend, Storage, UtxoPosition,
-    };
+    use xtal::storage::{trie::RocksDBBackend as XtalRocksDbBackend, Storage, UtxoPosition};
     use xtal::transaction::receipt::{BlockReceipts, TransactionReceipt, TxStatus};
     use xtal::transaction::{AccountTransferTransaction, ContractCallTransaction};
     use xtal::vm::abi::AbiValue;
@@ -5019,14 +5169,8 @@ mod tests {
             signature: None,
         });
 
-        let mut receipt = TransactionReceipt::new(
-            [9u8; 32],
-            10,
-            FruitType::Apple,
-            0,
-            TxStatus::Success,
-            5_000,
-        );
+        let mut receipt =
+            TransactionReceipt::new([9u8; 32], 10, FruitType::Apple, 0, TxStatus::Success, 5_000);
         receipt.consumed_utxos.push(ConsumedUtxo {
             position: UtxoPosition {
                 tx_id: consumed_txid,

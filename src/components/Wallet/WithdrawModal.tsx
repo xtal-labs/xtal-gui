@@ -108,7 +108,10 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   const cageConfigLoaded = cageConfig !== null && feeRateBps !== undefined;
   const cageFee = amountShards > 0 ? Math.ceil(amountShards * feeRate) : 0;
   const netAmount = Math.max(0, amountShards - cageFee);
-  const effectiveGasLimit = parseInt(gasLimit) || gasConfig?.defaultGasLimit || 100_000;
+  // A withdrawal is a CAGE contract call, so it must meet the contract-call gas
+  // floor (minCallGas), not the lower intrinsic transfer floor (defaultGasLimit).
+  const minCallGas = gasConfig?.minCallGas ?? 100_000;
+  const effectiveGasLimit = parseInt(gasLimit) || minCallGas;
   const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
   const maxGasFee = effectiveGasLimit * effectiveGasPrice;
   const totalDeducted = amountShards + maxGasFee;
@@ -120,7 +123,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   const recipientDisplay = recipient.trim();
 
   const hasGasError =
-    (gasLimit !== "" && gasConfig && parseInt(gasLimit) < gasConfig.defaultGasLimit) ||
+    (gasLimit !== "" && gasConfig && parseInt(gasLimit) < minCallGas) ||
     (gasLimit !== "" && gasConfig && parseInt(gasLimit) > gasConfig.maxGasLimit) ||
     (gasPrice !== "" && gasConfig && parseInt(gasPrice) < gasConfig.minGasPrice);
 
@@ -156,12 +159,16 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
     try {
       // Encode calldata via the Rust backend's SDK-delegated encoder.
       // Pass raw strings — Rust handles all numeric parsing to avoid JS precision loss.
+      // The CAGE `withdraw` ABI declares `amount` as a raw u64 in *shards*, so
+      // convert the XTAL-denominated input before encoding. (parsedAmountShards
+      // is non-null here — guarded above.) Pass as a string so the Rust encoder
+      // parses it without JS float precision loss.
       const encodeResult = await tauriCommand<{ data: string }>("encode_contract_calldata", {
         contractAddress: cageConfig.address,
         methodName: "withdraw",
         params: [
           { name: "recipient", type: "utxo_address", value: recipient.trim() },
-          { name: "amount", type: "u64", value: amount },
+          { name: "amount", type: "u64", value: String(parsedAmountShards) },
         ],
       });
 
@@ -393,6 +400,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                   onGasLimitChange={setGasLimit}
                   onGasPriceChange={setGasPrice}
                   config={gasConfig}
+                  minGasLimit={minCallGas}
                 />
               )}
 

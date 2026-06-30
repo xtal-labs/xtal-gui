@@ -67,6 +67,7 @@ interface SendFeeEstimate {
   inputCount: number;
   outputCount: number;
   feeRate: number;
+  maxSendable: number;
 }
 
 export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
@@ -77,6 +78,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
   const [step, setStep] = useState<SendStep>("form");
   const [recipient, setRecipient] = useState("");
   const [amount, setAmount] = useState("");
+  const [isMaxSend, setIsMaxSend] = useState(false);
   const [selectedFee, setSelectedFee] = useState<string>("standard");
   const [customFeeRateKb, setCustomFeeRateKb] = useState(DEFAULT_CUSTOM_FEE_RATE_KB);
   const [password, setPassword] = useState("");
@@ -112,6 +114,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
         setStep("form");
         setRecipient("");
         setAmount("");
+        setIsMaxSend(false);
         setSelectedFee("standard");
         setCustomFeeRateKb(DEFAULT_CUSTOM_FEE_RATE_KB);
         setPassword("");
@@ -180,6 +183,15 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
       window.clearTimeout(timer);
     };
   }, [isOpen, amountShards, amountError, customFeeRateError, feeRate, recipientPkh]);
+
+  // Keep the amount pinned to the latest max while in max-send mode. The fee effect
+  // re-runs on feeRate changes, so switching tier re-solves the max automatically.
+  // maxSendable is amount-independent, so this settles after one no-op sync.
+  useEffect(() => {
+    if (!isMaxSend || !feeEstimate) return;
+    const formatted = formatDecimalInput(Math.max(0, feeEstimate.maxSendable) / SHARDS_PER_XTAL);
+    setAmount((prev) => (prev === formatted ? prev : formatted));
+  }, [isMaxSend, feeEstimate]);
 
   const canProceed =
     recipient.length > 0 &&
@@ -363,9 +375,38 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                   <button
                     type="button"
                     className="text-xs text-primary hover:text-primary/80 font-heading"
-                    onClick={() => {
-                      const maxSend = Math.max(0, maxBalance - estimatedFee) / SHARDS_PER_XTAL;
-                      setAmount(formatDecimalInput(maxSend));
+                    onClick={async () => {
+                      setIsMaxSend(true);
+                      try {
+                        // maxSendable is amount-independent; pass the current amount or a
+                        // 1-shard placeholder just to satisfy the command's amount > 0 guard.
+                        const est = await tauriCommand<SendFeeEstimate>(
+                          "estimate_send_transaction_fee",
+                          {
+                            toAddress: recipientPkh || ESTIMATE_RECIPIENT_HEX,
+                            amount: amountShards > 0 ? amountShards : 1,
+                            feeRate,
+                          }
+                        );
+                        const maxXtal = Math.max(0, est.maxSendable) / SHARDS_PER_XTAL;
+                        if (maxXtal <= 0) {
+                          addToast({
+                            type: "warning",
+                            title: "Balance too low",
+                            message: "Not enough to cover the network fee",
+                            duration: 4000,
+                          });
+                        }
+                        setAmount(formatDecimalInput(maxXtal));
+                      } catch (err) {
+                        setIsMaxSend(false);
+                        addToast({
+                          type: "error",
+                          title: "Couldn't compute max",
+                          message: err instanceof Error ? err.message : String(err),
+                          duration: 4000,
+                        });
+                      }
                     }}
                   >
                     MAX
@@ -378,6 +419,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                     value={amount}
                     onChange={(e) => {
                       if (isValidXtalInput(e.target.value)) {
+                        setIsMaxSend(false);
                         setAmount(e.target.value);
                       }
                     }}

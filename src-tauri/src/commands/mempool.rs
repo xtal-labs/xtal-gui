@@ -12,7 +12,9 @@ use xtal::crypto::hash_public_key;
 use xtal::transaction::Transaction;
 
 use crate::commands::tx_detail_utils::{extract_inputs, extract_outputs};
-use crate::commands::wallet::{TransactionInput, TransactionOutput};
+use crate::commands::wallet::{
+    annotate_transaction_io_ownership, get_wallet_addresses, TransactionInput, TransactionOutput,
+};
 use crate::state::AppState;
 
 /// Mempool overview information
@@ -321,6 +323,20 @@ pub async fn get_mempool_transaction_detail(
         }
         // Coinbase/VmWithdrawal don't normally appear in mempool
         _ => {}
+    }
+
+    // Tag inputs/outputs that belong to the wallet so the UI can highlight them
+    // (red = spent input, yellow = pending owned output). Reuses the same
+    // ownership logic as the confirmed-transaction detail command.
+    if let (Some(inputs), Some(outputs)) = (detail.inputs.as_mut(), detail.outputs.as_mut()) {
+        let wallet_addresses = state
+            .services
+            .wallet
+            .as_ref()
+            .map(|w| get_wallet_addresses(w))
+            .transpose()?
+            .unwrap_or_default();
+        annotate_transaction_io_ownership(inputs, outputs, &wallet_addresses);
     }
 
     Ok(Some(detail))
