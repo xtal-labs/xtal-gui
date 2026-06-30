@@ -38,12 +38,15 @@ import type { MinedBlock, MiningStatus, MiningStats } from "@/types";
 // Time window options for hash rate chart
 type TimeWindow = "5m" | "30m" | "1hr" | "4hr" | "24hr";
 
-const TIME_WINDOWS: Record<TimeWindow, { label: string; ms: number; downsample: number }> = {
-  "5m":   { label: "5m",   ms: 5 * 60 * 1000,      downsample: 1 },
-  "30m":  { label: "30m",  ms: 30 * 60 * 1000,     downsample: 3 },
-  "1hr":  { label: "1h",   ms: 60 * 60 * 1000,     downsample: 6 },
-  "4hr":  { label: "4h",   ms: 4 * 60 * 60 * 1000, downsample: 24 },
-  "24hr": { label: "24h",  ms: 24 * 60 * 60 * 1000, downsample: 144 },
+// `tickInterval` (ms between x-axis ticks) drives an explicit, data-independent tick
+// set so the axis labels stay fixed while the line scrolls. Each value divides `ms`
+// evenly, yielding ~4-6 clean ticks per window.
+const TIME_WINDOWS: Record<TimeWindow, { label: string; ms: number; downsample: number; tickInterval: number }> = {
+  "5m":   { label: "5m",   ms: 5 * 60 * 1000,      downsample: 1,   tickInterval: 60 * 1000 },
+  "30m":  { label: "30m",  ms: 30 * 60 * 1000,     downsample: 3,   tickInterval: 10 * 60 * 1000 },
+  "1hr":  { label: "1h",   ms: 60 * 60 * 1000,     downsample: 6,   tickInterval: 15 * 60 * 1000 },
+  "4hr":  { label: "4h",   ms: 4 * 60 * 60 * 1000, downsample: 24,  tickInterval: 60 * 60 * 1000 },
+  "24hr": { label: "24h",  ms: 24 * 60 * 60 * 1000, downsample: 144, tickInterval: 6 * 60 * 60 * 1000 },
 };
 
 export default function Mining() {
@@ -58,6 +61,8 @@ export default function Mining() {
     setThreads,
     setStatus,
     setStats,
+    setActive,
+    beginToggle,
     setMiningWalletName,
     setMinedBlocks,
   } = useMiningStore();
@@ -66,19 +71,6 @@ export default function Mining() {
 
   const [isStarting, setIsStarting] = useState(false);
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("5m");
-
-  // Quantized clock for the chart's time axis. Deriving the window start from a
-  // 1s-stepped value (instead of raw Date.now() on every render) means re-renders
-  // within the same second produce identical x-positions, so the line advances in
-  // steady 1s steps rather than jittering by an arbitrary delta on each render
-  // (the cause of the first-load and ongoing chart jitter).
-  const [nowBucket, setNowBucket] = useState(() => Math.floor(Date.now() / 1000) * 1000);
-  useEffect(() => {
-    const id = setInterval(() => {
-      setNowBucket(Math.floor(Date.now() / 1000) * 1000);
-    }, 1000);
-    return () => clearInterval(id);
-  }, []);
 
   // Fetch mining status and stats on mount to get maxThreads and initial statistics from the backend
   useEffect(() => {
@@ -144,6 +136,9 @@ export default function Mining() {
 
   const handleToggleMining = async () => {
     setIsStarting(true);
+    // Optimistically flip the button to the requested state and arm the guard so the
+    // lagging live `stats.isRunning` can't flicker it back before the backend confirms.
+    beginToggle(!isActive);
     try {
       if (isActive) {
         await tauriCommand("stop_mining");
@@ -153,7 +148,8 @@ export default function Mining() {
         setMiningWalletName(walletName);
         await tauriCommand("start_mining", { threads });
       }
-      // Immediately fetch status and stats for responsive UI (don't rely solely on events)
+      // Immediately fetch status and stats for responsive UI (don't rely solely on events).
+      // These refresh the numbers; the guard keeps a stale snapshot from flipping the button.
       const [status, stats] = await Promise.all([
         tauriCommand<MiningStatus>("get_mining_status"),
         tauriCommand<MiningStats | null>("get_mining_stats"),
@@ -162,6 +158,8 @@ export default function Mining() {
       if (status) setStatus(status);
       if (stats) setStats(stats);
     } catch (err) {
+      // Revert the optimistic flip back to the pre-click state and drop the guard.
+      setActive(isActive);
       const errorMessage = err instanceof Error ? err.message : String(err);
       console.error("Failed to toggle mining:", err);
       addToast({
@@ -217,11 +215,37 @@ export default function Mining() {
     }
   };
 
+  // Fixed domain + explicit ticks for a stable axis. Both depend only on the selected
+  // window, so they keep a stable reference as the line scrolls. Explicit ticks make
+  // the axis data-independent: paired with `allowDataOverflow` on the XAxis (which pins
+  // the domain to exactly [0, ms] and clips the live point's sub-second overflow), the
+  // labels stay put while the line scrolls underneath.
+  const { domain, ticks } = useMemo(() => {
+    const { ms, tickInterval } = TIME_WINDOWS[timeWindow];
+    const count = Math.floor(ms / tickInterval);
+    return {
+      domain: [0, ms] as [number, number],
+      ticks: Array.from({ length: count + 1 }, (_, i) => i * tickInterval),
+    };
+  }, [timeWindow]);
+
+  // Anchor the visible window to the newest data point (quantized to the second)
+  // rather than a live wall-clock timer. This means the chart only re-renders when
+  // `hashRateHistory` actually changes — once per new sample while mining, and not at
+  // all while stopped — so the line advances on a single data-driven cadence instead of
+  // an independent 1s beat. Quantizing keeps x-positions stable across renders within a
+  // sample interval (jitter-free); rounding *up* keeps the newest point at/just inside
+  // the right edge, where `allowDataOverflow` clips any sub-second overflow.
+  const windowStart = useMemo(() => {
+    const { ms } = TIME_WINDOWS[timeWindow];
+    const last = hashRateHistory[hashRateHistory.length - 1]?.timestamp ?? Date.now();
+    const anchor = Math.ceil(last / 1000) * 1000;
+    return anchor - ms;
+  }, [hashRateHistory, timeWindow]);
+
   // Prepare chart data - filter to selected time window and downsample
-  const { chartData, domain } = useMemo(() => {
-    const { ms, downsample } = TIME_WINDOWS[timeWindow];
-    const now = nowBucket;
-    const windowStart = now - ms;
+  const chartData = useMemo(() => {
+    const { downsample } = TIME_WINDOWS[timeWindow];
 
     // Filter to time window
     const filtered = hashRateHistory.filter((p) => p.timestamp >= windowStart);
@@ -230,22 +254,19 @@ export default function Mining() {
     const downsampled = filtered.filter((_, i) => i % downsample === 0);
 
     // Use relative time for stable x-axis
-    const data = downsampled.map((point) => ({
+    return downsampled.map((point) => ({
       relativeTime: point.timestamp - windowStart,
       timestamp: point.timestamp,
       hashRate: point.hashRate / 1_000_000,
     }));
-
-    return {
-      chartData: data,
-      domain: [0, ms] as [number, number], // Fixed domain for stable axis
-    };
-  }, [hashRateHistory, timeWindow, nowBucket]);
+  }, [hashRateHistory, timeWindow, windowStart]);
 
   // Format relative time for x-axis ticks based on window size
   const formatXAxisTick = (relativeMs: number): string => {
     const { ms } = TIME_WINDOWS[timeWindow];
     const timeFromNow = ms - relativeMs; // How far back from "now"
+
+    if (timeFromNow === 0) return "now";
 
     if (ms <= 5 * 60 * 1000) {
       // 5m window: show seconds "-5:00", "-4:00", etc.
@@ -267,10 +288,9 @@ export default function Mining() {
   // Custom tooltip formatter to show actual time
   const formatTooltipLabel = (label: React.ReactNode): string => {
     const relativeMs = Number(label);
-    const { ms } = TIME_WINDOWS[timeWindow];
-    // Use the same quantized clock as the axis so the reconstructed time matches
-    // the point's real timestamp (windowStart + relativeMs === point.timestamp).
-    const actualTime = nowBucket - ms + relativeMs;
+    // Use the same data-anchored window start as the axis so the reconstructed time
+    // matches the point's real timestamp (windowStart + relativeMs === point.timestamp).
+    const actualTime = windowStart + relativeMs;
     return new Date(actualTime).toLocaleTimeString();
   };
 
@@ -482,6 +502,8 @@ export default function Mining() {
                       dataKey="relativeTime"
                       type="number"
                       domain={domain}
+                      allowDataOverflow
+                      ticks={ticks}
                       tick={{ fontSize: 10, fill: "hsl(var(--foreground-muted))" }}
                       tickLine={false}
                       axisLine={false}
