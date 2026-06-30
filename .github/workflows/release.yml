@@ -75,10 +75,11 @@ jobs:
             target: aarch64-unknown-linux-gnu
             binary: crystal-gui
 
-          - platform: macos-13
+          - platform: macos-15-intel
             target: x86_64-apple-darwin
             binary: crystal-gui
-            # macos-13 is the last Intel runner — native x86_64 build.
+            # macos-15-intel is GitHub's last Intel runner (the macos-13 image was
+            # retired 2025-12-04; macos-15-intel is supported until ~Aug 2027).
             # Produces Crystal_<ver>_x64.dmg; unsigned, so users run:
             # sudo xattr -cr /Applications/Crystal.app
 
