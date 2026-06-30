@@ -22,12 +22,12 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: |
           DATE=$(date -u +"%B %d, %Y")
-          CHECKSUMS="Checksums will be added after build completes."
 
+          # Leave the {{CHECKSUMS}} marker intact — the publish job fills it in once
+          # the build assets exist and their SHA-256 sums can be computed.
           sed \
             -e "s/{{VERSION}}/$VERSION/g" \
             -e "s/{{DATE}}/$DATE/g" \
-            -e "s/{{CHECKSUMS}}/$CHECKSUMS/g" \
             .github/RELEASE_TEMPLATE.md > release_notes.md
 
       - name: Create release
@@ -75,11 +75,19 @@ jobs:
             target: aarch64-unknown-linux-gnu
             binary: crystal-gui
 
-          - platform: macos-latest
+          - platform: macos-13
             target: x86_64-apple-darwin
             binary: crystal-gui
-            # NOTE: Unsigned binary - users must run:
-            # sudo xattr -cr crystal-gui-x86_64-mac
+            # macos-13 is the last Intel runner — native x86_64 build.
+            # Produces Crystal_<ver>_x64.dmg; unsigned, so users run:
+            # sudo xattr -cr /Applications/Crystal.app
+
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            binary: crystal-gui
+            # macos-latest is Apple Silicon (arm64) — native build.
+            # Produces Crystal_<ver>_aarch64.dmg; unsigned, so users run:
+            # sudo xattr -cr /Applications/Crystal.app
 
     runs-on: ${{ matrix.platform }}
 
@@ -88,6 +96,13 @@ jobs:
 
       - name: Configure git auth
         run: git config --global url."https://x-access-token:${{ secrets.ORG_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Use the published xtal lib (CI only; local dev keeps the sibling `path = ".."`)
+        shell: bash
+        run: |
+          sed -i.bak -E 's#^xtal = \{ path = "\.\." \}#xtal = { git = "https://github.com/xtal-labs/xtal.git", branch = "main" }#' Cargo.toml
+          rm -f Cargo.toml.bak
+          grep -q 'git = "https://github.com/xtal-labs/xtal.git"' Cargo.toml  # fail fast if the rewrite missed
 
       - name: Install Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -183,15 +198,49 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Publish release
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      - name: Checksum assets and publish
         env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
           RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
-        with:
-          script: |
-            await github.rest.repos.updateRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: Number(process.env.RELEASE_ID),
-              draft: false
-            })
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+
+          # List the draft release's uploaded assets (id + name). `gh release download`
+          # is unreliable for drafts, so fetch each asset by id via the REST API instead.
+          gh api --paginate "repos/$REPO/releases/$RELEASE_ID/assets" \
+            --jq '.[] | "\(.id)\t\(.name)"' > assets.tsv
+
+          if [ ! -s assets.tsv ]; then
+            echo "::error::No release assets found for release $RELEASE_ID — nothing to checksum." >&2
+            exit 1
+          fi
+
+          while IFS=$'\t' read -r id name; do
+            [ -n "$id" ] || continue
+            gh api -H "Accept: application/octet-stream" \
+              "repos/$REPO/releases/assets/$id" > "dist/$name"
+          done < assets.tsv
+
+          # Sort by filename so the published block is stable across runs.
+          ( cd dist && sha256sum * | sort -k2 ) > checksums.txt
+          CHECKSUMS="$(cat checksums.txt)"
+          export CHECKSUMS
+
+          # Upload checksums.txt as a release asset so the verify instructions
+          # (`sha256sum -c checksums.txt`) in the notes actually have a file to use.
+          # Uploads API keyed by release id is reliable for drafts (unlike `gh release upload`).
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Content-Type: text/plain" \
+            --data-binary @checksums.txt \
+            "https://uploads.github.com/repos/$REPO/releases/$RELEASE_ID/assets?name=checksums.txt"
+
+          # The template already fences {{CHECKSUMS}}; inject the raw sums in its place.
+          gh api "repos/$REPO/releases/$RELEASE_ID" --jq .body > body.md
+          python3 -c 'import os; b=open("body.md").read(); open("body.final.md","w").write(b.replace("{{CHECKSUMS}}", os.environ["CHECKSUMS"]))'
+
+          gh api -X PATCH "repos/$REPO/releases/$RELEASE_ID" \
+            -f body="$(cat body.final.md)" \
+            -F draft=false

@@ -12,22 +12,35 @@ _Released {{DATE}}_
 
 ## Installation
 
-### Linux x86_64
-Download `crystal-gui-x86_64-linux` and run it directly.
+Builds are produced for each platform below. Exact filenames embed the version
+(without the leading `v`) and architecture (e.g. `Crystal_<ver>_amd64.deb`) — see
+the **Verification** section for the complete asset list.
 
-### Linux ARM64
-Download `crystal-gui-aarch64-linux` and run it directly.
+### Linux
+Pick the package for your distro and architecture (`amd64`/`x86_64` for Intel/AMD,
+`arm64`/`aarch64` for ARM):
+- **Debian / Ubuntu** — `Crystal_<ver>_<arch>.deb` → `sudo apt install ./Crystal_*.deb`
+- **Fedora / RHEL** — `Crystal-<ver>-1.<arch>.rpm` → `sudo dnf install ./Crystal-*.rpm`
+- **Portable (any distro)** — `Crystal_<ver>_<arch>.AppImage` → `chmod +x` it and run directly.
 
 ### Windows
-Download `crystal-gui-x86_64-windows.exe` and run it. You may see a SmartScreen
-warning as the binary is currently unsigned — click **More info** → **Run anyway**.
+Download `Crystal_<ver>_x64-setup.exe` (recommended installer) or
+`Crystal_<ver>_x64_en-US.msi`. You may see a SmartScreen warning as the build is
+currently unsigned — click **More info** → **Run anyway**.
 
-### Mac
-The Mac binary is unsigned. If macOS reports the file as damaged, run:
+### Mac (Apple Silicon)
+For M1/M2/M3 and newer Macs, download `Crystal_<ver>_aarch64.dmg`, open it, and
+drag **Crystal** to Applications. The build is unsigned, so if macOS reports the
+app as damaged, clear the quarantine attribute:
 ```bash
-sudo xattr -cr crystal-gui-x86_64-mac
+sudo xattr -cr /Applications/Crystal.app
 ```
-Then open it normally.
+
+### Mac (Intel)
+For older Intel Macs, download `Crystal_<ver>_x64.dmg` and follow the same steps:
+```bash
+sudo xattr -cr /Applications/Crystal.app
+```
 
 ---
 
@@ -44,10 +57,11 @@ To verify on Linux/Mac:
 sha256sum -c checksums.txt
 ```
 
-To verify on Windows (PowerShell):
+To verify on Windows (PowerShell) — set `$file` to the exact asset you downloaded:
 ```powershell
-$expected = (Get-Content checksums.txt | Select-String "crystal-gui-x86_64-windows.exe").ToString().Split()[0]
-$actual = (Get-FileHash crystal-gui-x86_64-windows.exe -Algorithm SHA256).Hash
+$file = "Crystal_<ver>_x64-setup.exe"   # replace <ver> with the version, e.g. 0.2.0
+$expected = (Get-Content checksums.txt | Select-String ([regex]::Escape($file))).ToString().Split()[0]
+$actual = (Get-FileHash $file -Algorithm SHA256).Hash
 if ($expected -eq $actual) { "✓ Checksum verified" } else { "✗ Checksum mismatch" }
 ```
 
