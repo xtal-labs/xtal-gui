@@ -184,7 +184,11 @@ export function FruitDetailPanel({
       setSelectedTxId(transaction.txid);
       setIsTxDetailOpen(true);
 
-      const result = await fetchTxDetail({ txid: transaction.txid, blockHash: detail.stem });
+      // Resolve purely by txid — fruits carry only VM transactions, which the backend
+      // locates by scanning active stems' fruits / the mempool (same path the wallet
+      // uses). The fruit's anchor stem (`detail.stem`) is not the bundling stem, so
+      // passing it as a block hash would fail the lookup.
+      const result = await fetchTxDetail({ txid: transaction.txid });
       if (!result) {
         handleCloseTxDetail();
       }
