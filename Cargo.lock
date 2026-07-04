@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "crystal-gui"
-version = "0.7.35"
+version = "0.7.353"
 dependencies = [
  "anyhow",
  "data-encoding",
