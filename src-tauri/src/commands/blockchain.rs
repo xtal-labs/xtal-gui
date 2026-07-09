@@ -804,6 +804,9 @@ pub struct StripFruit {
     pub fruit_type: String,
     /// Whether the full fruit body is retrievable locally.
     pub body_present: bool,
+    /// Whether at least the fruit header is retrievable locally. Header-only
+    /// fruits are valid empty attestations, not orphans.
+    pub header_present: bool,
     /// Transactions actually present in the body (None when the body is missing).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub body_tx_count: Option<usize>,
@@ -854,6 +857,7 @@ pub struct EpochStrip {
 /// gone and to report the "should have had a payload" count.
 fn summarize_strip_fruit(
     blockchain: &Blockchain,
+    stem_hash: &[u8; 32],
     fruit_hash: &[u8; 32],
     probe_leaf_height: u64,
     receipts: Option<&BlockReceipts>,
@@ -879,18 +883,26 @@ fn summarize_strip_fruit(
     let body = blockchain.get_fruit_by_hash(fruit_hash, None);
     let body_present = body.is_some();
     let body_tx_count = body.as_ref().map(|f| f.transactions.len());
+    let header = body
+        .is_none()
+        .then(|| {
+            blockchain
+                .get_fruit_header_with_stem_context(stem_hash, fruit_hash)
+                .or_else(|| {
+                    blockchain
+                        .get_fruit_header_at(probe_leaf_height, fruit_hash)
+                        .ok()
+                        .flatten()
+                })
+        })
+        .flatten();
+    let header_present = body_present || header.is_some();
 
     // Fruit type for coloring: body → persisted header → receipt subtree → unknown.
     let fruit_type = body
         .as_ref()
         .map(|f| f.fruit_type().to_string())
-        .or_else(|| {
-            blockchain
-                .get_fruit_header_at(probe_leaf_height, fruit_hash)
-                .ok()
-                .flatten()
-                .map(|hdr| hdr.fruit_type().to_string())
-        })
+        .or_else(|| header.as_ref().map(|hdr| hdr.fruit_type().to_string()))
         .or(receipt_type)
         .unwrap_or_else(|| "Unknown".to_string());
 
@@ -898,6 +910,7 @@ fn summarize_strip_fruit(
         hash: hex::encode(fruit_hash),
         fruit_type,
         body_present,
+        header_present,
         body_tx_count,
         receipt_tx_count,
     }
@@ -922,7 +935,13 @@ fn summarize_strip_stems(
             .fruit_hashes
             .iter()
             .map(|fruit_hash| {
-                summarize_strip_fruit(blockchain, fruit_hash, probe_leaf_height, receipts)
+                summarize_strip_fruit(
+                    blockchain,
+                    stem_hash,
+                    fruit_hash,
+                    probe_leaf_height,
+                    receipts,
+                )
             })
             .collect();
 

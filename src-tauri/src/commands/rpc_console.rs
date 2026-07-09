@@ -153,7 +153,6 @@ pub async fn execute_rpc(
         None, // No remote address (local)
         auth,
         None, // No auth header needed
-        None, // No init state
     )
     .await;
 

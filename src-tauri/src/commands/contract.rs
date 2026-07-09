@@ -23,7 +23,8 @@ use xtal::script::extract_pkh_from_script;
 use xtal::storage::trie::RocksDBBackend;
 use xtal::storage::UnifiedMPT;
 use xtal::transaction::builders::{
-    ContractCallTransactionBuilder, ContractDeployTransactionBuilder, MIN_CALL_GAS,
+    ContractCallTransactionBuilder, ContractDeployTransactionBuilder, DEFAULT_SPONSORED_CALL_GAS,
+    MIN_CALL_GAS,
 };
 use xtal::transaction::{CurrencyType, MAX_GAS_LIMIT, MIN_GAS_PRICE};
 use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
@@ -656,13 +657,39 @@ pub async fn deposit_utxo(
     let state_accessor = state.services.state();
     let nonce = state_accessor.get_nonce(&sender_pkh).unwrap_or(0);
 
-    // Build, sign, and broadcast the sponsored contract call
-    let tx = ContractCallTransactionBuilder::new()
+    // Derive the gas reservation from a dry-run simulation rather than
+    // reserving the flat sponsored default. Estimation never blocks the
+    // deposit: simulation trouble is logged and we fall through to the
+    // builder's own DEFAULT_SPONSORED_CALL_GAS.
+    let gas_estimate = match chain.estimate_sponsored_call_gas(
+        sender_pkh,
+        CAGE_CONTRACT_ADDRESS,
+        "consume_utxo",
+        &call_data,
+        Some(anchor_stem_hash),
+    ) {
+        Ok(estimate) => Some(estimate),
+        Err(e) => {
+            log::warn!("CAGE deposit gas estimation failed, using default: {}", e);
+            None
+        }
+    };
+
+    // Build, sign, and broadcast the sponsored contract call. `.sponsored()`
+    // declares `gas_price: Some(0)` with a real gas_limit (defaulting to
+    // DEFAULT_SPONSORED_CALL_GAS unless overridden by `with_gas_limit` above
+    // it) — the legacy `gas_limit == 0` signal is rejected at mempool
+    // admission and can no longer be produced here.
+    let mut builder = ContractCallTransactionBuilder::new()
         .with_sender(utxo_signing_key)
         .with_contract(CAGE_CONTRACT_ADDRESS)
         .with_method("consume_utxo".to_string())
         .with_args(call_data)
-        .with_nonce(nonce)
+        .with_nonce(nonce);
+    if let Some(estimate) = &gas_estimate {
+        builder = builder.with_gas_limit(estimate.gas_limit);
+    }
+    let tx = builder
         .sponsored()
         .build()
         .map_err(|e| format!("Build failed: {}", e))?;
@@ -703,11 +730,16 @@ pub async fn deposit_utxo(
     }
 
     log::info!(
-        "CAGE deposit submitted (sponsored): UTXO {}:{} amount={} anchor={}",
+        "CAGE deposit submitted (sponsored): UTXO {}:{} amount={} anchor={} gas_reservation={} (simulated={:?})",
         txid_hex,
         vout,
         utxo_entry.amount,
-        hex::encode(anchor_stem_hash)
+        hex::encode(anchor_stem_hash),
+        gas_estimate
+            .as_ref()
+            .map(|e| e.gas_limit)
+            .unwrap_or(DEFAULT_SPONSORED_CALL_GAS),
+        gas_estimate.as_ref().and_then(|e| e.simulated_gas_used)
     );
 
     Ok(DepositResult {

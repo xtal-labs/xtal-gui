@@ -107,7 +107,8 @@ export function classifyFruit(f: StripFruit): FruitBodyState {
   if (f.bodyPresent) {
     return (f.bodyTxCount ?? 0) > 0 ? "payload" : "empty";
   }
-  return (f.receiptTxCount ?? 0) > 0 ? "missing" : "orphan";
+  if ((f.receiptTxCount ?? 0) > 0) return "missing";
+  return f.headerPresent ? "empty" : "orphan";
 }
 
 function fruitTxCount(f: StripFruit): number | null {

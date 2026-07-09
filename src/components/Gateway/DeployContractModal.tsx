@@ -33,6 +33,15 @@ type DeployStep = "upload" | "confirm" | "deploying" | "success" | "error";
 
 const FRUIT_TYPES = ["Apple", "Orange", "Pear", "Grape", "Peach", "Pineapple", "Strawberry", "Kiwi", "Watermelon"];
 
+// Contract deployment pays 50 fuel/byte to compile the wasm module plus 8
+// fuel/byte to persist it as storage (FUEL_DEPLOY_COMPILE_PER_BYTE +
+// FUEL_STORAGE_WRITE_PER_BYTE in the xtal VM), on top of intrinsic tx cost
+// and constructor execution. The Rust deploy builder also rejects gas below
+// 1,000,000, so scale the suggested floor with the upload size from there.
+const MIN_DEPLOY_GAS_LIMIT = 1_000_000;
+const DEPLOY_FUEL_PER_BYTE = 58;
+const DEPLOY_GAS_BUFFER = 300_000;
+
 export function DeployContractModal({ isOpen, onClose }: DeployContractModalProps) {
   const { addToast } = useUiStore();
   const { loadLibrary } = useGatewayStore();
@@ -53,6 +62,17 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
 
   const wasmInputRef = useRef<HTMLInputElement>(null);
   const abiInputRef = useRef<HTMLInputElement>(null);
+
+  const wasmByteLength = wasmHex.length / 2;
+  const suggestedDeployGasLimit = Math.max(
+    MIN_DEPLOY_GAS_LIMIT,
+    gasConfig?.defaultGasLimit ?? 21_000,
+    Math.ceil(wasmByteLength * DEPLOY_FUEL_PER_BYTE) + DEPLOY_GAS_BUFFER
+  );
+  const minDeployGasLimit = Math.min(
+    suggestedDeployGasLimit,
+    gasConfig?.maxGasLimit ?? suggestedDeployGasLimit
+  );
 
   useEffect(() => {
     tauriCommand<GasConfig>("get_gas_config").then(setGasConfig).catch(() => {});
@@ -110,7 +130,7 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
     setError(null);
 
     try {
-      const effectiveGasLimit = parseInt(gasLimit) || gasConfig?.defaultGasLimit || 500_000;
+      const effectiveGasLimit = Math.max(parseInt(gasLimit) || minDeployGasLimit, minDeployGasLimit);
       const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
 
       const result = await tauriCommand<DeployResult>("deploy_contract", {
@@ -291,6 +311,7 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
                   onGasLimitChange={setGasLimit}
                   onGasPriceChange={setGasPrice}
                   config={gasConfig}
+                  minGasLimit={minDeployGasLimit}
                 />
               )}
 

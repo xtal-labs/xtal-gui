@@ -463,7 +463,13 @@ function VmDetailBody({
   detail: TransactionDetail;
   vmDetail: VMDetail;
 }) {
-  const isSponsored = (detail.fee ?? 0) === 0 && vmDetail.gasPrice == null;
+  // Sponsorship union rule (mirrors Transaction::requests_free_execution in
+  // the xtal lib): a contract call is sponsored if it declares gas_price ==
+  // Some(0) (current signal) or the legacy gas_limit == 0. Deploys/transfers
+  // can never be sponsored, so gate on `method` (only set for calls).
+  const isSponsored =
+    vmDetail.method != null &&
+    (vmDetail.gasPrice === 0 || vmDetail.gasLimit === 0);
   const callerLabel = vmDetail.bridge?.kind === "cage_withdrawal" ? "Source Account" : "Caller";
   const withdrawalRecipient =
     vmDetail.bridge?.kind === "cage_withdrawal"
@@ -606,10 +612,10 @@ function VmDetailBody({
                 Gas Price
               </p>
               <span className="text-sm font-mono font-semibold tabular-nums">
-                {vmDetail.gasPrice != null
-                  ? vmDetail.gasPrice.toLocaleString()
-                  : isSponsored
-                    ? "Sponsored"
+                {isSponsored
+                  ? "Sponsored"
+                  : vmDetail.gasPrice != null
+                    ? vmDetail.gasPrice.toLocaleString()
                     : "—"}
               </span>
             </CardContent>

@@ -493,10 +493,10 @@ export function MempoolTransactionDetailPanel({
                             Gas Price
                           </p>
                           <span className="text-sm font-mono font-semibold tabular-nums">
-                            {detail.gasPrice != null
-                              ? detail.gasPrice.toLocaleString()
-                              : detail.isSponsored
-                                ? "Free"
+                            {detail.isSponsored
+                              ? "Free"
+                              : detail.gasPrice != null
+                                ? detail.gasPrice.toLocaleString()
                                 : "—"}
                           </span>
                         </CardContent>

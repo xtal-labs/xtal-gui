@@ -199,15 +199,17 @@ export type BlockDetail = StemBlockDetail | LeafBlockDetail;
 /**
  * Chain-strip visualizer types (backbone + fruit body availability).
  *
- * The view distinguishes a fruit whose body (tx payload) is retrievable from one
- * that is only *referenced* — its carrier stem's receipt says it carried
- * transactions, but the body failed to archive. `bodyTxCount` is what is actually
- * present; `receiptTxCount` is what the receipt says it should be.
+ * The view distinguishes a fruit whose body (tx payload) is retrievable from
+ * one where only the header/receipt is available. Header-only fruits are valid
+ * empty attestations; receipt-only payload fruits are shown as missing bodies.
+ * `bodyTxCount` is what is actually present; `receiptTxCount` is what the
+ * receipt says it should be.
  */
 export interface StripFruit {
   hash: string;
   fruitType: string;
   bodyPresent: boolean;
+  headerPresent: boolean;
   /** Transactions actually in the body; undefined when the body is missing. */
   bodyTxCount?: number;
   /** Transactions the stem receipt recorded; undefined for empty attestation fruits. */
