@@ -35,6 +35,11 @@ pub struct GuiConfig {
     /// IPFS ABI distribution settings.
     #[serde(default)]
     pub ipfs: IpfsConfig,
+
+    /// Custom dashboard layout. `None` = user never customized; the frontend
+    /// renders its built-in default layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dashboard: Option<DashboardLayoutConfig>,
 }
 
 fn default_toasts_enabled() -> bool {
@@ -47,8 +52,42 @@ impl Default for GuiConfig {
             toasts_enabled: default_toasts_enabled(),
             ipfs: IpfsConfig::default(),
             last_network: None,
+            dashboard: None,
         }
     }
+}
+
+/// One dashboard widget instance. `widget_type` and `size` are deliberately
+/// opaque strings: the backend just persists them, the frontend widget
+/// registry interprets them. Unknown values from newer builds round-trip
+/// untouched instead of failing to parse.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashboardWidgetConfig {
+    pub id: String,
+    pub widget_type: String,
+    #[serde(default = "default_widget_size")]
+    pub size: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<String>,
+}
+
+fn default_widget_size() -> String {
+    "s".to_string()
+}
+
+/// Persisted dashboard layout: an ordered list of widget instances.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DashboardLayoutConfig {
+    #[serde(default = "default_dashboard_layout_version")]
+    pub version: u32,
+    #[serde(default)]
+    pub widgets: Vec<DashboardWidgetConfig>,
+}
+
+fn default_dashboard_layout_version() -> u32 {
+    1
 }
 
 impl GuiConfig {
@@ -318,6 +357,70 @@ mod tests {
         assert!(!serialized.contains("last_network"));
         let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized.last_network, None);
+    }
+
+    #[test]
+    fn test_gui_config_dashboard_round_trip() {
+        let mut config = GuiConfig::default();
+        config.dashboard = Some(DashboardLayoutConfig {
+            version: 1,
+            widgets: vec![
+                DashboardWidgetConfig {
+                    id: "default-peers".to_string(),
+                    widget_type: "peers".to_string(),
+                    size: "s".to_string(),
+                    contract_address: None,
+                    method: None,
+                },
+                DashboardWidgetConfig {
+                    id: "w-1".to_string(),
+                    widget_type: "contract_value".to_string(),
+                    size: "l".to_string(),
+                    contract_address: Some("0xabc".to_string()),
+                    method: Some("accumulated_fees".to_string()),
+                },
+            ],
+        });
+
+        let serialized = toml::to_string(&config).unwrap();
+        let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.dashboard, config.dashboard);
+    }
+
+    #[test]
+    fn test_gui_config_without_dashboard_parses() {
+        let deserialized: GuiConfig = toml::from_str("toasts_enabled = false\n").unwrap();
+        assert_eq!(deserialized.dashboard, None);
+
+        // And a default config never writes the table.
+        let serialized = toml::to_string(&GuiConfig::default()).unwrap();
+        assert!(!serialized.contains("dashboard"));
+    }
+
+    #[test]
+    fn test_dashboard_widget_unknown_type_and_size_round_trip() {
+        let toml_str = r#"
+            version = 7
+
+            [[widgets]]
+            id = "w-future"
+            widget_type = "from_the_future"
+            size = "xxl"
+
+            [[widgets]]
+            id = "w-sizeless"
+            widget_type = "peers"
+        "#;
+
+        let layout: DashboardLayoutConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(layout.version, 7);
+        assert_eq!(layout.widgets[0].widget_type, "from_the_future");
+        assert_eq!(layout.widgets[0].size, "xxl");
+        assert_eq!(layout.widgets[1].size, "s");
+
+        let reserialized = toml::to_string(&layout).unwrap();
+        let round_tripped: DashboardLayoutConfig = toml::from_str(&reserialized).unwrap();
+        assert_eq!(round_tripped, layout);
     }
 
     #[test]

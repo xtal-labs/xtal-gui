@@ -763,6 +763,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_config_path,
             commands::get_gui_config,
             commands::set_gui_toasts_enabled,
+            commands::set_gui_dashboard_layout,
             commands::get_node_config,
             commands::set_node_storage_flags,
             commands::switch_network,
@@ -783,6 +784,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_mempool_transactions,
             commands::get_mempool_transaction,
             commands::get_mempool_transaction_detail,
+            commands::get_incoming_mempool_transactions,
             // Mining commands
             commands::start_mining,
             commands::stop_mining,

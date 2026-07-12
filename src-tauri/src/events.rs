@@ -486,7 +486,8 @@ fn handle_transaction_added(
     }
 }
 
-fn incoming_amount_for_pkhs(
+/// Total shards paid to any of `pkhs` by this transaction's UTXO outputs.
+pub(crate) fn incoming_amount_for_pkhs(
     transaction: &xtal::transaction::Transaction,
     pkhs: &HashSet<[u8; 20]>,
 ) -> u64 {

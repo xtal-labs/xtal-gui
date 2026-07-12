@@ -11,7 +11,7 @@ use xtal::utils::NetworkType;
 
 use crate::config::{
     load_node_config, node_config_path, set_active_network, set_node_storage_preferences,
-    update_gui_config, GuiConfig,
+    update_gui_config, DashboardLayoutConfig, GuiConfig,
 };
 use crate::state::{SharedStartupStatus, StartupStatusInner};
 
@@ -46,6 +46,7 @@ pub async fn get_config_path() -> Result<String, String> {
 #[derive(Debug, Clone, Serialize)]
 pub struct GuiConfigInfo {
     pub toasts_enabled: bool,
+    pub dashboard: Option<DashboardLayoutConfig>,
 }
 
 /// Get the persisted GUI configuration for frontend-owned settings.
@@ -56,6 +57,7 @@ pub async fn get_gui_config() -> Result<GuiConfigInfo, String> {
 
     Ok(GuiConfigInfo {
         toasts_enabled: config.toasts_enabled,
+        dashboard: config.dashboard,
     })
 }
 
@@ -63,6 +65,14 @@ pub async fn get_gui_config() -> Result<GuiConfigInfo, String> {
 #[tauri::command]
 pub async fn set_gui_toasts_enabled(enabled: bool) -> Result<(), String> {
     update_gui_config(|config| config.toasts_enabled = enabled)
+        .map_err(|e| format!("Failed to save GUI config: {}", e))?;
+    Ok(())
+}
+
+/// Persist the custom dashboard layout.
+#[tauri::command]
+pub async fn set_gui_dashboard_layout(layout: DashboardLayoutConfig) -> Result<(), String> {
+    update_gui_config(|config| config.dashboard = Some(layout))
         .map_err(|e| format!("Failed to save GUI config: {}", e))?;
     Ok(())
 }

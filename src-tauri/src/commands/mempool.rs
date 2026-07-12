@@ -2,6 +2,7 @@
 //!
 //! Commands for querying mempool state and pending transactions.
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -15,6 +16,7 @@ use crate::commands::tx_detail_utils::{extract_inputs, extract_outputs};
 use crate::commands::wallet::{
     annotate_transaction_io_ownership, get_wallet_addresses, TransactionInput, TransactionOutput,
 };
+use crate::events::{get_wallet_pkh_set, incoming_amount_for_pkhs};
 use crate::state::AppState;
 
 /// Mempool overview information
@@ -36,6 +38,23 @@ pub struct MempoolTransaction {
     pub fee: u64,
     pub size_bytes: usize,
     pub age_secs: u64,
+}
+
+impl MempoolTransaction {
+    /// Build a summary row from a mempool entry; `None` if the tx id can't be
+    /// computed.
+    fn from_entry(tx: &Transaction, fee: u64, timestamp: u64, now: u64) -> Option<Self> {
+        // Display the same id that the mempool uses for lookup.
+        let txid = tx.id().ok().map(hex::encode)?;
+
+        Some(Self {
+            txid,
+            tx_type: get_tx_type_name(tx).to_string(),
+            fee,
+            size_bytes: tx.serialized_size().unwrap_or(0),
+            age_secs: now.saturating_sub(timestamp),
+        })
+    }
 }
 
 const UTXO_TYPES: &[&str] = &["Standard", "Stake", "Unstake"];
@@ -100,32 +119,69 @@ pub async fn get_mempool_transactions(
     let mut results = Vec::with_capacity(txs_with_fees.len());
 
     for (tx, fee, timestamp) in txs_with_fees {
-        // Display the same id that the mempool uses for lookup.
-        let txid = match tx.id() {
-            Ok(id) => hex::encode(id),
-            Err(_) => continue,
-        };
-
-        // Get transaction type
-        let tx_type = get_tx_type_name(&tx).to_string();
-
-        // Estimate size (serialized length)
-        let size_bytes = tx.serialized_size().unwrap_or(0);
-
-        // Calculate age from timestamp
-        let age_secs = now.saturating_sub(timestamp);
-
-        results.push(MempoolTransaction {
-            txid,
-            tx_type,
-            fee,
-            size_bytes,
-            age_secs,
-        });
+        if let Some(summary) = MempoolTransaction::from_entry(&tx, fee, timestamp, now) {
+            results.push(summary);
+        }
     }
 
     // Sort by fee (highest first) as a sensible default
-    results.sort_by(|a, b| b.fee.cmp(&a.fee));
+    results.sort_by_key(|t| Reverse(t.fee));
+
+    Ok(results)
+}
+
+/// A mempool transaction summary plus the amount it pays the loaded wallet.
+#[derive(Debug, Clone, Serialize)]
+pub struct IncomingMempoolTransaction {
+    #[serde(flatten)]
+    pub summary: MempoolTransaction,
+    /// Total shards paying wallet-owned PKHs in this transaction.
+    pub incoming_amount: u64,
+}
+
+/// Get pending mempool transactions with outputs paying the loaded wallet.
+///
+/// Scoped to the user wallet's PKH set only — unlike the incoming-transaction
+/// event path in `events.rs`, which also aggregates running validator wallets
+/// for toast notifications.
+#[tauri::command]
+pub async fn get_incoming_mempool_transactions(
+    state: State<'_, AppState>,
+) -> Result<Vec<IncomingMempoolTransaction>, String> {
+    let Some(ref wallet) = state.services.wallet else {
+        return Ok(Vec::new());
+    };
+    if !wallet.is_loaded() {
+        return Ok(Vec::new());
+    }
+    let pkhs = get_wallet_pkh_set(wallet)?;
+
+    let mempool = state.services.mempool();
+    let txs_with_fees = mempool.get_transactions_with_fees();
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut results = Vec::new();
+
+    for (tx, fee, timestamp) in txs_with_fees {
+        let incoming_amount = incoming_amount_for_pkhs(&tx, &pkhs);
+        if incoming_amount == 0 {
+            continue;
+        }
+
+        if let Some(summary) = MempoolTransaction::from_entry(&tx, fee, timestamp, now) {
+            results.push(IncomingMempoolTransaction {
+                summary,
+                incoming_amount,
+            });
+        }
+    }
+
+    // Newest first
+    results.sort_by_key(|t| t.summary.age_secs);
 
     Ok(results)
 }
@@ -149,22 +205,12 @@ pub async fn get_mempool_transaction(
         None => return Ok(None),
     };
 
-    let tx_type = get_tx_type_name(&tx).to_string();
-    let size_bytes = tx.serialized_size().unwrap_or(0);
-
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
-    let age_secs = now.saturating_sub(timestamp);
 
-    Ok(Some(MempoolTransaction {
-        txid: hex::encode(txid_bytes),
-        tx_type,
-        fee,
-        size_bytes,
-        age_secs,
-    }))
+    Ok(MempoolTransaction::from_entry(&tx, fee, timestamp, now))
 }
 
 /// Detailed mempool transaction information for the detail panel
