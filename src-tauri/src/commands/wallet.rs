@@ -17,6 +17,7 @@ use xtal::fruit::core::FruitTx;
 
 use xtal::address::{encode_sh, ContractAddress};
 use xtal::address_format::{format_contract_address, format_utxo_address};
+use xtal::consensus::validation::COINBASE_MATURITY;
 use xtal::crypto::hash_public_key;
 use xtal::gas::{can_afford_transaction, TX_BASE_GAS};
 use xtal::interfaces::ChainDataProvider;
@@ -41,7 +42,8 @@ use xtal::wallet::database::models::{
 };
 use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::sync::WalletSyncService;
-use xtal::wallet::{FeeStrategy, TransactionBuilder, WalletManager};
+use xtal::wallet::transfer::{TransferRecipient, TransferRequest};
+use xtal::wallet::{FeeStrategy, WalletError, WalletManager};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::commands::tx_detail_utils::{
@@ -273,20 +275,20 @@ fn next_epoch_refresh_remaining(eligible_height: u64, current_leaf_height: u64) 
     refresh_height.saturating_sub(current_leaf_height)
 }
 
-fn maturity_status_for_utxo(utxo: &UtxoEntry, current_leaf_height: u64) -> Option<MaturityStatus> {
+fn maturity_status_for_utxo(utxo: &UtxoData, current_leaf_height: u64) -> Option<MaturityStatus> {
     if utxo.is_coinbase {
         let age = current_leaf_height.saturating_sub(utxo.creation_height);
-        let remaining = xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
+        let remaining = COINBASE_MATURITY.saturating_sub(age);
         return Some(maturity_status("coinbase", "locked", remaining));
     }
 
     if utxo.is_withdrawal {
         let age = current_leaf_height.saturating_sub(utxo.creation_height);
-        let remaining = xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
+        let remaining = COINBASE_MATURITY.saturating_sub(age);
         return Some(maturity_status("vm_withdrawal", "locked", remaining));
     }
 
-    let info = parse_stake_or_unstake_script(&utxo.script_pubkey)?;
+    let info = parse_stake_or_unstake_script(&utxo.output.script_pubkey)?;
     let remaining = lock_blocks_remaining(&info.lock, utxo.creation_height, current_leaf_height);
     if remaining > 0 {
         let kind = if info.is_stake {
@@ -316,14 +318,31 @@ fn maturity_status_for_utxo(utxo: &UtxoEntry, current_leaf_height: u64) -> Optio
     None
 }
 
-fn utxo_belongs_to_pkhs(utxo: &UtxoEntry, wallet_pkhs: &HashSet<[u8; 20]>) -> bool {
-    extract_pkh_from_script(&utxo.script_pubkey)
+fn utxo_belongs_to_pkhs(utxo: &UtxoData, wallet_pkhs: &HashSet<[u8; 20]>) -> bool {
+    extract_pkh_from_script(&utxo.output.script_pubkey)
         .map(|pkh| wallet_pkhs.contains(&pkh))
         .unwrap_or_else(|| {
-            parse_stake_or_unstake_script(&utxo.script_pubkey)
+            parse_stake_or_unstake_script(&utxo.output.script_pubkey)
                 .map(|info| wallet_pkhs.contains(&info.owner))
                 .unwrap_or(false)
         })
+}
+
+/// Build interface-level `UtxoData` from a storage `UtxoEntry` point-read —
+/// the same mapping the chain's batch UTXO query performs.
+fn utxo_data_from_entry(tx_id: [u8; 32], output_index: u16, entry: UtxoEntry) -> UtxoData {
+    UtxoData {
+        outpoint: (tx_id, output_index),
+        output: TxOut {
+            amount: entry.amount,
+            currency: entry.currency,
+            script_pubkey: entry.script_pubkey,
+        },
+        creation_height: entry.creation_height,
+        is_coinbase: entry.is_coinbase,
+        is_withdrawal: entry.is_withdrawal,
+        is_staking: entry.is_staking,
+    }
 }
 
 fn maturity_status_for_txid(
@@ -335,7 +354,8 @@ fn maturity_status_for_txid(
     let mut status = None;
     for index in 0u16..u16::MAX {
         match blockchain.get_utxo(txid, index) {
-            Ok(Some(utxo)) => {
+            Ok(Some(entry)) => {
+                let utxo = utxo_data_from_entry(*txid, index, entry);
                 if wallet_pkhs
                     .map(|pkhs| !utxo_belongs_to_pkhs(&utxo, pkhs))
                     .unwrap_or(false)
@@ -1255,71 +1275,95 @@ pub async fn get_wallet_balance(state: State<'_, AppState>) -> Result<WalletBala
     let db = wallet.database().ok_or("Wallet database not available")?;
     let queries = WalletQueries::new(db.connection());
 
-    // Calculate balance from blockchain for each wallet-owned PKH. The PKH set
-    // includes validator staking keys, and outpoint de-duplication prevents the
-    // validator address from being counted twice when it is also in public_keys.
+    // One batch pass over the chain UTXO set for every wallet-owned PKH
+    // (includes validator staking keys). The spend-candidate subset drives
+    // `confirmed` so the displayed spendable balance matches the UTXO pool
+    // the unified send path can actually select from.
     let blockchain = state.services.blockchain();
     let current_leaf_height = blockchain.get_current_leaf_height();
-    let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
+    let pkhs = get_wallet_pkh_set(wallet)?;
+    let utxos_by_pkh = blockchain
+        .get_utxos_for_addresses(&pkhs)
+        .map_err(|e| format!("Failed to get wallet UTXOs: {}", e))?;
+    let spend_pkhs = wallet.spend_candidate_pkhs().unwrap_or_default();
+    let spent_outpoints = state.services.mempool().spent_outpoints();
 
-    let mut total_balance = 0u64;
-    let mut immature_balance = 0u64;
-    let mut seen_outpoints = HashSet::new();
-
-    for pkh in get_wallet_pkh_set(wallet)? {
-        let Ok(utxo_positions) = blockchain.get_utxos_by_address(&pkh) else {
-            continue;
-        };
-
-        for pos in utxo_positions {
-            if !seen_outpoints.insert((pos.tx_id, pos.output_index)) {
-                continue;
-            }
-
-            let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) else {
-                continue;
-            };
-
-            let amount = utxo.amount;
-            total_balance = total_balance.saturating_add(amount);
-
-            if utxo.is_coinbase || utxo.is_withdrawal {
-                let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                if age < maturity_required {
-                    immature_balance = immature_balance.saturating_add(amount);
-                }
-            } else if let Some(info) = parse_stake_or_unstake_script(&utxo.script_pubkey) {
-                if !info.is_stake {
-                    if let TimeLock::Relative(lock) = info.lock {
-                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                        if age < lock {
-                            immature_balance = immature_balance.saturating_add(amount);
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let totals = classify_wallet_balance(
+        &utxos_by_pkh,
+        &spend_pkhs,
+        &spent_outpoints,
+        current_leaf_height,
+    );
 
     // Get pending outgoing amount from wallet database (per-wallet)
     let pending_outgoing = queries.get_pending_outgoing_total(&wallet_id).unwrap_or(0);
 
-    // The displayed confirmed balance must match the UTXO pool that regular
-    // sends can actually select from. Pending outgoing remains reported
-    // separately, but mempool-spent outpoints are already excluded by the
-    // collector so they are not subtracted a second time here.
-    let send_spendable_balance: u64 = collect_spendable_wallet_utxos(&state, wallet)?
-        .iter()
-        .map(|utxo| utxo.output.amount)
-        .sum();
-
     Ok(WalletBalance {
-        confirmed: send_spendable_balance,
+        confirmed: totals.confirmed,
         pending: pending_outgoing,
-        immature: immature_balance,
-        total: total_balance,
+        immature: totals.immature,
+        total: totals.total,
         currency: "XTAL".to_string(),
     })
+}
+
+/// Single-pass totals over the wallet's chain UTXOs.
+struct BalanceTotals {
+    /// Every wallet-owned UTXO amount, all currencies.
+    total: u64,
+    /// Coinbase/withdrawal younger than maturity plus CSV-locked unstake
+    /// returns.
+    immature: u64,
+    /// What the unified send path can select right now: spend-candidate
+    /// ownership, XTAL, spendable at the current height, and not consumed
+    /// by a pending mempool transaction.
+    confirmed: u64,
+}
+
+fn classify_wallet_balance(
+    utxos_by_pkh: &HashMap<[u8; 20], Vec<UtxoData>>,
+    spend_pkhs: &HashSet<[u8; 20]>,
+    spent_outpoints: &HashSet<([u8; 32], u16)>,
+    current_leaf_height: u64,
+) -> BalanceTotals {
+    let mut totals = BalanceTotals {
+        total: 0,
+        immature: 0,
+        confirmed: 0,
+    };
+
+    for (pkh, utxos) in utxos_by_pkh {
+        for utxo in utxos {
+            let amount = utxo.output.amount;
+            totals.total = totals.total.saturating_add(amount);
+
+            if utxo.is_coinbase || utxo.is_withdrawal {
+                let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                if age < COINBASE_MATURITY {
+                    totals.immature = totals.immature.saturating_add(amount);
+                }
+            } else if let Some(info) = parse_stake_or_unstake_script(&utxo.output.script_pubkey) {
+                if !info.is_stake {
+                    if let TimeLock::Relative(lock) = info.lock {
+                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                        if age < lock {
+                            totals.immature = totals.immature.saturating_add(amount);
+                        }
+                    }
+                }
+            }
+
+            if spend_pkhs.contains(pkh)
+                && utxo.output.currency == CurrencyType::XTAL
+                && utxo.is_spendable(current_leaf_height)
+                && !spent_outpoints.contains(&utxo.outpoint)
+            {
+                totals.confirmed = totals.confirmed.saturating_add(amount);
+            }
+        }
+    }
+
+    totals
 }
 
 /// Individual UTXO information for the deposit picker
@@ -1368,53 +1412,40 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
 
     let blockchain = state.services.blockchain();
     let current_leaf_height = blockchain.get_current_leaf_height();
-    let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
+
+    let pkhs = get_wallet_pkh_set(wallet)?;
+    let utxos_by_pkh = blockchain
+        .get_utxos_for_addresses(&pkhs)
+        .map_err(|e| format!("Failed to get wallet UTXOs: {}", e))?;
 
     let mut utxos = Vec::new();
-    let mut seen_outpoints = HashSet::new();
 
-    for pkh in get_wallet_pkh_set(wallet)? {
-        let address = format_utxo_address(&pkh);
+    for (pkh, owned) in &utxos_by_pkh {
+        let address = format_utxo_address(pkh);
 
-        let positions = match blockchain.get_utxos_by_address(&pkh) {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-
-        for pos in positions {
-            if !seen_outpoints.insert((pos.tx_id, pos.output_index)) {
-                continue;
-            }
-
-            let utxo = match blockchain.get_utxo(&pos.tx_id, pos.output_index) {
-                Ok(Some(u)) => u,
-                _ => continue,
-            };
-
+        for utxo in owned {
             let confirmations = current_leaf_height.saturating_sub(utxo.creation_height);
 
             // Determine eligibility for CAGE deposit
             let (is_eligible, ineligible_reason) = if utxo.is_staking {
                 (false, Some("staking".to_string()))
             } else if utxo.is_coinbase {
-                if confirmations < maturity_required {
+                if confirmations < COINBASE_MATURITY {
                     (false, Some("immature coinbase".to_string()))
                 } else {
                     // Mature coinbase — still ineligible: CAGE only accepts standard UTXOs
                     (false, Some("coinbase".to_string()))
                 }
             } else if utxo.is_withdrawal {
-                if confirmations < maturity_required {
+                if confirmations < COINBASE_MATURITY {
                     (false, Some("immature withdrawal".to_string()))
                 } else {
                     (false, Some("withdrawal".to_string()))
                 }
-            } else if let Some(info) =
-                xtal::script::parse_stake_or_unstake_script(&utxo.script_pubkey)
-            {
+            } else if let Some(info) = parse_stake_or_unstake_script(&utxo.output.script_pubkey) {
                 if info.is_stake {
                     (false, Some("staking".to_string()))
-                } else if let xtal::script::TimeLock::Relative(lock) = info.lock {
+                } else if let TimeLock::Relative(lock) = info.lock {
                     if confirmations < lock {
                         (false, Some("timelocked".to_string()))
                     } else {
@@ -1429,9 +1460,9 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
             };
 
             utxos.push(WalletUtxo {
-                txid: hex::encode(pos.tx_id),
-                vout: pos.output_index,
-                amount: utxo.amount,
+                txid: hex::encode(utxo.outpoint.0),
+                vout: utxo.outpoint.1,
+                amount: utxo.output.amount,
                 address: address.clone(),
                 confirmations,
                 is_eligible,
@@ -1812,78 +1843,6 @@ fn parse_send_recipient(to_address: &str) -> Result<[u8; 20], String> {
     Ok(recipient)
 }
 
-fn collect_spendable_wallet_utxos(
-    state: &AppState,
-    wallet: &WalletManager,
-) -> Result<Vec<UtxoData>, String> {
-    let blockchain = state.services.blockchain();
-    let current_leaf_height = blockchain.get_current_leaf_height();
-    let maturity_required = xtal::consensus::validation::COINBASE_MATURITY;
-    let spent_outpoints = state.services.mempool().spent_outpoints();
-    let mut available_utxos = Vec::new();
-    let mut seen_outpoints = HashSet::new();
-
-    for pkh in get_wallet_pkh_set(wallet)? {
-        let Ok(positions) = blockchain.get_utxos_by_address(&pkh) else {
-            continue;
-        };
-
-        for pos in positions {
-            if !seen_outpoints.insert((pos.tx_id, pos.output_index)) {
-                continue;
-            }
-            if spent_outpoints.contains(&(pos.tx_id, pos.output_index)) {
-                continue;
-            }
-
-            let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) else {
-                continue;
-            };
-
-            if utxo.currency != CurrencyType::XTAL {
-                continue;
-            }
-
-            if utxo.is_coinbase || utxo.is_withdrawal {
-                let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                if age < maturity_required {
-                    continue;
-                }
-            }
-
-            if utxo.is_staking {
-                continue;
-            }
-
-            if let Some(info) = parse_stake_or_unstake_script(&utxo.script_pubkey) {
-                if info.is_stake {
-                    continue;
-                }
-
-                if lock_blocks_remaining(&info.lock, utxo.creation_height, current_leaf_height) > 0
-                {
-                    continue;
-                }
-            }
-
-            available_utxos.push(UtxoData {
-                outpoint: (pos.tx_id, pos.output_index),
-                output: TxOut {
-                    amount: utxo.amount,
-                    currency: utxo.currency,
-                    script_pubkey: utxo.script_pubkey.clone(),
-                },
-                creation_height: utxo.creation_height,
-                is_coinbase: utxo.is_coinbase,
-                is_withdrawal: utxo.is_withdrawal,
-                is_staking: utxo.is_staking,
-            });
-        }
-    }
-
-    Ok(available_utxos)
-}
-
 fn fee_strategy_from_request(
     fee: Option<u64>,
     fee_rate: Option<u64>,
@@ -1918,56 +1877,28 @@ pub async fn estimate_send_transaction_fee(
         .as_ref()
         .ok_or("Wallet manager not available")?;
     let recipient = parse_send_recipient(&to_address)?;
-    let available_utxos = collect_spendable_wallet_utxos(&state, wallet)?;
 
-    if available_utxos.is_empty() {
-        return Err("No UTXOs available for transaction".to_string());
-    }
-
-    let spent = state.services.mempool().spent_outpoints();
-    let n_inputs = available_utxos.len();
-    let total_spendable: u64 = available_utxos.iter().map(|utxo| utxo.output.amount).sum();
-
-    let builder = TransactionBuilder::new()
-        .add_utxos(available_utxos)
-        .exclude_outpoints(spent)
-        .add_recipient(recipient, amount)
-        .fee_strategy(FeeStrategy::PerByte(fee_rate));
-
-    // Drain fee = fee to spend every spendable UTXO (amount-independent). It matches
-    // what the eventual send pays at the maximum, so max_sendable = total - drain_fee.
-    let drain_fee = builder.calculate_required_fee();
-    let drain_size = builder.estimate_final_size();
-    let max_sendable = total_spendable.saturating_sub(drain_fee);
-
-    let estimate = if amount <= max_sendable {
-        // amount <= max_sendable guarantees the selection build succeeds.
-        let est = builder
-            .estimate()
-            .map_err(|e| format!("Failed to estimate transaction fee: {}", e))?;
-
-        FeeEstimate {
-            fee: est.fee,
-            tx_size: est.tx_size,
-            input_count: est.selected_inputs.len(),
-            output_count: est.transaction.utxo_outputs().len(),
-            fee_rate,
-        }
-    } else {
-        // Requested amount exceeds the spendable max: report the full-drain fee so the
-        // UI still flags insufficient funds while surfacing the correct max_sendable.
-        FeeEstimate {
-            fee: drain_fee,
-            tx_size: drain_size,
-            input_count: n_inputs,
-            output_count: 2,
-            fee_rate,
-        }
-    };
+    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount)])
+        .with_fee(FeeStrategy::PerByte(fee_rate));
+    let blockchain = state.services.blockchain();
+    let estimate = wallet
+        .estimate_transfer(request, blockchain.as_ref(), state.services.mempool())
+        .map_err(|e| match e {
+            WalletError::InsufficientFunds { available: 0, .. } => {
+                "No UTXOs available for transaction".to_string()
+            }
+            other => format!("Failed to estimate transaction fee: {}", other),
+        })?;
 
     Ok(SendFeeEstimate {
-        estimate,
-        max_sendable,
+        estimate: FeeEstimate {
+            fee: estimate.fee,
+            tx_size: estimate.tx_size,
+            input_count: estimate.input_count,
+            output_count: estimate.output_count,
+            fee_rate,
+        },
+        max_sendable: estimate.max_sendable,
     })
 }
 
@@ -1992,59 +1923,26 @@ pub async fn send_transaction(
         .unlock_wallet(&password, Some(Duration::from_secs(30)))
         .map_err(|e| format!("Invalid password: {}", e))?;
 
-    let mempool = state.services.mempool();
-    let blockchain = state.services.blockchain().clone();
-    let chain_provider = blockchain as std::sync::Arc<dyn ChainDataProvider>;
-
     let recipient = parse_send_recipient(&to_address)?;
-    let available_utxos = collect_spendable_wallet_utxos(&state, wallet)?;
-
-    if available_utxos.is_empty() {
-        return Err("No UTXOs available for transaction".to_string());
-    }
 
     // Determine fee strategy. `fee` is kept for compatibility, while the GUI
     // now sends a per-byte rate so the builder can price by selected UTXO size.
     let fee_strategy = fee_strategy_from_request(fee, fee_rate)?;
 
-    // Get outpoints already spent by pending mempool transactions
-    let spent = mempool.spent_outpoints();
+    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount)])
+        .with_fee(fee_strategy);
+    let blockchain = state.services.blockchain();
+    let outcome = wallet
+        .send_transfer_with_details(request, blockchain.as_ref(), state.services.mempool())
+        .map_err(|e| match e {
+            WalletError::InsufficientFunds { available: 0, .. } => {
+                "No UTXOs available for transaction".to_string()
+            }
+            other => format!("Failed to send transaction: {}", other),
+        })?;
 
-    // Build transaction
-    let build_result = wallet
-        .with_wallet(|w| {
-            w.create_transaction_builder(available_utxos, chain_provider)
-                .map(|builder| {
-                    builder
-                        .exclude_outpoints(spent)
-                        .add_recipient(recipient, amount)
-                        .fee_strategy(fee_strategy)
-                        .build_and_sign()
-                })
-        })
-        .map_err(|e| format!("Failed to create transaction builder: {}", e))?
-        .map_err(|e| format!("Failed to build transaction: {}", e))?;
-
-    let tx = build_result.transaction;
-    let total_input: u64 = build_result
-        .selected_inputs
-        .iter()
-        .map(|input| input.output.amount)
-        .sum();
-    let total_output: u64 = tx.utxo_outputs().iter().map(|output| output.amount).sum();
-    let actual_fee = total_input
-        .checked_sub(total_output)
-        .ok_or("Failed to calculate transaction fee: outputs exceed selected inputs")?;
-
-    // Get txid
-    let txid = tx
-        .id()
-        .map_err(|e| format!("Failed to get transaction ID: {}", e))?;
-
-    // Submit to mempool
-    mempool
-        .add_transaction(tx.clone(), TransactionSource::Local)
-        .map_err(|e| format!("Failed to submit transaction: {}", e))?;
+    let txid = outcome.txid;
+    let actual_fee = outcome.fee;
 
     log::info!("Transaction submitted: {}", hex::encode(txid));
 
@@ -2059,7 +1957,7 @@ pub async fn send_transaction(
             .unwrap_or(0);
 
         // Capture input details from selected UTXOs
-        let input_details: Vec<InputDetail> = build_result
+        let input_details: Vec<InputDetail> = outcome
             .selected_inputs
             .iter()
             .map(InputDetail::from_utxo)
@@ -2067,7 +1965,7 @@ pub async fn send_transaction(
 
         let record = TransactionRecord {
             txid,
-            raw_tx: tx.encode(),
+            raw_tx: outcome.transaction.encode(),
             tx_type: TransactionType::Send,
             amount,
             fee: Some(actual_fee),
@@ -2738,45 +2636,40 @@ pub async fn get_transaction_history(
     }
     let mut collected_utxos: HashMap<[u8; 32], CollectedUtxoTx> = HashMap::new();
 
-    for pkh in &wallet_pkhs {
-        if let Ok(utxo_positions) = blockchain.get_utxos_by_address(pkh) {
-            for pos in utxo_positions {
-                if let Ok(Some(utxo_data)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) {
-                    let parsed_stake = parse_stake_or_unstake_script(&utxo_data.script_pubkey);
-                    let has_stake_output = parsed_stake
-                        .as_ref()
-                        .map(|info| info.is_stake)
-                        .unwrap_or(false);
-                    let has_unstake_output = parsed_stake
-                        .as_ref()
-                        .map(|info| !info.is_stake)
-                        .unwrap_or(false);
-                    let maturity_candidate =
-                        maturity_status_for_utxo(&utxo_data, current_leaf_height);
-                    collected_utxos
-                        .entry(pos.tx_id)
-                        .and_modify(|c| {
-                            c.total_amount += utxo_data.amount;
-                            c.is_coinbase |= utxo_data.is_coinbase;
-                            c.is_withdrawal |= utxo_data.is_withdrawal;
-                            c.has_stake_output |= has_stake_output;
-                            c.has_unstake_output |= has_unstake_output;
-                            c.maturity_status = combine_maturity_status(
-                                c.maturity_status.take(),
-                                maturity_candidate.clone(),
-                            );
-                        })
-                        .or_insert(CollectedUtxoTx {
-                            total_amount: utxo_data.amount,
-                            is_coinbase: utxo_data.is_coinbase,
-                            is_withdrawal: utxo_data.is_withdrawal,
-                            has_stake_output,
-                            has_unstake_output,
-                            creation_height: utxo_data.creation_height,
-                            maturity_status: maturity_candidate,
-                        });
-                }
-            }
+    if let Ok(utxos_by_pkh) = blockchain.get_utxos_for_addresses(&wallet_pkhs) {
+        for utxo_data in utxos_by_pkh.into_values().flatten() {
+            let parsed_stake = parse_stake_or_unstake_script(&utxo_data.output.script_pubkey);
+            let has_stake_output = parsed_stake
+                .as_ref()
+                .map(|info| info.is_stake)
+                .unwrap_or(false);
+            let has_unstake_output = parsed_stake
+                .as_ref()
+                .map(|info| !info.is_stake)
+                .unwrap_or(false);
+            let maturity_candidate = maturity_status_for_utxo(&utxo_data, current_leaf_height);
+            collected_utxos
+                .entry(utxo_data.outpoint.0)
+                .and_modify(|c| {
+                    c.total_amount += utxo_data.output.amount;
+                    c.is_coinbase |= utxo_data.is_coinbase;
+                    c.is_withdrawal |= utxo_data.is_withdrawal;
+                    c.has_stake_output |= has_stake_output;
+                    c.has_unstake_output |= has_unstake_output;
+                    c.maturity_status = combine_maturity_status(
+                        c.maturity_status.take(),
+                        maturity_candidate.clone(),
+                    );
+                })
+                .or_insert(CollectedUtxoTx {
+                    total_amount: utxo_data.output.amount,
+                    is_coinbase: utxo_data.is_coinbase,
+                    is_withdrawal: utxo_data.is_withdrawal,
+                    has_stake_output,
+                    has_unstake_output,
+                    creation_height: utxo_data.creation_height,
+                    maturity_status: maturity_candidate,
+                });
         }
     }
 
@@ -3937,7 +3830,9 @@ fn resolve_vm_indexed_transaction_context(
         tx,
         block_height: Some(location.leaf_height),
         block_hash: stem_block.as_ref().map(|block| hex::encode(block.hash())),
-        timestamp: stem_block.as_ref().map_or(0, |block| block.header.timestamp),
+        timestamp: stem_block
+            .as_ref()
+            .map_or(0, |block| block.header.timestamp),
         confirmations: current_leaf_height.saturating_sub(location.leaf_height) as u32 + 1,
         is_pending: false,
     })
@@ -4551,14 +4446,21 @@ pub(crate) fn start_wallet_sync(state: &AppState, wallet: &WalletManager) {
         }
     };
 
-    // Gather wallet addresses to monitor (mining, receiving, change)
-    let pkhs = match get_wallet_pkh_set(wallet) {
+    // Gather wallet addresses to monitor. Union the scoped pkh set with the
+    // manager's spend candidates: the send/estimate index fast path requires
+    // every candidate address (including the staking key, which the scoped
+    // set omits for standard wallets) to be watched by the sync service.
+    let mut pkhs = match get_wallet_pkh_set(wallet) {
         Ok(p) => p,
         Err(e) => {
             log::warn!("Failed to get wallet addresses for sync: {}", e);
             return;
         }
     };
+    match wallet.spend_candidate_pkhs() {
+        Ok(candidates) => pkhs.extend(candidates),
+        Err(e) => log::warn!("Failed to get spend-candidate addresses for sync: {}", e),
+    }
 
     let addrs: Vec<[u8; 20]> = pkhs.into_iter().collect();
     let sync_clone = sync_service.clone();
@@ -4984,11 +4886,186 @@ mod tests {
     use xtal::blockchain::processing::utxo_verifier::ConsumedUtxo;
     use xtal::config::SHARDS_PER_XTAL;
     use xtal::fruit::core::FruitType;
+    use xtal::script::{create_stake_script, create_unstake_script, p2pkh_script_pubkey, Script};
     use xtal::storage::{trie::RocksDBBackend as XtalRocksDbBackend, Storage, UtxoPosition};
     use xtal::transaction::receipt::{BlockReceipts, TransactionReceipt, TxStatus};
     use xtal::transaction::{AccountTransferTransaction, ContractCallTransaction};
     use xtal::vm::abi::AbiValue;
     use xtal::vm::{ContractEvent, PendingWithdrawal};
+
+    fn balance_utxo(outpoint_tag: u8, amount: u64, script: Script) -> UtxoData {
+        UtxoData {
+            outpoint: ([outpoint_tag; 32], 0),
+            output: TxOut {
+                amount,
+                currency: CurrencyType::XTAL,
+                script_pubkey: script,
+            },
+            creation_height: 0,
+            is_coinbase: false,
+            is_withdrawal: false,
+            is_staking: false,
+        }
+    }
+
+    #[test]
+    fn utxo_data_from_entry_maps_all_fields() {
+        let pkh = [3u8; 20];
+        let entry = UtxoEntry {
+            amount: 7_777,
+            currency: CurrencyType::XTAL,
+            script_pubkey: p2pkh_script_pubkey(&pkh),
+            creation_height: 42,
+            is_coinbase: true,
+            is_withdrawal: false,
+            is_staking: false,
+        };
+
+        let utxo = utxo_data_from_entry([5u8; 32], 3, entry);
+        assert_eq!(utxo.outpoint, ([5u8; 32], 3));
+        assert_eq!(utxo.output.amount, 7_777);
+        assert_eq!(utxo.creation_height, 42);
+        assert!(utxo.is_coinbase);
+        assert!(!utxo.is_withdrawal);
+        assert!(!utxo.is_staking);
+        assert_eq!(utxo.output.script_pubkey, p2pkh_script_pubkey(&pkh));
+    }
+
+    #[test]
+    fn maturity_status_for_utxo_flags_young_coinbase() {
+        let pkh = [3u8; 20];
+        let mut utxo = balance_utxo(1, 5_000, p2pkh_script_pubkey(&pkh));
+        utxo.is_coinbase = true;
+        utxo.creation_height = 10;
+
+        let status = maturity_status_for_utxo(&utxo, 10 + COINBASE_MATURITY - 4)
+            .expect("young coinbase must report maturity status");
+        assert!(status.is_immature);
+        assert_eq!(status.kind.as_deref(), Some("coinbase"));
+        assert_eq!(status.phase.as_deref(), Some("locked"));
+        assert_eq!(status.blocks_until_mature, 4);
+    }
+
+    #[test]
+    fn maturity_status_for_utxo_none_for_plain_mature_p2pkh() {
+        let pkh = [3u8; 20];
+        let utxo = balance_utxo(1, 5_000, p2pkh_script_pubkey(&pkh));
+        assert!(maturity_status_for_utxo(&utxo, 100).is_none());
+    }
+
+    #[test]
+    fn maturity_status_for_utxo_flags_locked_unstake() {
+        let pkh = [3u8; 20];
+        let script = create_unstake_script(&pkh, &[2u8; 20], 5_000);
+        let mut utxo = balance_utxo(1, 5_000, script);
+        utxo.creation_height = 100;
+
+        let status = maturity_status_for_utxo(&utxo, 101)
+            .expect("locked unstake must report maturity status");
+        assert!(status.is_immature);
+        assert_eq!(status.kind.as_deref(), Some("unstake_release"));
+        assert_eq!(status.phase.as_deref(), Some("locked"));
+        assert!(status.blocks_until_mature > 0);
+    }
+
+    #[test]
+    fn classify_wallet_balance_counts_mature_spendable_as_confirmed() {
+        let pkh = [1u8; 20];
+        let utxo = balance_utxo(1, 5_000, p2pkh_script_pubkey(&pkh));
+        let utxos_by_pkh = HashMap::from([(pkh, vec![utxo])]);
+        let spend_pkhs = HashSet::from([pkh]);
+
+        let totals = classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &HashSet::new(), 100);
+        assert_eq!(totals.total, 5_000);
+        assert_eq!(totals.immature, 0);
+        assert_eq!(totals.confirmed, 5_000);
+    }
+
+    #[test]
+    fn classify_wallet_balance_immature_coinbase_not_confirmed() {
+        let pkh = [1u8; 20];
+        let mut utxo = balance_utxo(1, 5_000, p2pkh_script_pubkey(&pkh));
+        utxo.is_coinbase = true;
+        utxo.creation_height = 100;
+        let utxos_by_pkh = HashMap::from([(pkh, vec![utxo])]);
+        let spend_pkhs = HashSet::from([pkh]);
+
+        // Age just below maturity: counted in total and immature, not confirmed.
+        let young = 100 + COINBASE_MATURITY - 1;
+        let totals = classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &HashSet::new(), young);
+        assert_eq!(totals.total, 5_000);
+        assert_eq!(totals.immature, 5_000);
+        assert_eq!(totals.confirmed, 0);
+
+        // At maturity it graduates to confirmed.
+        let mature = 100 + COINBASE_MATURITY;
+        let totals = classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &HashSet::new(), mature);
+        assert_eq!(totals.immature, 0);
+        assert_eq!(totals.confirmed, 5_000);
+    }
+
+    #[test]
+    fn classify_wallet_balance_staked_counts_total_only() {
+        let pkh = [1u8; 20];
+        let script = create_stake_script(&pkh, &[2u8; 20], 5_000);
+        let utxo = balance_utxo(1, 5_000, script);
+        let utxos_by_pkh = HashMap::from([(pkh, vec![utxo])]);
+        let spend_pkhs = HashSet::from([pkh]);
+
+        let totals =
+            classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &HashSet::new(), 1_000_000);
+        assert_eq!(totals.total, 5_000);
+        assert_eq!(totals.immature, 0, "active stake is not 'immature'");
+        assert_eq!(totals.confirmed, 0, "active stake is never spendable");
+    }
+
+    #[test]
+    fn classify_wallet_balance_locked_unstake_is_immature() {
+        let pkh = [1u8; 20];
+        let script = create_unstake_script(&pkh, &[2u8; 20], 5_000);
+        let mut utxo = balance_utxo(1, 5_000, script);
+        utxo.creation_height = 100;
+        let utxos_by_pkh = HashMap::from([(pkh, vec![utxo])]);
+        let spend_pkhs = HashSet::from([pkh]);
+
+        // Inside the CSV window: immature, not confirmed.
+        let totals = classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &HashSet::new(), 101);
+        assert_eq!(totals.immature, 5_000);
+        assert_eq!(totals.confirmed, 0);
+
+        // Far past any unstake lock: spendable.
+        let totals =
+            classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &HashSet::new(), 10_000_000);
+        assert_eq!(totals.immature, 0);
+        assert_eq!(totals.confirmed, 5_000);
+    }
+
+    #[test]
+    fn classify_wallet_balance_excludes_mempool_spent_from_confirmed() {
+        let pkh = [1u8; 20];
+        let utxo = balance_utxo(1, 5_000, p2pkh_script_pubkey(&pkh));
+        let outpoint = utxo.outpoint;
+        let utxos_by_pkh = HashMap::from([(pkh, vec![utxo])]);
+        let spend_pkhs = HashSet::from([pkh]);
+        let spent = HashSet::from([outpoint]);
+
+        let totals = classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &spent, 100);
+        assert_eq!(totals.total, 5_000, "mempool spends stay in total");
+        assert_eq!(totals.confirmed, 0, "mempool spends leave confirmed");
+    }
+
+    #[test]
+    fn classify_wallet_balance_non_spend_pkh_excluded_from_confirmed() {
+        let pkh = [1u8; 20];
+        let utxo = balance_utxo(1, 5_000, p2pkh_script_pubkey(&pkh));
+        let utxos_by_pkh = HashMap::from([(pkh, vec![utxo])]);
+        // pkh is watched (e.g. a VM account address) but not a spend candidate.
+        let spend_pkhs = HashSet::from([[9u8; 20]]);
+
+        let totals = classify_wallet_balance(&utxos_by_pkh, &spend_pkhs, &HashSet::new(), 100);
+        assert_eq!(totals.total, 5_000);
+        assert_eq!(totals.confirmed, 0);
+    }
 
     #[test]
     fn classify_vm_wallet_transaction_marks_outgoing_account_transfer() {

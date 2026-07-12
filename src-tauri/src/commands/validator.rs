@@ -17,7 +17,7 @@ use xtal::fruit::spec::get_fruits_by_stake_requirement;
 use xtal::fruit::FruitType;
 use xtal::interfaces::validator::ValidatorProduction;
 use xtal::interfaces::{ChainDataProvider, UtxoData};
-use xtal::transaction::{CurrencyType, TxOut};
+use xtal::transaction::CurrencyType;
 use xtal::validator::ValidatorService;
 use xtal::wallet::WalletManager;
 
@@ -317,54 +317,52 @@ pub async fn get_validator_balance_info(
     let mut pending_unstake: u64 = 0;
     let mut immature_non_stake_balance: u64 = 0;
 
-    if let Ok(utxo_positions) = blockchain.get_utxos_by_address(&validator_pkh) {
-        for pos in &utxo_positions {
-            if spent_outpoints.contains(&(pos.tx_id, pos.output_index)) {
+    if let Ok(utxos) = blockchain.get_utxos(&validator_pkh) {
+        for utxo in &utxos {
+            if spent_outpoints.contains(&utxo.outpoint) {
                 continue;
             }
 
-            if let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) {
-                if let Some(info) = xtal::script::parse_stake_or_unstake_script(&utxo.script_pubkey)
-                {
-                    let belongs_to_validator = info.owner == validator_pkh;
-                    let is_canonical_contract = info.contract == xtal::config::CONTRACT_ADDRESS;
+            if let Some(info) =
+                xtal::script::parse_stake_or_unstake_script(&utxo.output.script_pubkey)
+            {
+                let belongs_to_validator = info.owner == validator_pkh;
+                let is_canonical_contract = info.contract == xtal::config::CONTRACT_ADDRESS;
 
-                    if info.is_stake && belongs_to_validator && is_canonical_contract {
-                        let coinbase_or_withdrawal_locked =
-                            if utxo.is_coinbase || utxo.is_withdrawal {
-                                let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                                age < xtal::consensus::validation::COINBASE_MATURITY
-                            } else {
-                                false
-                            };
+                if info.is_stake && belongs_to_validator && is_canonical_contract {
+                    let coinbase_or_withdrawal_locked = if utxo.is_coinbase || utxo.is_withdrawal {
+                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                        age < xtal::consensus::validation::COINBASE_MATURITY
+                    } else {
+                        false
+                    };
 
-                        if coinbase_or_withdrawal_locked {
-                            pending_stake += utxo.amount;
-                        } else if let xtal::script::TimeLock::Relative(lock) = info.lock {
-                            let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                            if age < lock {
-                                pending_stake += utxo.amount;
-                            } else {
-                                withdrawable_stake += utxo.amount;
-                            }
+                    if coinbase_or_withdrawal_locked {
+                        pending_stake += utxo.output.amount;
+                    } else if let xtal::script::TimeLock::Relative(lock) = info.lock {
+                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                        if age < lock {
+                            pending_stake += utxo.output.amount;
                         } else {
-                            withdrawable_stake += utxo.amount;
+                            withdrawable_stake += utxo.output.amount;
                         }
-                    } else if !info.is_stake && belongs_to_validator && is_canonical_contract {
-                        // Unstake output — check CSV lock
-                        if let xtal::script::TimeLock::Relative(lock) = info.lock {
-                            let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                            if age < lock {
-                                pending_unstake += utxo.amount;
-                            }
+                    } else {
+                        withdrawable_stake += utxo.output.amount;
+                    }
+                } else if !info.is_stake && belongs_to_validator && is_canonical_contract {
+                    // Unstake output — check CSV lock
+                    if let xtal::script::TimeLock::Relative(lock) = info.lock {
+                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                        if age < lock {
+                            pending_unstake += utxo.output.amount;
                         }
                     }
-                } else if utxo.is_coinbase {
-                    // Immature coinbase output
-                    let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                    if age < xtal::consensus::validation::COINBASE_MATURITY {
-                        immature_non_stake_balance += utxo.amount;
-                    }
+                }
+            } else if utxo.is_coinbase {
+                // Immature coinbase output
+                let age = current_leaf_height.saturating_sub(utxo.creation_height);
+                if age < xtal::consensus::validation::COINBASE_MATURITY {
+                    immature_non_stake_balance += utxo.output.amount;
                 }
             }
         }
@@ -508,30 +506,16 @@ pub async fn get_eligible_fruits(
 
 fn collect_validator_address_utxos(state: &AppState, validator_pkh: &[u8; 20]) -> Vec<UtxoData> {
     let blockchain = state.services.blockchain();
-    let mut utxos = Vec::new();
 
-    if let Ok(positions) = blockchain.get_utxos_by_address(validator_pkh) {
-        for pos in positions {
-            if let Ok(Some(utxo)) = blockchain.get_utxo(&pos.tx_id, pos.output_index) {
-                if utxo.currency == CurrencyType::XTAL {
-                    utxos.push(UtxoData {
-                        outpoint: (pos.tx_id, pos.output_index),
-                        output: TxOut {
-                            amount: utxo.amount,
-                            currency: utxo.currency,
-                            script_pubkey: utxo.script_pubkey.clone(),
-                        },
-                        creation_height: utxo.creation_height,
-                        is_coinbase: utxo.is_coinbase,
-                        is_withdrawal: utxo.is_withdrawal,
-                        is_staking: utxo.is_staking,
-                    });
-                }
-            }
-        }
-    }
-
-    utxos
+    blockchain
+        .get_utxos(validator_pkh)
+        .map(|utxos| {
+            utxos
+                .into_iter()
+                .filter(|utxo| utxo.output.currency == CurrencyType::XTAL)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn mature_canonical_stake_amount(
