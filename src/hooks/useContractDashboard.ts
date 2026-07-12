@@ -49,9 +49,7 @@ export function useContractDashboard(
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
 
   // Find zero-param read methods with returns
-  const dashboardMethods = abi?.methods.filter(
-    (m) => m.mutability === "read" && m.params.length === 0 && m.returns,
-  ) ?? [];
+  const dashboardMethods = abi?.methods.filter(isDashboardMethod) ?? [];
 
   const queryAll = useCallback(async (mode: QueryMode = "initial") => {
     if (!contractAddress || dashboardMethods.length === 0) return;
@@ -72,49 +70,7 @@ export function useContractDashboard(
 
       if (cancelledRef.current) return;
 
-      const next = dashboardMethods.map((m, i) => {
-        const result = settled[i];
-        if (result.status === "fulfilled" && result.value.success) {
-          const returnType = m.returns!.type;
-          const rawHex = result.value.returnData;
-          const decodedValue = decodeReturnValue(rawHex, returnType);
-          const numericValue =
-            returnType === "u64" || returnType === "xtal_amount"
-              ? decodeU64(rawHex)
-              : returnType === "u32" || returnType === "u16" || returnType === "u8"
-                ? Number(decodedValue)
-                : undefined;
-
-          return {
-            methodName: m.name,
-            displayName: m.displayName || m.name,
-            returnType,
-            returnDescription: m.returns!.description,
-            display: m.returns!.display,
-            status: "success" as const,
-            rawHex,
-            decodedValue,
-            numericValue,
-          };
-        }
-
-        const errorMessage =
-          result.status === "fulfilled"
-            ? result.value.errorMessage || "Query failed"
-            : result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason);
-
-        return {
-          methodName: m.name,
-          displayName: m.displayName || m.name,
-          returnType: m.returns!.type,
-          returnDescription: m.returns!.description,
-          display: m.returns!.display,
-          status: "error" as const,
-          errorMessage,
-        };
-      });
+      const next = dashboardMethods.map((m, i) => buildDashboardResult(m, settled[i]));
 
       // Only swap in new results when something actually changed, so unchanged
       // blocks don't re-render the dashboard.
@@ -156,10 +112,18 @@ export function useContractDashboard(
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Helpers (shared with useContractValue for single-value dashboard widgets)
 // ---------------------------------------------------------------------------
 
-async function queryMethod(contractAddress: string, method: AbiMethod): Promise<QueryResult> {
+/** Zero-param read methods with a return value — the auto-dashboard set. */
+export function isDashboardMethod(m: AbiMethod): boolean {
+  return m.mutability === "read" && m.params.length === 0 && !!m.returns;
+}
+
+export async function queryMethod(
+  contractAddress: string,
+  method: AbiMethod,
+): Promise<QueryResult> {
   return tauriCommand<QueryResult>("query_contract", {
     contractAddress,
     method: method.name,
@@ -167,8 +131,55 @@ async function queryMethod(contractAddress: string, method: AbiMethod): Promise<
   });
 }
 
+/** Decode one settled query into a renderable dashboard result. */
+export function buildDashboardResult(
+  m: AbiMethod,
+  result: PromiseSettledResult<QueryResult>,
+): DashboardQueryResult {
+  if (result.status === "fulfilled" && result.value.success) {
+    const returnType = m.returns!.type;
+    const rawHex = result.value.returnData;
+    const decodedValue = decodeReturnValue(rawHex, returnType);
+    const numericValue =
+      returnType === "u64" || returnType === "xtal_amount"
+        ? decodeU64(rawHex)
+        : returnType === "u32" || returnType === "u16" || returnType === "u8"
+          ? Number(decodedValue)
+          : undefined;
+
+    return {
+      methodName: m.name,
+      displayName: m.displayName || m.name,
+      returnType,
+      returnDescription: m.returns!.description,
+      display: m.returns!.display,
+      status: "success",
+      rawHex,
+      decodedValue,
+      numericValue,
+    };
+  }
+
+  const errorMessage =
+    result.status === "fulfilled"
+      ? result.value.errorMessage || "Query failed"
+      : result.reason instanceof Error
+        ? result.reason.message
+        : String(result.reason);
+
+  return {
+    methodName: m.name,
+    displayName: m.displayName || m.name,
+    returnType: m.returns!.type,
+    returnDescription: m.returns!.description,
+    display: m.returns!.display,
+    status: "error",
+    errorMessage,
+  };
+}
+
 /** Build a placeholder (loading) result for a dashboard method. */
-function loadingResult(m: AbiMethod): DashboardQueryResult {
+export function loadingResult(m: AbiMethod): DashboardQueryResult {
   return {
     methodName: m.name,
     displayName: m.displayName || m.name,
@@ -180,7 +191,7 @@ function loadingResult(m: AbiMethod): DashboardQueryResult {
 }
 
 /** Shallow value-equality across the fields that affect rendering. */
-function resultsEqual(a: DashboardQueryResult[], b: DashboardQueryResult[]): boolean {
+export function resultsEqual(a: DashboardQueryResult[], b: DashboardQueryResult[]): boolean {
   if (a.length !== b.length) return false;
   for (let i = 0; i < a.length; i++) {
     const x = a[i];

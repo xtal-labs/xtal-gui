@@ -25,7 +25,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn, formatXtalFull } from "@/lib/utils";
 
-import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore, type Tab, type NodeConnectionState } from "@/stores";
+import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore, useDashboardStore, type Tab, type NodeConnectionState } from "@/stores";
 import { useNodeWebSocket, useTauriEvent, useMediaQuery, type WebSocketMessage } from "@/hooks";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { useDiagnosticMonitor, useRenderTracker } from "@/hooks/useDiagnosticMonitor";
@@ -853,6 +853,7 @@ function AppContent() {
       try {
         const guiConfig = await tauriCommand<GuiConfig>("get_gui_config");
         hydrateToastsEnabled(guiConfig.toastsEnabled);
+        useDashboardStore.getState().hydrateLayout(guiConfig.dashboard ?? null);
       } catch (guiConfigErr) {
         console.error("Failed to initialize GUI preferences:", guiConfigErr);
       }
