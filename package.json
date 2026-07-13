@@ -1,7 +1,7 @@
 {
   "name": "crystal-gui",
   "private": true,
-  "version": "0.7.53",
+  "version": "0.7.58",
   "type": "module",
   "scripts": {
     "dev": "vite",
