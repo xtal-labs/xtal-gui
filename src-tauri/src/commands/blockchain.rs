@@ -869,8 +869,7 @@ fn summarize_strip_fruit(
         for (fruit_type, subtree) in &r.fruit_subtrees {
             if subtree.fruit_hash == *fruit_hash {
                 receipt_type = Some(fruit_type.to_string());
-                receipt_tx_count =
-                    Some(r.receipts_by_fruit.get(fruit_type).map_or(0, |v| v.len()));
+                receipt_tx_count = Some(r.receipts_by_fruit.get(fruit_type).map_or(0, |v| v.len()));
                 break;
             }
         }
@@ -925,7 +924,11 @@ fn summarize_strip_stems(
     let mut stems = Vec::with_capacity(stem_hashes.len());
     for stem_hash in stem_hashes {
         let stem_block = blockchain.get_block_by_hash(stem_hash).map_err(|e| {
-            format!("get_block_by_hash({}) failed: {}", hex::encode(stem_hash), e)
+            format!(
+                "get_block_by_hash({}) failed: {}",
+                hex::encode(stem_hash),
+                e
+            )
         })?;
         let height = blockchain.get_block_height_by_hash(stem_hash).unwrap_or(0);
         let snapshot = blockchain.get_stem_metadata(stem_hash);
