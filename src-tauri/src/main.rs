@@ -16,7 +16,6 @@ mod ipfs;
 mod platform;
 mod state;
 
-use std::path::PathBuf;
 use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::thread;
@@ -387,9 +386,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
     );
 
     let network = node_config.network_type;
-    let data_dir = DirectoryConfig::platform_default(network)
-        .map(|config| config.base_path)
-        .unwrap_or_else(|_| PathBuf::from(".").join(".crystal"));
+    let data_dir = DirectoryConfig::platform_default(network).base_path;
 
     // Create shared startup status in "loading" state — managed immediately so
     // the frontend can poll get_startup_status before the node is ready.
@@ -932,8 +929,9 @@ fn make_startup_error(message: String, network: NetworkType) -> StartupErrorInfo
         .display()
         .to_string();
     let data_dir = DirectoryConfig::platform_default(network)
-        .map(|d| d.base_path.display().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
+        .base_path
+        .display()
+        .to_string();
 
     StartupErrorInfo {
         category: categorize_error(&message),
@@ -1007,15 +1005,7 @@ fn spawn_node_thread(
                 });
 
                 // Configure node with network from config
-                let dir_config = match DirectoryConfig::platform_default(network) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        let msg = format!("Failed to create directory config: {}", e);
-                        error!("{}", msg);
-                        let _ = error_tx.send(msg);
-                        return;
-                    }
-                };
+                let dir_config = DirectoryConfig::platform_default(network);
 
                 // NodeBuilder derives the config path from dir_config, which is
                 // already network-scoped — no need to pass one in.

@@ -108,8 +108,7 @@ pub async fn initialize_node(network: String) -> Result<InitResult, String> {
     })?;
 
     // Create directory configuration
-    let dir_config = DirectoryConfig::platform_default(network_type)
-        .map_err(|e| format!("Failed to create directory config: {}", e))?;
+    let dir_config = DirectoryConfig::platform_default(network_type);
 
     // Create all required directories
     let dirs = CrystalDirs::from_config(&dir_config)

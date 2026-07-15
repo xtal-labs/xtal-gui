@@ -155,12 +155,7 @@ fn is_recoverable_gui_config_error(err: &ConfigError) -> bool {
 }
 
 fn base_data_dir() -> Result<PathBuf, ConfigError> {
-    DirectoryConfig::platform_default(NetworkType::Mainnet)
-        .map(|config| config.base_path)
-        .map_err(|e| ConfigError::Io {
-            path: PathBuf::from("."),
-            source: e,
-        })
+    Ok(DirectoryConfig::platform_default(NetworkType::Mainnet).base_path)
 }
 
 /// The network the app should boot into (the active-network pointer).
@@ -182,12 +177,7 @@ pub fn set_active_network(network: NetworkType) -> Result<GuiConfig, ConfigError
 /// Resolve the node config path for an explicit network:
 /// `<base>/<network>/config/config.json`.
 pub fn node_config_path_for(network: NetworkType) -> Result<PathBuf, ConfigError> {
-    DirectoryConfig::platform_default(network)
-        .map(|config| config.config_file_path())
-        .map_err(|e| ConfigError::Io {
-            path: PathBuf::from("."),
-            source: e,
-        })
+    Ok(DirectoryConfig::platform_default(network).config_file_path())
 }
 
 /// Get the persisted node config path for the active network.
