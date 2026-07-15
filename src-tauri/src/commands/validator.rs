@@ -1027,7 +1027,7 @@ pub async fn get_fruit_production_stats(
 ) -> Result<Vec<FruitProductionStats>, String> {
     let blockchain = state.services.blockchain();
     let current_epoch = blockchain.get_current_epoch();
-    let stake_table = blockchain.pos_consensus.validator_stakes.load();
+    let stake_table = blockchain.pos_consensus.validator_stakes_snapshot();
     let (cadence_numerator_secs, cadence_denominator) =
         recent_stem_attempt_cadence(blockchain.as_ref());
 
