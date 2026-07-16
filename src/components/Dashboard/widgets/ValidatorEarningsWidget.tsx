@@ -90,10 +90,10 @@ export default function ValidatorEarningsWidget({ size, shellProps }: WidgetProp
       ) : (
         <>
           <div className={cn("font-heading font-bold tabular-nums", VALUE_SIZE_CLASSES[size])}>
-            {formatXtal(earnings.totalEarned)}
+            {formatXtal(earnings.fruitRewards)}
           </div>
           <p className="text-xs text-foreground-muted mt-1 font-mono">
-            {formatXtal(earnings.leafMining)} leaf &bull; {formatXtal(earnings.stemCredits)} stem &bull; {formatXtal(earnings.fruitRewards)} fruit
+            Fruit reward
           </p>
           <p className="text-xs text-foreground-muted mt-0.5 font-mono">
             {earnings.coinbaseCount} coinbase{earnings.coinbaseCount !== 1 ? "s" : ""}

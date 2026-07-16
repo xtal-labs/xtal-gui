@@ -146,7 +146,7 @@ export const WIDGET_REGISTRY: Record<string, WidgetDefinition> = {
     type: "validator_earnings",
     title: "VALIDATOR EARNINGS",
     icon: Coins,
-    description: "Lifetime earnings split by leaf, stem, and fruit rewards",
+    description: "Lifetime fruit rewards",
     defaultSize: "m",
     allowedSizes: ["s", "m", "l", "xl"],
     component: ValidatorEarningsWidget,
