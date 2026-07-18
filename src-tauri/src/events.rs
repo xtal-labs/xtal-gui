@@ -216,6 +216,15 @@ fn handle_blockchain_event(
             );
         }
 
+        // Node-internal mempool re-injection; the recovered transactions
+        // re-enter as pending, which the existing pending-tx flow covers.
+        BlockchainEvent::FruitsAbandoned { transactions } => {
+            debug!(
+                "{} transactions recovered from abandoned fruits",
+                transactions.len()
+            );
+        }
+
         BlockchainEvent::FruitsConfirmed {
             stem_hash: _,
             fruit_count,
