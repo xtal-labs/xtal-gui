@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ArrowLeft, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronRight, X } from "lucide-react";
 
 import { CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -109,19 +109,24 @@ export default function AddWidgetDialog({ onClose }: AddWidgetDialogProps) {
   return (
     <ModalShell title="Add Widget" onClose={onClose} cardClassName="max-w-md">
       <CardHeader>
-        <div className="flex items-center gap-2">
-          {step !== "pick" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              onClick={goBack}
-              aria-label="Back"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          )}
-          <CardTitle className="font-heading tracking-wide">{title}</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            {step !== "pick" && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={goBack}
+                aria-label="Back"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </Button>
+            )}
+            <CardTitle className="font-heading tracking-wide">{title}</CardTitle>
+          </div>
+          <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close widget selector">
+            <X className="h-4 w-4" />
+          </Button>
         </div>
         {step === "method" && selectedContract && (
           <p className="text-xs text-foreground-muted font-mono mt-1">
