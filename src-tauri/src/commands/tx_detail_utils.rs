@@ -500,7 +500,7 @@ mod tests {
 
         assert_eq!(input.txid, hex::encode([0xAB; 32]));
         assert_eq!(input.output_index, 4);
-        assert_eq!(input.amount, Some(12_345_678));
+        assert_eq!(input.amount, Some(Shards(12_345_678)));
         assert_eq!(
             input.address.as_deref(),
             Some(format_utxo_address(&owner)).as_deref()

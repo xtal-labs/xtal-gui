@@ -290,7 +290,7 @@ pub async fn stop_fruit_production(
 pub async fn get_validator_stake(
     state: State<'_, AppState>,
     address: String,
-) -> Result<u64, String> {
+) -> Result<Shards, String> {
     let service = state
         .services
         .get_validator(&address)
@@ -301,7 +301,7 @@ pub async fn get_validator_stake(
         .get_status()
         .map_err(|e| format!("Failed to get status: {}", e))?;
 
-    Ok(status.stake)
+    Ok(status.stake.into())
 }
 
 /// Validator balance breakdown

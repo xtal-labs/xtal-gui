@@ -1014,6 +1014,29 @@ async fn withdraw_to_utxo_inner(
 mod tests {
     use super::*;
 
+    /// `call_contract`'s `value` and ABI `XtalAmount` params take the XTAL
+    /// decimal the user typed, never a pre-converted shard count. Sending
+    /// shards here scales the value by 1e9 a second time — silently, since the
+    /// product still fits in u64 — so pin the denomination.
+    #[test]
+    fn parse_xtal_to_shards_reads_xtal_decimals_not_shard_counts() {
+        assert_eq!(parse_xtal_to_shards("1.5").unwrap(), 1_500_000_000);
+        assert_eq!(parse_xtal_to_shards("1").unwrap(), 1_000_000_000);
+        assert_eq!(parse_xtal_to_shards("0.000000001").unwrap(), 1);
+
+        // What a pre-converted "1.5 XTAL" would have become: 1.5 billion XTAL.
+        assert_eq!(
+            parse_xtal_to_shards("1500000000").unwrap(),
+            1_500_000_000_000_000_000
+        );
+    }
+
+    #[test]
+    fn parse_xtal_to_shards_rejects_excess_precision_and_overflow() {
+        assert!(parse_xtal_to_shards("1.0000000001").is_err());
+        assert!(parse_xtal_to_shards("99999999999999999999").is_err());
+    }
+
     #[test]
     fn cage_consume_utxo_call_data_round_trips_through_shared_decoder() {
         let declared_anchor = [0x11; 32];

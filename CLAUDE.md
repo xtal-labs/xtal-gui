@@ -92,6 +92,37 @@ React re-render
 - **XTAL**: Native currency (1 XTAL = 10^9 shards)
 - Block summaries use a discriminated union: `BlockSummary = StemSummary | LeafSummary`
 
+### Monetary Amounts Across IPC
+
+Shard-denominated amounts cross the Tauri boundary as **decimal strings**, never as JSON numbers.
+JavaScript has no integer type, so a JSON number is an IEEE-754 double, exact only to 2^53−1 ≈
+9.007×10¹⁵ shards. Total supply is 4.2×10¹⁶ shards — 4.66× that ceiling — and a single balance
+crosses it at ~9,007,199 XTAL, where `JSON.parse` silently rounds.
+
+**Use `xtal::shards::Shards` in both directions — including command parameters.** Neither compiler
+checks command arguments: TypeScript does not type `invoke()` args against Rust signatures, and Rust
+cannot see what the frontend sends. A bare `u64` parameter therefore fails only at runtime, as a
+user-facing `invalid type: string "…", expected u64`. `Shards` deserializes leniently from either a
+string or a number, so converting a parameter is always safe.
+
+Not amounts, and correctly numeric: gas limits/prices, per-byte fee rates, nonces, heights, epochs,
+counts, indices, sizes, thresholds.
+
+On the frontend, amounts are `string` and arithmetic goes through the BigInt helpers in
+`src/lib/utils.ts` (`toShards`, `addShards`, `subShards`, `compareShards`). **TypeScript will not
+catch a mistake here** — `string + string` is legal and silently concatenates, and `>` compares
+lexicographically. Never use bare `+`/`>` on two amounts.
+
+Two string conventions exist and are not interchangeable — mixing them scales a value by 10⁹:
+
+| Denomination | Commands | Rust parser |
+|---|---|---|
+| Raw shard integer | `Shards` params; `plan_withdrawal`, `withdraw_to_utxo`, `plan_vm_transfer`, `send_vm_transfer` | `Shards` decoder / `.parse::<u64>()` |
+| XTAL decimal (e.g. `"1.5"`) | `call_contract`/`query_contract` `value`; ABI params of type `XtalAmount` | `parse_xtal_to_shards` (`commands/contract.rs`) |
+
+For the XTAL-decimal commands, send the raw string the user typed — do **not** pre-convert with
+`parseXtalToShards`, or the backend will scale it a second time.
+
 ### Import Best Practices
 
 Follow the same import rules as the parent `xtal` crate (see `../CLAUDE.md`):

@@ -57,6 +57,13 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
   const valueAmountShards = parseXtalToShards(valueAmount);
   const valueAmountError = getXtalInputError(valueAmount);
 
+  // The backend parses this with parse_xtal_to_shards, so it must be the XTAL
+  // decimal the user typed — NOT valueAmountShards, which is already converted
+  // and would be scaled by 1e9 a second time. valueAmountShards stays for
+  // validation only. Trimmed because the Rust parser does not trim.
+  const payableValueXtal =
+    method.mutability === "payable" && valueAmount ? valueAmount.trim() : undefined;
+
   // Reset form state when method changes
   useEffect(() => {
     setParamValues({});
@@ -119,9 +126,7 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
         contractAddress,
         method: method.name,
         data,
-        value: method.mutability === "payable" && valueAmount
-          ? valueAmountShards ?? undefined
-          : undefined,
+        value: payableValueXtal,
         gasLimit: gasLimit ? parseInt(gasLimit) : undefined,
       });
 
@@ -168,9 +173,7 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
         contractAddress,
         method: method.name,
         data,
-        value: method.mutability === "payable" && valueAmount
-          ? valueAmountShards ?? undefined
-          : undefined,
+        value: payableValueXtal,
         gasLimit: effectiveGasLimit,
         gasPrice: effectiveGasPrice,
         password,

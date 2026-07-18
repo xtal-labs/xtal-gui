@@ -2385,13 +2385,14 @@ fn parse_send_recipient(to_address: &str) -> Result<[u8; 20], String> {
     Ok(recipient)
 }
 
+/// `fee` is an absolute amount in shards; `fee_rate` is a per-byte rate.
 fn fee_strategy_from_request(
-    fee: Option<u64>,
+    fee: Option<Shards>,
     fee_rate: Option<u64>,
 ) -> Result<FeeStrategy, String> {
     match (fee, fee_rate) {
         (Some(_), Some(_)) => Err("Specify either a fixed fee or a fee rate, not both".to_string()),
-        (Some(f), None) => Ok(FeeStrategy::Fixed(f)),
+        (Some(f), None) => Ok(FeeStrategy::Fixed(f.get())),
         (None, Some(rate)) if rate > 0 => Ok(FeeStrategy::PerByte(rate)),
         (None, Some(_)) => Err("Fee rate must be greater than 0".to_string()),
         (None, None) => Ok(FeeStrategy::PerByte(1000)),
@@ -2403,10 +2404,10 @@ fn fee_strategy_from_request(
 pub async fn estimate_send_transaction_fee(
     state: State<'_, AppState>,
     to_address: String,
-    amount: u64,
+    amount: Shards,
     fee_rate: u64,
 ) -> Result<SendFeeEstimate, String> {
-    if amount == 0 {
+    if amount.get() == 0 {
         return Err("Amount must be greater than 0".to_string());
     }
     if fee_rate == 0 {
@@ -2420,7 +2421,7 @@ pub async fn estimate_send_transaction_fee(
         .ok_or("Wallet manager not available")?;
     let recipient = parse_send_recipient(&to_address)?;
 
-    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount)])
+    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount.get())])
         .with_fee(FeeStrategy::PerByte(fee_rate));
     let blockchain = state.services.blockchain();
     let estimate = wallet
@@ -2450,7 +2451,7 @@ pub async fn send_transaction(
     state: State<'_, AppState>,
     to_address: String,
     amount: Shards,
-    fee: Option<u64>,
+    fee: Option<Shards>,
     fee_rate: Option<u64>,
     password: String,
 ) -> Result<SendResult, String> {
@@ -6050,10 +6051,10 @@ mod tests {
                 requested_recipient,
                 produced_output_recipient,
             }) => {
-                assert_eq!(requested_amount, SHARDS_PER_XTAL);
+                assert_eq!(requested_amount, Shards(SHARDS_PER_XTAL));
                 assert_eq!(
                     net_withdrawal_amount,
-                    Some(SHARDS_PER_XTAL - (SHARDS_PER_XTAL / 1_000))
+                    Some(Shards(SHARDS_PER_XTAL - (SHARDS_PER_XTAL / 1_000)))
                 );
                 assert_eq!(requested_recipient, recipient_address);
                 assert_eq!(produced_output_recipient, Some(recipient_address));
@@ -6659,8 +6660,8 @@ mod tests {
     fn transaction_history_filter_maps_practical_categories() {
         let tx = |tx_type: &str, amount: i64| TransactionSummary {
             txid: "00".to_string(),
-            amount,
-            fee: 0,
+            amount: SignedShards(amount),
+            fee: Shards::ZERO,
             confirmations: 1,
             timestamp: 0,
             tx_type: tx_type.to_string(),

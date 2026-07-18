@@ -61,16 +61,16 @@ const ESTIMATE_RECIPIENT_HEX = "0000000000000000000000000000000000000000";
 
 interface SendResult {
   txid: string;
-  fee: number;
+  fee: string;
 }
 
 interface SendFeeEstimate {
-  fee: number;
+  fee: string;
   txSize: number;
   inputCount: number;
   outputCount: number;
   feeRate: number;
-  maxSendable: number;
+  maxSendable: string;
 }
 
 export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
