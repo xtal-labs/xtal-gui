@@ -36,7 +36,10 @@ use xtal::wallet::database::models::{
 use xtal::wallet::database::queries::WalletQueries;
 
 use crate::commands::wallet::{
-    select_vm_sender_entry, surfaced_wallet_account_entries, wallet_owned_pkhs_from_queries,
+    no_single_sender_message, plan_vm_withdrawal_legs, select_vm_sender_entry,
+    shorten_txid_like_tokens, submit_sweep_legs, surfaced_wallet_account_entries,
+    wallet_owned_pkhs_from_queries, PlannedLegView, PlannedSweepLeg, SubmittedSweepLeg,
+    SweepFailure,
 };
 use crate::state::AppState;
 
@@ -160,6 +163,23 @@ pub struct DepositResult {
     pub amount: String,
     /// Anchor stem hash used for the sighash (raw hex)
     pub anchor_stem_hash: String,
+}
+
+/// Result of planning a VM → UTXO withdrawal across wallet accounts
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanWithdrawalResponse {
+    pub legs: Vec<PlannedLegView>,
+    /// Upfront gas reservation per leg transaction, in shards (string)
+    pub max_gas_fee_per_leg: String,
+    pub leg_count: usize,
+}
+
+/// Result of a multi-leg VM → UTXO withdrawal
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WithdrawToUtxoResponse {
+    pub legs: Vec<SubmittedSweepLeg>,
 }
 
 // ---------------------------------------------------------------------------
@@ -297,16 +317,7 @@ pub async fn deploy_contract(
     let owned_pkhs = wallet_owned_pkhs_from_queries(&queries, &wallet_id)?;
     let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
     let sender_entry = select_vm_sender_entry(&account_entries, 0, gas_limit, gas_price)
-        .ok_or_else(|| {
-            let max_fee = gas_limit.saturating_mul(gas_price);
-            let total_balance = account_entries
-                .iter()
-                .fold(0u64, |sum, entry| sum.saturating_add(entry.balance));
-            format!(
-                "Insufficient balance: have {} shards, need at least {} for gas",
-                total_balance, max_fee
-            )
-        })?;
+        .ok_or_else(|| no_single_sender_message(&account_entries, 0, gas_limit, gas_price))?;
 
     let signing_key = wallet
         .with_wallet(|w| w.get_signing_key_by_type(sender_entry.key_type, sender_entry.key_index))
@@ -491,15 +502,7 @@ pub async fn call_contract(
     let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
     let sender_entry = select_vm_sender_entry(&account_entries, send_value, gas_limit, gas_price)
         .ok_or_else(|| {
-        let max_fee = gas_limit.saturating_mul(gas_price);
-        let total = send_value.saturating_add(max_fee);
-        let total_balance = account_entries
-            .iter()
-            .fold(0u64, |sum, entry| sum.saturating_add(entry.balance));
-        format!(
-            "Insufficient balance: have {} shards, need {} (value: {} + max gas: {})",
-            total_balance, total, send_value, max_fee
-        )
+        no_single_sender_message(&account_entries, send_value, gas_limit, gas_price)
     })?;
 
     let signing_key = wallet
@@ -748,6 +751,261 @@ pub async fn deposit_utxo(
         amount: utxo_entry.amount.to_string(),
         anchor_stem_hash: hex::encode(anchor_stem_hash),
     })
+}
+
+/// A validated per-account withdrawal plan shared by `plan_withdrawal`
+/// (read-only preview) and `withdraw_to_utxo` (execution).
+struct WithdrawalPlan {
+    /// Trimmed Base58Check recipient address
+    recipient: String,
+    /// Total requested amount in shards
+    total_amount: u64,
+    /// Effective gas price (defaults to MIN_GAS_PRICE)
+    gas_price: u64,
+    /// Upfront gas reservation per leg transaction
+    max_gas_fee: u64,
+    legs: Vec<PlannedSweepLeg>,
+}
+
+/// Validate withdrawal arguments, load the wallet's surfaced account-state
+/// entries (same path as `call_contract`), and split the amount into
+/// per-account CAGE `withdraw` legs.
+fn prepare_withdrawal_plan(
+    state: &State<'_, AppState>,
+    recipient: &str,
+    amount: &str,
+    gas_limit: u64,
+    gas_price: Option<u64>,
+) -> Result<WithdrawalPlan, String> {
+    let gas_price = gas_price.unwrap_or(MIN_GAS_PRICE);
+    if gas_limit < MIN_CALL_GAS {
+        return Err(format!("Gas limit must be at least {}", MIN_CALL_GAS));
+    }
+    if gas_limit > MAX_GAS_LIMIT {
+        return Err(format!("Gas limit cannot exceed {}", MAX_GAS_LIMIT));
+    }
+
+    let recipient = recipient.trim();
+    parse_string_to_abi_value(&ParamType::UtxoAddress, recipient)
+        .map_err(|e| format!("Invalid recipient: {}", e))?;
+
+    // Amount arrives as a shard string to avoid JS precision loss — parse it
+    // as an integer, never through floats.
+    let total_amount: u64 = amount
+        .trim()
+        .parse()
+        .map_err(|_| "Invalid amount: must be a whole number of shards".to_string())?;
+
+    let wallet = state
+        .services
+        .wallet
+        .as_ref()
+        .ok_or("Wallet not available")?;
+    if !wallet.is_loaded() {
+        return Err("No wallet loaded".to_string());
+    }
+    let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
+    let db = wallet.database().ok_or("Wallet database not available")?;
+    let queries = WalletQueries::new(db.connection());
+
+    let mpt = if let Some((stem_state, _state_root)) = state.services.blockchain().stem_state() {
+        stem_state
+    } else {
+        state
+            .services
+            .blockchain()
+            .get_current_state_mpt()
+            .map_err(|e| format!("Failed to load current state: {}", e))?
+    };
+
+    let owned_pkhs = wallet_owned_pkhs_from_queries(&queries, &wallet_id)?;
+    let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
+    let legs = plan_vm_withdrawal_legs(&account_entries, total_amount, gas_limit, gas_price)?;
+
+    Ok(WithdrawalPlan {
+        recipient: recipient.to_string(),
+        total_amount,
+        gas_price,
+        // The planner already rejected gas_limit * gas_price overflow.
+        max_gas_fee: gas_limit.saturating_mul(gas_price),
+        legs,
+    })
+}
+
+/// CAGE `withdraw` params in the same shape the frontend passes to
+/// `encode_contract_calldata` today.
+fn cage_withdraw_params(recipient: &str, amount: u64) -> Vec<ParamInput> {
+    vec![
+        ParamInput {
+            name: "recipient".to_string(),
+            type_: "utxo_address".to_string(),
+            value: recipient.to_string(),
+        },
+        ParamInput {
+            name: "amount".to_string(),
+            type_: "u64".to_string(),
+            value: amount.to_string(),
+        },
+    ]
+}
+
+/// Plan a VM → UTXO withdrawal without submitting anything.
+///
+/// Read-only: splits `amount` into one CAGE `withdraw` leg per funded
+/// wallet account (a single withdrawal transaction can only draw from its
+/// one caller account) and reports the resulting legs.
+#[tauri::command]
+pub async fn plan_withdrawal(
+    state: State<'_, AppState>,
+    recipient: String,
+    amount: String,
+    gas_limit: u64,
+    gas_price: Option<u64>,
+) -> Result<PlanWithdrawalResponse, String> {
+    let plan = prepare_withdrawal_plan(&state, &recipient, &amount, gas_limit, gas_price)?;
+
+    Ok(PlanWithdrawalResponse {
+        leg_count: plan.legs.len(),
+        max_gas_fee_per_leg: plan.max_gas_fee.to_string(),
+        legs: plan
+            .legs
+            .iter()
+            .map(|leg| PlannedLegView {
+                from_address: leg.hex_address.clone(),
+                amount: leg.amount.to_string(),
+            })
+            .collect(),
+    })
+}
+
+/// Withdraw VM account balance to a UTXO address via the CAGE bridge,
+/// sweeping across wallet accounts.
+///
+/// Re-plans against fresh account state, then submits one CAGE `withdraw`
+/// contract call per leg. Every leg is built and signed before the first
+/// one is broadcast, so pre-broadcast problems fail the whole request with
+/// nothing submitted.
+///
+/// Error contract (parsed by the frontend):
+/// - Partial failure (>= 1 leg in the mempool, no rollback possible): the
+///   message ends with `submitted_txids: <txid1>,<txid2>` — 64-lowercase-hex
+///   txids, comma-separated without spaces.
+/// - Total failure (nothing submitted): the marker is absent and any
+///   txid-shaped 64-hex token from underlying errors is shortened so it
+///   cannot be mistaken for a submitted txid.
+#[tauri::command]
+pub async fn withdraw_to_utxo(
+    state: State<'_, AppState>,
+    recipient: String,
+    amount: String,
+    gas_limit: u64,
+    gas_price: Option<u64>,
+    password: String,
+) -> Result<WithdrawToUtxoResponse, String> {
+    withdraw_to_utxo_inner(&state, &recipient, &amount, gas_limit, gas_price, &password)
+        .await
+        .map_err(|failure| match failure {
+            SweepFailure::Total(message) => shorten_txid_like_tokens(&message),
+            SweepFailure::Partial(message) => message,
+        })
+}
+
+async fn withdraw_to_utxo_inner(
+    state: &State<'_, AppState>,
+    recipient: &str,
+    amount: &str,
+    gas_limit: u64,
+    gas_price: Option<u64>,
+    password: &str,
+) -> Result<WithdrawToUtxoResponse, SweepFailure> {
+    // Unlock wallet
+    let wallet = state
+        .services
+        .wallet
+        .as_ref()
+        .ok_or("Wallet not available")?;
+    if !wallet.is_loaded() {
+        return Err("No wallet loaded".into());
+    }
+    wallet
+        .unlock_wallet(password, Some(Duration::from_secs(30)))
+        .map_err(|e| format!("Invalid password: {}", e))?;
+
+    // Re-plan at execution time against fresh account state.
+    let plan = prepare_withdrawal_plan(state, recipient, amount, gas_limit, gas_price)?;
+
+    // Resolve the CAGE ABI through the same path the frontend's
+    // encode_contract_calldata call uses (cache-seeded builtin ABI).
+    let cage_address = format!("0x{}", hex::encode(CAGE_CONTRACT_ADDRESS));
+    let abi = load_contract_abi_for_encoding(state, &cage_address).await?;
+
+    let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
+    let db = wallet.database().ok_or("Wallet database not available")?;
+    let queries = WalletQueries::new(db.connection());
+
+    // Build and sign every leg before submitting any, so per-leg encoding,
+    // key, or build problems surface before anything reaches the mempool.
+    let mut prepared = Vec::with_capacity(plan.legs.len());
+    for leg in &plan.legs {
+        let params = cage_withdraw_params(&plan.recipient, leg.amount);
+        let (call_data, _) = encode_calldata_with_abi(&abi, "withdraw", &params)?;
+
+        let signing_key = wallet
+            .with_wallet(|w| w.get_signing_key_by_type(leg.key_type, leg.key_index))
+            .map_err(|e| format!("Failed to get signing key for {}: {}", leg.hex_address, e))?;
+
+        let tx = ContractCallTransactionBuilder::new()
+            .with_sender(signing_key)
+            .with_contract(CAGE_CONTRACT_ADDRESS)
+            .with_method("withdraw".to_string())
+            .with_args(call_data)
+            .with_value(0)
+            .with_gas_limit(gas_limit)
+            .with_gas_price(plan.gas_price)
+            .with_nonce(leg.nonce)
+            .build()
+            .map_err(|e| format!("Build failed for {}: {}", leg.hex_address, e))?;
+        let tx_hash = tx
+            .id()
+            .map_err(|e| format!("Hash failed for {}: {}", leg.hex_address, e))?;
+        prepared.push((leg, tx, tx_hash));
+    }
+
+    let submitted = submit_sweep_legs(
+        state.services.mempool(),
+        "Withdrawal",
+        &prepared,
+        plan.max_gas_fee,
+        |_leg, tx, tx_hash| {
+            let record = TransactionRecord {
+                txid: *tx_hash,
+                raw_tx: tx.encode(),
+                tx_type: TransactionType::ContractCall,
+                amount: plan.max_gas_fee,
+                fee: Some(plan.max_gas_fee),
+                to_address: Some(cage_address.clone()),
+                memo: None,
+                created_at: current_unix_timestamp_i64(),
+                confirmation: None,
+                expires_at: None,
+                priority: Some(0),
+                input_details: None,
+                execution_status: Some(TransactionExecutionStatus::Unknown),
+            };
+            if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
+                log::warn!("Failed to store pending CAGE withdrawal leg: {}", e);
+            }
+        },
+    )?;
+
+    log::info!(
+        "CAGE withdrawal submitted: {} shards to {} across {} leg(s)",
+        plan.total_amount,
+        plan.recipient,
+        submitted.len()
+    );
+
+    Ok(WithdrawToUtxoResponse { legs: submitted })
 }
 
 #[cfg(test)]
@@ -1305,26 +1563,20 @@ async fn load_contract_abi_for_encoding(
     )
 }
 
-/// Encode contract call parameters into packed hex calldata by delegating
-/// to the SDK's `ContractAbi::encode_args()`.
+/// Encode string params for `method_name` into packed calldata bytes by
+/// delegating to the SDK's `ContractAbi::encode_args()`.
 ///
-/// This is the canonical encoder — any future SDK encoding changes (e.g.
-/// array length prefixes, new types) are automatically reflected here.
-///
-/// Returns the hex-encoded calldata and per-param validation results.
-#[tauri::command]
-pub async fn encode_contract_calldata(
-    state: State<'_, AppState>,
-    contract_address: String,
-    method_name: String,
-    params: Vec<ParamInput>,
-) -> Result<EncodeResult, String> {
-    // Resolve the ABI for this contract
-    let abi = load_contract_abi_for_encoding(&state, &contract_address).await?;
-
+/// This is the canonical encoder shared by `encode_contract_calldata` and
+/// `withdraw_to_utxo` — any future SDK encoding changes (e.g. array length
+/// prefixes, new types) are automatically reflected here.
+fn encode_calldata_with_abi(
+    abi: &ContractAbi,
+    method_name: &str,
+    params: &[ParamInput],
+) -> Result<(Vec<u8>, Vec<ParamResult>), String> {
     // Look up the method definition
     let method = abi
-        .method(&method_name)
+        .method(method_name)
         .ok_or_else(|| format!("Unknown method: {}", method_name))?;
 
     // Validate param count
@@ -1357,11 +1609,28 @@ pub async fn encode_contract_calldata(
         .collect::<Result<Vec<_>, _>>()?;
 
     // Delegate to the SDK's canonical encoder
-    let encoded_bytes = abi.encode_args(&method_name, &values)?;
-    let data = hex::encode(encoded_bytes);
+    let encoded_bytes = abi.encode_args(method_name, &values)?;
+    Ok((encoded_bytes, param_results))
+}
+
+/// Encode contract call parameters into packed hex calldata by delegating
+/// to the SDK's `ContractAbi::encode_args()`.
+///
+/// Returns the hex-encoded calldata and per-param validation results.
+#[tauri::command]
+pub async fn encode_contract_calldata(
+    state: State<'_, AppState>,
+    contract_address: String,
+    method_name: String,
+    params: Vec<ParamInput>,
+) -> Result<EncodeResult, String> {
+    // Resolve the ABI for this contract
+    let abi = load_contract_abi_for_encoding(&state, &contract_address).await?;
+
+    let (encoded_bytes, param_results) = encode_calldata_with_abi(&abi, &method_name, &params)?;
 
     Ok(EncodeResult {
-        data,
+        data: hex::encode(encoded_bytes),
         param_results,
     })
 }

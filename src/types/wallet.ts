@@ -12,9 +12,9 @@ export type NetworkType = "Mainnet" | "Testnet" | "Regtest";
 
 export interface WalletBalance {
   confirmed: number; // in shards (1 XTAL = 10^9 shards)
-  pending: number;
+  pending: number; // wallet-owned outputs in live mempool transactions
   immature: number; // coinbase rewards not yet spendable
-  total: number;
+  total: number; // projected wallet-owned UTXO total after pending transactions settle
 }
 
 export interface Address {
@@ -230,9 +230,19 @@ export interface TransactionReceipt {
   gasPrice: number;
   feePaid: number;
   contractAddress?: string;
-  logs: string[];
+  events: ContractEventDetail[];
   returnData: string;
   error?: string;
+}
+
+/** A contract event from a receipt, hex-encoded for display */
+export interface ContractEventDetail {
+  /** Emitting contract address ("0x…") */
+  contractAddress: string;
+  /** Indexed topics ("0x…"); the first is the 4-byte event ID by convention */
+  topics: string[];
+  /** Event data payload ("0x…") */
+  data: string;
 }
 
 /**
@@ -248,15 +258,75 @@ export interface TransactionHistoryResponse {
 }
 
 /**
+ * A single wallet-owned VM account within VmAccountBalance
+ */
+export interface VmAccountEntry {
+  /** VM address ("0x" + 40 hex chars) */
+  address: string;
+  /** Account balance in shards */
+  balance: number;
+  /** Account nonce */
+  nonce: number;
+}
+
+/**
  * VM account balance from UnifiedMPT state (separate from UTXO balance)
  */
 export interface VmAccountBalance {
-  /** VM account balance in shards */
+  /** VM account balance in shards (sum across wallet-owned accounts) */
   balance: number;
   /** Nonce of the primary address */
   nonce: number;
   /** Currency type */
   currency: string;
+  /** Per-account breakdown of wallet-owned VM accounts */
+  accounts: VmAccountEntry[];
+}
+
+/**
+ * One transaction within a planned multi-account sweep
+ * (from `plan_withdrawal` / `plan_vm_transfer`)
+ */
+export interface SweepPlanLeg {
+  /** Source VM address ("0x" + 40 hex chars) */
+  fromAddress: string;
+  /** Amount drawn from this account, in shards (string to avoid JS precision loss) */
+  amount: string;
+}
+
+/**
+ * Read-only sweep plan from the `plan_withdrawal` / `plan_vm_transfer` commands
+ */
+export interface SweepPlan {
+  /** One transaction per funded source account */
+  legs: SweepPlanLeg[];
+  /** Max gas fee reserved per leg, in shards (string to avoid JS precision loss) */
+  maxGasFeePerLeg: string;
+  /** Number of transactions the sweep is split into */
+  legCount: number;
+}
+
+/**
+ * One submitted transaction within a multi-account sweep
+ * (from `withdraw_to_utxo` / `send_vm_transfer`)
+ */
+export interface SweepSubmitLeg {
+  /** Transaction ID of the submitted leg */
+  txid: string;
+  /** Source VM address ("0x" + 40 hex chars) */
+  fromAddress: string;
+  /** Amount drawn from this account, in shards (string to avoid JS precision loss) */
+  amount: string;
+  /** Max gas fee reserved for this leg, in shards (string to avoid JS precision loss) */
+  maxGasFee: string;
+}
+
+/**
+ * Result of the `withdraw_to_utxo` / `send_vm_transfer` sweep commands
+ */
+export interface SweepSubmitResult {
+  /** One submitted transaction per funded source account */
+  legs: SweepSubmitLeg[];
 }
 
 export interface SendRequest {

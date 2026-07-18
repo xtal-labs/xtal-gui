@@ -944,13 +944,20 @@ export default function Wallet() {
               AVAILABLE BALANCE
             </p>
             <AmountDisplay amount={balance.confirmed} size="xl" showSymbol />
-            {/* Show immature row when there are pending or immature funds */}
-            {(balance.pending + balance.immature > 0) && (
+            {(balance.pending > 0 || balance.immature > 0) && (
               <div className="flex items-center justify-center gap-4 mt-4 text-sm">
-                <div>
-                  <p className="text-foreground-muted font-heading text-xs">IMMATURE</p>
-                  <AmountDisplay amount={balance.pending + balance.immature} size="sm" showSymbol={false} />
-                </div>
+                {balance.pending > 0 && (
+                  <div>
+                    <p className="text-foreground-muted font-heading text-xs">PENDING</p>
+                    <AmountDisplay amount={balance.pending} size="sm" showSymbol={false} />
+                  </div>
+                )}
+                {balance.immature > 0 && (
+                  <div>
+                    <p className="text-foreground-muted font-heading text-xs">IMMATURE</p>
+                    <AmountDisplay amount={balance.immature} size="sm" showSymbol={false} />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1300,7 +1307,7 @@ export default function Wallet() {
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-xs font-heading tracking-wide text-foreground-muted">TOTAL</span>
             <AmountDisplay 
-              amount={balance.confirmed + (vmBalance?.balance ?? 0)} 
+              amount={balance.total + (vmBalance?.balance ?? 0)}
               size="sm" 
               showSymbol 
             />

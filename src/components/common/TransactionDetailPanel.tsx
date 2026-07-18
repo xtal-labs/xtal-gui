@@ -895,26 +895,53 @@ export function TransactionDetailPanel({
 
                   {visibleDetail.receipt && (
                     <CollapsibleSection
-                      title="LOGS"
-                      count={visibleDetail.receipt.logs.length}
-                      defaultOpen={visibleDetail.receipt.logs.length <= 3}
+                      title="EVENTS"
+                      count={visibleDetail.receipt.events.length}
+                      defaultOpen={visibleDetail.receipt.events.length <= 3}
                     >
-                      {visibleDetail.receipt.logs.length === 0 ? (
+                      {visibleDetail.receipt.events.length === 0 ? (
                         <div className="chamfered-sm bg-background/50 border-l-2 border-l-border px-3 py-2">
-                          <p className="text-xs text-foreground-muted italic">No logs emitted</p>
+                          <p className="text-xs text-foreground-muted italic">No events emitted</p>
                         </div>
                       ) : (
-                        visibleDetail.receipt.logs.map((log, index) => (
+                        visibleDetail.receipt.events.map((event, index) => (
                           <div
-                            key={`${visibleDetail.txid}-log-${index}`}
-                            className="chamfered-sm bg-background/50 border-l-2 border-l-border px-3 py-2"
+                            key={`${visibleDetail.txid}-event-${index}`}
+                            className="chamfered-sm bg-background/50 border-l-2 border-l-border px-3 py-2 space-y-1"
                           >
-                            <p className="mb-1 text-[10px] font-heading tracking-wider uppercase text-foreground-muted">
-                              Log {index + 1}
-                            </p>
-                            <pre className="whitespace-pre-wrap break-all text-xs font-mono text-foreground">
-                              {log}
-                            </pre>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-[10px] font-heading tracking-wider uppercase text-foreground-muted">
+                                Event {index + 1}
+                              </p>
+                              <HashDisplay
+                                hash={event.contractAddress}
+                                chars={8}
+                                className="text-[10px]"
+                              />
+                            </div>
+                            {event.topics.map((topic, topicIndex) => (
+                              <div
+                                key={`${visibleDetail.txid}-event-${index}-topic-${topicIndex}`}
+                                className="flex items-baseline gap-2"
+                              >
+                                <span className="shrink-0 text-[10px] font-heading tracking-wider uppercase text-foreground-muted">
+                                  Topic {topicIndex}
+                                </span>
+                                <pre className="whitespace-pre-wrap break-all text-xs font-mono text-foreground">
+                                  {topic}
+                                </pre>
+                              </div>
+                            ))}
+                            {event.data !== "0x" && (
+                              <div className="flex items-baseline gap-2">
+                                <span className="shrink-0 text-[10px] font-heading tracking-wider uppercase text-foreground-muted">
+                                  Data
+                                </span>
+                                <pre className="whitespace-pre-wrap break-all text-xs font-mono text-foreground">
+                                  {event.data}
+                                </pre>
+                              </div>
+                            )}
                           </div>
                         ))
                       )}
