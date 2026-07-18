@@ -15,7 +15,7 @@ use xtal::fruit::difficulty::calculate_effective_difficulty;
 use xtal::fruit::production::estimate_production_rate;
 use xtal::fruit::spec::get_fruits_by_stake_requirement;
 use xtal::fruit::FruitType;
-use xtal::interfaces::validator::ValidatorProduction;
+use xtal::interfaces::validator::ProductionResult;
 use xtal::interfaces::{ChainDataProvider, UtxoData};
 use xtal::transaction::CurrencyType;
 use xtal::validator::ValidatorService;
@@ -150,8 +150,15 @@ pub async fn start_validator(
         .collect::<Vec<_>>();
 
     // Add to services
-    start_wallet_sync(&state, wallet_manager.as_ref());
-    state.services.add_validator(address.clone(), service);
+    match wallet_manager.current_wallet_id() {
+        Some(validator_wallet_id) => {
+            start_wallet_sync(&state, wallet_manager.clone(), validator_wallet_id)
+        }
+        None => log::warn!("Validator wallet has no id; sync not started"),
+    }
+    state
+        .services
+        .add_validator(address.clone(), Arc::new(service));
 
     Ok(ValidatorStartResult {
         address,
@@ -173,7 +180,7 @@ pub async fn stop_validator(state: State<'_, AppState>, address: String) -> Resu
         .stop_all()
         .map_err(|e| format!("Failed to stop validator: {}", e))?;
 
-    if let Some(wallet_id) = service.get_wallet_id() {
+    if let Some(wallet_id) = service.wallet_id() {
         stop_wallet_sync(&state, &wallet_id);
     }
 
@@ -232,9 +239,25 @@ pub async fn start_fruit_production(
 
     let fruit = parse_fruit_type(&fruit_type)?;
 
-    service
-        .start_production(fruit)
-        .map_err(|e| format!("Failed to start production: {}", e))
+    let result = service
+        .start_production(vec![fruit])
+        .map_err(|e| format!("Failed to start production: {}", e))?;
+
+    first_failure(&result).map_or(Ok(()), |reason| {
+        Err(format!("Failed to start production: {}", reason))
+    })
+}
+
+/// The reason a single-fruit production request failed, if it did.
+///
+/// A per-fruit request that reports no failure succeeded — including the case where the
+/// fruit was already in the requested state, which the service treats as a no-op rather
+/// than an error. That is the right behavior behind a toggle.
+fn first_failure(result: &ProductionResult) -> Option<String> {
+    result
+        .failures
+        .first()
+        .map(|(fruit, reason)| format!("{:?}: {}", fruit, reason))
 }
 
 /// Stop production for a specific fruit type
@@ -251,9 +274,13 @@ pub async fn stop_fruit_production(
 
     let fruit = parse_fruit_type(&fruit_type)?;
 
-    service
-        .stop_production(fruit)
-        .map_err(|e| format!("Failed to stop production: {}", e))
+    let result = service
+        .stop_production(vec![fruit])
+        .map_err(|e| format!("Failed to stop production: {}", e))?;
+
+    first_failure(&result).map_or(Ok(()), |reason| {
+        Err(format!("Failed to stop production: {}", reason))
+    })
 }
 
 /// Get validator stake balance
@@ -368,15 +395,9 @@ pub async fn get_validator_balance_info(
         }
     }
 
-    // Source B: Unconfirmed incoming transactions from wallet database
-    let pending_incoming = if let (Some(db), Some(wallet_id)) =
-        (service.get_wallet_database(), service.get_wallet_id())
-    {
-        let queries = xtal::wallet::database::queries::WalletQueries::new(db.connection());
-        queries.get_pending_incoming_total(&wallet_id).unwrap_or(0)
-    } else {
-        0
-    };
+    // Source B: unconfirmed incoming funds, derived by the validator service from its
+    // own wallet rather than reassembled here from a database handle.
+    let pending_incoming = service.get_pending_incoming_balance().unwrap_or(0);
 
     let immature_balance = immature_non_stake_balance + pending_incoming;
     let total_stake = withdrawable_stake + pending_stake;
@@ -989,6 +1010,52 @@ pub struct FruitProductionStats {
     pub personal_expected_fruits_per_hour: Option<String>,
     pub personal_expected_stems_label: Option<String>,
     pub personal_win_probability_label: Option<String>,
+}
+
+/// Chain-derived difficulty for one historical epoch.
+#[derive(Debug, Clone, Serialize)]
+pub struct FruitDifficultyEpochPoint {
+    pub epoch: u32,
+    pub difficulty_bits: u32,
+}
+
+const DEFAULT_DIFFICULTY_HISTORY_EPOCHS: u32 = 24;
+const MAX_DIFFICULTY_HISTORY_EPOCHS: u32 = 96;
+
+/// Get a bounded, chronological difficulty history for one fruit type.
+///
+/// Difficulty is reconstructed from the canonical chain, so the UI can show a
+/// useful trend immediately instead of waiting to collect session snapshots.
+#[tauri::command]
+pub async fn get_fruit_difficulty_history(
+    state: State<'_, AppState>,
+    fruit_type: String,
+    limit: Option<u32>,
+) -> Result<Vec<FruitDifficultyEpochPoint>, String> {
+    let fruit_type = parse_fruit_type(&fruit_type)?;
+    let blockchain = state.services.blockchain();
+    let current_epoch = blockchain.get_current_epoch();
+    let limit = limit
+        .unwrap_or(DEFAULT_DIFFICULTY_HISTORY_EPOCHS)
+        .clamp(1, MAX_DIFFICULTY_HISTORY_EPOCHS);
+    let first_epoch = current_epoch.saturating_sub(limit - 1);
+
+    (first_epoch..=current_epoch)
+        .map(|epoch| {
+            blockchain
+                .get_derived_fruit_difficulty(fruit_type, epoch)
+                .map(|difficulty| FruitDifficultyEpochPoint {
+                    epoch,
+                    difficulty_bits: difficulty.bits(),
+                })
+                .map_err(|error| {
+                    format!(
+                        "Failed to derive {:?} difficulty for epoch {}: {}",
+                        fruit_type, epoch, error
+                    )
+                })
+        })
+        .collect()
 }
 
 fn recent_stem_attempt_cadence(blockchain: &xtal::blockchain::Blockchain) -> (u64, u64) {

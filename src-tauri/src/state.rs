@@ -16,7 +16,7 @@ use xtal::blockchain::{BootstrapPhase, BootstrapProgress};
 use xtal::node::services::Services;
 use xtal::node::sync::SyncState;
 use xtal::utils::NetworkType;
-use xtal::wallet::sync::WalletSyncService;
+use xtal::wallet::sync::WalletSyncHandle;
 
 use crate::abi_cache::AbiCache;
 use crate::ipfs::{IpfsClient, IpfsConfig};
@@ -71,14 +71,19 @@ pub struct AppState {
     /// Data directory path
     pub data_dir: PathBuf,
 
-    /// Wallet sync services keyed by wallet id.
-    pub wallet_sync: Mutex<HashMap<String, Arc<WalletSyncService>>>,
-
     /// Local ABI cache for contract discovery
     pub abi_cache: Mutex<AbiCache>,
 
     /// IPFS client for ABI distribution (None if disabled or init failed)
     pub ipfs_client: Option<IpfsClient>,
+
+    /// Running wallet sync loops, keyed by wallet id.
+    ///
+    /// The handles own the loops — the node keeps no sync registry. Removing
+    /// (or replacing) an entry stops that wallet's loop and frees its slot in
+    /// the wallet manager's occupancy guard. Arc'd so command handlers can
+    /// move a clone into the async task that starts the loop.
+    pub wallet_sync: Arc<Mutex<HashMap<String, WalletSyncHandle>>>,
 }
 
 impl AppState {
@@ -130,9 +135,9 @@ impl AppState {
             api_port,
             network,
             data_dir,
-            wallet_sync: Mutex::new(HashMap::new()),
             abi_cache: Mutex::new(abi_cache),
             ipfs_client,
+            wallet_sync: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 

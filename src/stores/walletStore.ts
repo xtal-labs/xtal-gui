@@ -8,13 +8,10 @@ import type {
   Transaction,
   NetworkType,
 } from "@/types";
-
-interface TransactionPagination {
-  currentPage: number;
-  totalCount: number;
-  pageSize: number;
-  isLoading: boolean;
-}
+import {
+  initialTransactionPagination,
+  type TransactionPagination,
+} from "@/lib/pagination";
 
 interface WalletState {
   // Wallet status
@@ -73,19 +70,9 @@ const initialBalance: WalletBalance = {
   total: 0,
 };
 
-const initialPagination: TransactionPagination = {
-  currentPage: 1,
-  totalCount: 0,
-  pageSize: 50,
-  isLoading: false,
-};
+const initialPagination: TransactionPagination = { ...initialTransactionPagination };
 
-const initialVmPagination: TransactionPagination = {
-  currentPage: 1,
-  totalCount: 0,
-  pageSize: 50,
-  isLoading: false,
-};
+const initialVmPagination: TransactionPagination = { ...initialTransactionPagination };
 
 const initialState = {
   isLoaded: false,

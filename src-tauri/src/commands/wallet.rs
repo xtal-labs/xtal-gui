@@ -10,6 +10,7 @@
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::State;
 use xtal::fruit::codec::{Decode, Encode};
@@ -42,7 +43,6 @@ use xtal::wallet::database::models::{
     WalletScriptRecord, WalletType,
 };
 use xtal::wallet::database::queries::WalletQueries;
-use xtal::wallet::sync::WalletSyncService;
 use xtal::wallet::transfer::{TransferRecipient, TransferRequest};
 use xtal::wallet::{FeeStrategy, WalletError, WalletManager};
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -1110,7 +1110,11 @@ impl From<xtal::transaction::receipt::TransactionReceipt> for TransactionReceipt
             contract_address: receipt
                 .contract_address
                 .map(|address| format!("0x{}", hex::encode(address))),
-            events: receipt.events.iter().map(ContractEventDetail::from).collect(),
+            events: receipt
+                .events
+                .iter()
+                .map(ContractEventDetail::from)
+                .collect(),
             return_data: format!("0x{}", hex::encode(receipt.return_data)),
             error: receipt.error,
         }
@@ -1130,7 +1134,11 @@ impl From<StoredReceipt> for TransactionReceiptDetail {
             contract_address: receipt
                 .contract_address
                 .map(|address| format!("0x{}", hex::encode(address))),
-            events: receipt.events.iter().map(ContractEventDetail::from).collect(),
+            events: receipt
+                .events
+                .iter()
+                .map(ContractEventDetail::from)
+                .collect(),
             return_data: format!("0x{}", hex::encode(receipt.return_data)),
             error: receipt.error,
         }
@@ -1607,7 +1615,10 @@ pub async fn load_wallet(
     emit_wallet_loaded(&app, &record.name);
 
     // Start wallet sync service to index incoming transactions (coinbase, receives)
-    start_wallet_sync(&state, wallet);
+    match wallet.current_wallet_id() {
+        Some(loaded_id) => start_wallet_sync(&state, wallet.clone(), loaded_id),
+        None => log::warn!("Loaded wallet has no id; sync not started"),
+    }
 
     Ok(WalletLoadResult {
         wallet_name: record.name,
@@ -2506,14 +2517,11 @@ pub async fn send_transaction(
             execution_status: None,
         };
 
+        // The record carries the memo and destination a mempool observer cannot know,
+        // so the submitter writes it. The pending-outgoing total is derived from this
+        // row — there is no counter to bump alongside it.
         if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
             log::warn!("Failed to store pending transaction: {}", e);
-        }
-
-        // Track pending outgoing amount (amount + fee) per-wallet
-        if let Err(e) = queries.add_pending_outgoing(&wallet_id, amount.saturating_add(actual_fee))
-        {
-            log::warn!("Failed to update pending outgoing total: {}", e);
         }
     }
 
@@ -2617,41 +2625,23 @@ pub async fn get_transaction_history(
         )
     };
 
-    // Resolve the (database, wallet_id) pair as a single unit. We routinely run a main
-    // wallet and a validator wallet at the same time, so the DB and the id must always
-    // come from the same source — querying a validator's DB with the main wallet's id (or
-    // vice-versa) makes list_all_confirmed return nothing and silently falls back to the
-    // live-UTXO scan, which drops receives once they are spent.
-    // 1. Explicit wallet_id  -> its matching validator DB, else the main DB.
-    // 2. Validator address   -> that validator's (db, id) bound together, else main pair.
-    // 3. Otherwise           -> the main wallet pair.
+    // Resolve which wallet's rows to query. Every wallet in the directory —
+    // main and validator alike — shares one physical registry database, and
+    // since the schema became wallet-scoped every row query is keyed by
+    // (wallet_id, ...), so the id alone selects the right history; a wrong id
+    // can no longer read another wallet's rows.
+    // 1. Explicit wallet_id -> query that wallet's rows.
+    // 2. Validator address  -> resolve its wallet id by that key directly
+    //    (get_status() can fail and silently drop us onto the main wallet).
+    // 3. Otherwise          -> the main wallet.
     let (wallet_db_ref, query_wallet_id) = if let Some(wid) = wallet_id.clone() {
-        let validator_db = state
-            .services
-            .validators
-            .iter()
-            .find(|entry| entry.value().get_wallet_id().as_deref() == Some(wid.as_str()))
-            .and_then(|entry| entry.value().get_wallet_database());
-        (validator_db.or_else(|| main_db.clone()), Some(wid))
+        (main_db.clone(), Some(wid))
     } else if let Some(ref addr) = address {
-        // Validators are keyed by address, so resolve by that key directly instead of
-        // scanning with get_status() — get_status() can fail and silently drop us onto the
-        // main wallet pair. That mismatch makes list_all_confirmed query the wrong wallet id
-        // and miss the durable receive row, leaving only the live-UTXO scan, so a receive
-        // disappears the moment it is spent (e.g. staked).
         state
             .services
-            .validators
-            .get(addr.as_str())
-            .and_then(|entry| {
-                match (
-                    entry.value().get_wallet_database(),
-                    entry.value().get_wallet_id(),
-                ) {
-                    (Some(db), Some(id)) => Some((Some(db), Some(id))),
-                    _ => None,
-                }
-            })
+            .get_validator(addr.as_str())
+            .and_then(|validator| validator.wallet_id())
+            .map(|wid| (main_db.clone(), Some(wid)))
             .unwrap_or_else(main_pair)
     } else {
         main_pair()
@@ -2679,10 +2669,10 @@ pub async fn get_transaction_history(
     // This must happen before building the address set since both contexts share the same DB
     if let (Some(db), Some(wallet_id)) = (wallet_db_ref.as_ref(), query_wallet_id.clone()) {
         log::debug!("Querying wallet database for outgoing transactions");
-        let queries = WalletQueries::new(db.connection());
+        let queries = WalletQueries::new(db.connection()).for_wallet(&wallet_id);
 
         // Get pending outgoing transactions (sends, stakes, unstakes)
-        match queries.list_pending_outgoing(&wallet_id) {
+        match queries.list_pending_outgoing() {
             Ok(pending) => {
                 log::debug!("Found {} pending outgoing transactions", pending.len());
                 for ptx in pending {
@@ -2747,10 +2737,6 @@ pub async fn get_transaction_history(
                                 get_block_timestamp(&blockchain, &ptx.txid, None, fallback_ts);
                             let confirmation = Some((block_ts as i64, leaf_height));
                             let _ = queries.set_transaction_confirmed(&ptx.txid, confirmation);
-                            let _ = queries.subtract_pending_outgoing(
-                                &wallet_id,
-                                ptx.amount + ptx.fee.unwrap_or(0),
-                            );
 
                             let confirmations =
                                 current_leaf_height.saturating_sub(leaf_height) as u32 + 1;
@@ -2782,10 +2768,6 @@ pub async fn get_transaction_history(
                         } else {
                             // Not in mempool and not confirmed — dropped
                             let _ = queries.remove_transaction(&ptx.txid);
-                            let _ = queries.subtract_pending_outgoing(
-                                &wallet_id,
-                                ptx.amount + ptx.fee.unwrap_or(0),
-                            );
                             log::info!(
                                 "Cleaned up dropped tx {} (no longer in mempool or blockchain)",
                                 hex::encode(ptx.txid)
@@ -2800,7 +2782,7 @@ pub async fn get_transaction_history(
         }
 
         // Include confirmed outgoing transactions (sends, stakes, unstakes)
-        if let Ok(confirmed_outgoing) = queries.list_confirmed_outgoing(&wallet_id) {
+        if let Ok(confirmed_outgoing) = queries.list_confirmed_outgoing() {
             for ctx in confirmed_outgoing {
                 if !seen_txids.contains(&ctx.txid) {
                     seen_txids.insert(ctx.txid);
@@ -2835,7 +2817,7 @@ pub async fn get_transaction_history(
         // receive visible after it is later spent (e.g. staked): once confirmed here it is
         // returned by list_all_confirmed below regardless of UTXO state, instead of relying
         // on the live-UTXO scan (which can no longer see a spent output).
-        if let Ok(pending_incoming) = queries.list_pending_incoming(&wallet_id) {
+        if let Ok(pending_incoming) = queries.list_pending_incoming() {
             for rec in pending_incoming {
                 if let Ok(Some(idx)) = blockchain.get_transaction_index(&rec.txid) {
                     let height = blockchain
@@ -2862,7 +2844,7 @@ pub async fn get_transaction_history(
 
         // Include confirmed incoming transactions from DB (receive, coinbase, withdrawal)
         // This ensures the UTXO scan (section 4) only catches newly discovered txs
-        if let Ok(all_confirmed) = queries.list_all_confirmed(&wallet_id) {
+        if let Ok(all_confirmed) = queries.list_all_confirmed() {
             for ctx in all_confirmed {
                 let is_utxo_bridge_deposit_record =
                     matches!(ctx.tx_type, TransactionType::ContractCall)
@@ -2984,8 +2966,8 @@ pub async fn get_transaction_history(
         // CAGE deposits are VM contract calls, but they consume wallet UTXOs.
         // Keep them visible on the UTXO surface even while the receipt moves
         // from active-stem metadata into persisted receipt storage.
-        if let Ok(vm_count) = queries.count_vm_transactions(&wallet_id) {
-            if let Ok(vm_records) = queries.list_vm_transactions(&wallet_id, vm_count as usize, 0) {
+        if let Ok(vm_count) = queries.count_vm_transactions() {
+            if let Ok(vm_records) = queries.list_vm_transactions(vm_count as usize, 0) {
                 for record in vm_records {
                     if seen_txids.contains(&record.txid) {
                         continue;
@@ -3009,9 +2991,9 @@ pub async fn get_transaction_history(
     }
 
     // 3. Scan mempool for relevant pending VM transactions
-    if query_wallet_id.is_some() {
+    if let Some(ref wid) = query_wallet_id {
         if let Some(ref db) = wallet_db_ref {
-            let queries = WalletQueries::new(db.connection());
+            let queries = WalletQueries::new(db.connection()).for_wallet(wid.as_str());
             transactions.extend(collect_pending_vm_mempool_transactions(
                 blockchain.as_ref(),
                 mempool.as_ref(),
@@ -3094,7 +3076,7 @@ pub async fn get_transaction_history(
 
             if let (Some(db), Some(wallet_id)) = (wallet_db_ref.as_ref(), query_wallet_id.as_ref())
             {
-                let queries = WalletQueries::new(db.connection());
+                let queries = WalletQueries::new(db.connection()).for_wallet(wallet_id.as_str());
                 if queries.get_transaction(&tx_hash).ok().flatten().is_none() {
                     let input_details = tx.utxo_inputs().and_then(|inputs| {
                         let details: Vec<InputDetail> = inputs
@@ -3142,7 +3124,7 @@ pub async fn get_transaction_history(
                         execution_status: None,
                     };
 
-                    if let Err(e) = queries.insert_transaction(wallet_id, &record) {
+                    if let Err(e) = queries.insert_transaction(&record) {
                         log::warn!("Failed to store pending incoming tx in wallet DB: {}", e);
                     }
                 }
@@ -3288,7 +3270,7 @@ pub async fn get_transaction_history(
 
         // Store in wallet DB if not already present (captures input_details while resolvable)
         if let (Some(ref db), Some(ref wid)) = (&wallet_db_ref, &query_wallet_id) {
-            let q = WalletQueries::new(db.connection());
+            let q = WalletQueries::new(db.connection()).for_wallet(wid.as_str());
             match q.get_transaction(tx_id).ok().flatten() {
                 Some(existing) if existing.is_pending() => {
                     if let Err(e) = q.set_transaction_confirmed(
@@ -3335,7 +3317,7 @@ pub async fn get_transaction_history(
                         input_details,
                         execution_status: None,
                     };
-                    if let Err(e) = q.insert_transaction(wid, &record) {
+                    if let Err(e) = q.insert_transaction(&record) {
                         log::warn!("Failed to store incoming tx in wallet DB: {}", e);
                     }
                 }
@@ -3434,8 +3416,8 @@ pub async fn get_transaction_detail(
     let mut receipt: Option<TransactionReceiptDetail> = None;
 
     // Check wallet database for tracked transaction
-    if let Some(db) = wallet.and_then(|w| w.database()) {
-        let queries = WalletQueries::new(db.connection());
+    if let Some((db, wid)) = wallet.and_then(|w| w.database().zip(w.current_wallet_id())) {
+        let queries = WalletQueries::new(db.connection()).for_wallet(wid);
         if let Ok(Some(wallet_detail)) = queries.get_transaction_detail(&txid_bytes) {
             let tx_record = wallet_detail.transaction;
             wallet_record = Some(tx_record.clone());
@@ -4674,7 +4656,7 @@ fn collect_pending_vm_mempool_transactions(
     blockchain: &xtal::blockchain::Blockchain,
     mempool: &xtal::mempool::Mempool,
     wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
-    queries: Option<&WalletQueries>,
+    queries: Option<&xtal::wallet::database::queries::ScopedQueries>,
     seen_txids: &mut std::collections::HashSet<[u8; 32]>,
     surface: WalletHistorySurface,
 ) -> Vec<TransactionSummary> {
@@ -4935,76 +4917,43 @@ fn calculate_net_amount(
 // Wallet Sync
 // =============================================================================
 
-/// Stop the wallet sync service for a specific wallet id.
+/// Stop the wallet sync loop for a specific wallet id.
+///
+/// The handle in app state owns the loop: removing it here releases the
+/// manager's occupancy slot, and the spawned shutdown lets the loop finish
+/// its handler in flight before the task is reaped.
 pub(crate) fn stop_wallet_sync(state: &AppState, wallet_id: &str) {
-    if let Ok(mut guard) = state.wallet_sync.lock() {
-        if let Some(sync) = guard.remove(wallet_id) {
-            sync.stop();
-            log::info!("Wallet sync service stopped for wallet {}", wallet_id);
-        }
+    let handle = state
+        .wallet_sync
+        .lock()
+        .ok()
+        .and_then(|mut loops| loops.remove(wallet_id));
+    if let Some(handle) = handle {
+        tauri::async_runtime::spawn(async move { handle.shutdown().await });
     }
 }
 
-/// Start the wallet sync service to index incoming transactions (coinbase, receives).
+/// Start the wallet sync loop that indexes `wallet_id`'s transactions.
 ///
-/// Replaces any existing sync service for the same wallet id, while allowing
-/// normal and validator wallet sync services to run at the same time.
-pub(crate) fn start_wallet_sync(state: &AppState, wallet: &WalletManager) {
-    let blockchain = state.services.blockchain().clone();
-    let (db, wallet_id) = match (wallet.database(), wallet.current_wallet_id()) {
-        (Some(db), Some(id)) => (db, id),
-        _ => {
-            log::debug!("Wallet database or ID not available for sync service");
-            return;
-        }
-    };
-
-    stop_wallet_sync(state, &wallet_id);
-
-    let sync_service = match WalletSyncService::new(
-        blockchain as std::sync::Arc<dyn ChainDataProvider>,
-        db,
-        wallet_id.clone(),
-    ) {
-        Ok(s) => std::sync::Arc::new(s),
-        Err(e) => {
-            log::warn!("Failed to create wallet sync service: {}", e);
-            return;
-        }
-    };
-
-    // Gather wallet addresses to monitor. Union the scoped pkh set with the
-    // manager's spend candidates: the send/estimate index fast path requires
-    // every candidate address (including the staking key, which the scoped
-    // set omits for standard wallets) to be watched by the sync service.
-    let mut pkhs = match get_wallet_pkh_set(wallet) {
-        Ok(p) => p,
-        Err(e) => {
-            log::warn!("Failed to get wallet addresses for sync: {}", e);
-            return;
-        }
-    };
-    match wallet.spend_candidate_pkhs() {
-        Ok(candidates) => pkhs.extend(candidates),
-        Err(e) => log::warn!("Failed to get spend-candidate addresses for sync: {}", e),
-    }
-
-    let addrs: Vec<[u8; 20]> = pkhs.into_iter().collect();
-    let sync_clone = sync_service.clone();
-
+/// The node only lends its observation surfaces; the loop itself is owned by
+/// the handle stored in app state. The wallet id is explicit because a normal
+/// and a validator wallet can run at once — "the current wallet" is the
+/// caller's decision, made where the wallet was just loaded. The manager
+/// enforces exactly one loop per wallet id, so a duplicate start is rejected
+/// rather than racing the first writer on the same rows.
+pub(crate) fn start_wallet_sync(state: &AppState, wallet: Arc<WalletManager>, wallet_id: String) {
+    let services = state.services.clone();
+    let loops = state.wallet_sync.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = sync_clone.add_addresses(addrs).await {
-            log::warn!("Failed to add addresses to sync service: {}", e);
-            return;
+        match services.start_wallet_sync(&wallet, &wallet_id).await {
+            Ok(handle) => {
+                if let Ok(mut loops) = loops.lock() {
+                    loops.insert(wallet_id, handle);
+                }
+            }
+            Err(e) => log::warn!("Failed to start wallet sync service: {}", e),
         }
-        log::info!("Wallet sync service started");
-        sync_clone.start().await;
     });
-
-    // Store for later cleanup on wallet unload
-    if let Ok(mut guard) = state.wallet_sync.lock() {
-        guard.insert(wallet_id, sync_service);
-    }
 }
 
 // =============================================================================
@@ -5139,7 +5088,7 @@ pub async fn get_vm_transaction_history(
         .as_ref()
         .ok_or("Wallet not available")?;
     let db = wallet.database().ok_or("Wallet database not available")?;
-    let queries = WalletQueries::new(db.connection());
+    let queries = WalletQueries::new(db.connection()).for_wallet(query_wallet_id.as_str());
     let wallet_pkhs = get_wallet_pkh_set(wallet)?;
     let mut transactions: Vec<TransactionSummary> = Vec::new();
 
@@ -5160,11 +5109,11 @@ pub async fn get_vm_transaction_history(
     ));
 
     let confirmed_count = queries
-        .count_vm_transactions(&query_wallet_id)
+        .count_vm_transactions()
         .map_err(|e| format!("Failed to count VM transactions: {}", e))?
         as usize;
     let vm_records = queries
-        .list_vm_transactions(&query_wallet_id, confirmed_count, 0)
+        .list_vm_transactions(confirmed_count, 0)
         .map_err(|e| format!("Failed to list VM transactions: {}", e))?;
 
     for record in vm_records {

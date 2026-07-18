@@ -840,6 +840,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_validator_earnings,
             commands::get_validator_balance_info,
             commands::get_fruit_production_stats,
+            commands::get_fruit_difficulty_history,
             // Network commands
             commands::get_network_status,
             commands::get_peers,

@@ -142,6 +142,12 @@ export interface FruitProductionStats {
   personalWinProbabilityLabel?: string;
 }
 
+/** Chain-derived difficulty for one historical epoch */
+export interface FruitDifficultyEpochPoint {
+  epoch: number;
+  difficultyBits: number;
+}
+
 /** Session-only per-epoch difficulty snapshot for a fruit type */
 export interface FruitDifficultyHistoryPoint {
   epoch: number;

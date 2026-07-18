@@ -12,7 +12,42 @@ import { Switch } from "@/components/ui/switch";
 import { cn, shardsToXtal, formatDuration, formatNumber } from "@/lib/utils";
 import { FRUIT_COLORS } from "@/lib/fruitColors";
 import { difficultyDelta } from "@/lib/difficulty";
-import type { FruitDifficultyHistoryPoint } from "@/types";
+import { tauriCommand } from "@/hooks";
+import type { FruitDifficultyEpochPoint, FruitDifficultyHistoryPoint } from "@/types";
+
+const RECENT_DIFFICULTY_EPOCHS = 24;
+
+// React StrictMode mounts effects twice in development. Share an in-flight request so
+// deriving the historical window does not make the backend walk the chain twice.
+const difficultyHistoryRequests = new Map<
+  string,
+  Promise<FruitDifficultyEpochPoint[]>
+>();
+
+function fetchDifficultyHistory(fruitType: string) {
+  const existing = difficultyHistoryRequests.get(fruitType);
+  if (existing) return existing;
+
+  const request = tauriCommand<FruitDifficultyEpochPoint[]>(
+    "get_fruit_difficulty_history",
+    { fruitType, limit: RECENT_DIFFICULTY_EPOCHS }
+  );
+  difficultyHistoryRequests.set(fruitType, request);
+  void request.then(
+    () => {
+      if (difficultyHistoryRequests.get(fruitType) === request) {
+        difficultyHistoryRequests.delete(fruitType);
+      }
+    },
+    () => {
+      if (difficultyHistoryRequests.get(fruitType) === request) {
+        difficultyHistoryRequests.delete(fruitType);
+      }
+    }
+  );
+
+  return request;
+}
 
 interface FruitCardProps {
   fruitType: string;
@@ -57,6 +92,9 @@ function FruitCard({
 }: FruitCardProps) {
   const colors = FRUIT_COLORS[fruitType] || FRUIT_COLORS.Apple;
   const [showTooltip, setShowTooltip] = useState(false);
+  const [hydratedDifficultyHistory, setHydratedDifficultyHistory] = useState<
+    FruitDifficultyEpochPoint[]
+  >([]);
   const infoBtnRef = useRef<HTMLButtonElement>(null);
   const tooltipRef = useRef<HTMLDivElement>(null);
   const [tooltipPos, setTooltipPos] = useState({
@@ -101,26 +139,51 @@ function FruitCard({
     expectedTimeLabel ??
     (displayTimeSecs !== undefined ? formatDuration(displayTimeSecs) : undefined);
   const difficultyChartId = `${fruitType.replace(/[^a-z0-9]/gi, "") || "fruit"}DifficultyGradient`;
-  const difficultyChartData = useMemo(
-    () =>
-      difficultyHistory.map((point) => ({
+  const difficultyChartData = useMemo(() => {
+    const byEpoch = new Map<number, FruitDifficultyEpochPoint>();
+
+    for (const point of hydratedDifficultyHistory) {
+      byEpoch.set(point.epoch, point);
+    }
+    // Live session snapshots are fresher and should replace a hydrated point for
+    // the same epoch (for example, after a reorg changes the canonical window).
+    for (const point of difficultyHistory) {
+      byEpoch.set(point.epoch, {
         epoch: point.epoch,
         difficultyBits: point.difficultyBits,
-        expectedTimeSecs: point.expectedTimeSecs,
-      })),
-    [difficultyHistory]
-  );
-  const latestDifficulty = difficultyHistory[difficultyHistory.length - 1];
+      });
+    }
+
+    return Array.from(byEpoch.values()).sort((a, b) => a.epoch - b.epoch);
+  }, [difficultyHistory, hydratedDifficultyHistory]);
+  const latestDifficulty = difficultyChartData[difficultyChartData.length - 1];
   const hasDifficultyTrend = difficultyChartData.length > 1;
   const delta = useMemo(() => {
-    const n = difficultyHistory.length;
+    const n = difficultyChartData.length;
     return n >= 2
       ? difficultyDelta(
-          difficultyHistory[n - 1].difficultyBits,
-          difficultyHistory[n - 2].difficultyBits
+          difficultyChartData[n - 1].difficultyBits,
+          difficultyChartData[n - 2].difficultyBits
         )
       : null;
-  }, [difficultyHistory]);
+  }, [difficultyChartData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setHydratedDifficultyHistory([]);
+
+    void fetchDifficultyHistory(fruitType)
+      .then((history) => {
+        if (!cancelled) setHydratedDifficultyHistory(history);
+      })
+      .catch((error) => {
+        console.error(`Failed to hydrate ${fruitType} difficulty history:`, error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fruitType]);
 
   useLayoutEffect(() => {
     if (!showTooltip) return;

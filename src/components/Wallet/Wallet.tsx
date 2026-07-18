@@ -43,6 +43,7 @@ import { useWalletStore, useUiStore } from "@/stores";
 import { tauriCommand } from "@/hooks";
 
 import { cn } from "@/lib/utils";
+import { PAGE_SIZE, getPageOffset, normalizePage } from "@/lib/pagination";
 import type {
   WalletBalance,
   VmAccountBalance,
@@ -89,11 +90,6 @@ type UtxoTransactionFilter =
   | "unstaking"
   | "vm_deposits"
   | "vm_withdrawals";
-
-const PAGE_SIZE = 50;
-
-const normalizePage = (page: number | undefined) => Math.max(1, page ?? 1);
-const getPageOffset = (page: number) => (page - 1) * PAGE_SIZE;
 
 const UTXO_TRANSACTION_FILTERS: { value: UtxoTransactionFilter; label: string }[] = [
   { value: "all", label: "All" },

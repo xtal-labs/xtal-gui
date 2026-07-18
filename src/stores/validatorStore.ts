@@ -9,7 +9,12 @@ import type {
   ValidatorWalletSummary,
   ValidatorWalletCreationResult,
   NetworkValidatorStats,
+  Transaction,
 } from "@/types";
+import {
+  initialTransactionPagination,
+  type TransactionPagination,
+} from "@/lib/pagination";
 
 interface ValidatorState {
   // Status
@@ -54,6 +59,10 @@ interface ValidatorState {
   // Recently produced fruits (session-only, newest first)
   recentFruits: ProducedFruit[];
 
+  // Transaction history for the validator wallet (one page at a time)
+  transactions: Transaction[];
+  transactionPagination: TransactionPagination;
+
   // Refresh trigger (incremented by WebSocket events to trigger re-fetch)
   refreshTrigger: number;
 
@@ -81,6 +90,8 @@ interface ValidatorState {
   triggerRefresh: () => void;
   setAvailableValidatorWallets: (wallets: ValidatorWalletSummary[]) => void;
   setCreationResult: (result: ValidatorWalletCreationResult | null) => void;
+  setTransactionPage: (page: number, transactions: Transaction[], totalCount: number) => void;
+  setPageLoading: (loading: boolean) => void;
   reset: () => void;
 }
 
@@ -107,6 +118,8 @@ const initialState = {
   recentFruits: [] as ProducedFruit[],
   productionStats: [] as FruitProductionStats[],
   fruitDifficultyHistory: {} as Record<string, FruitDifficultyHistoryPoint[]>,
+  transactions: [] as Transaction[],
+  transactionPagination: { ...initialTransactionPagination },
   refreshTrigger: 0,
 };
 
@@ -120,6 +133,10 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
       isLoaded: loaded,
       walletName,
       address,
+      // Transaction history is wallet-scoped: clear it on both load and unload so
+      // a newly loaded validator never shows the previous wallet's rows.
+      transactions: [],
+      transactionPagination: { ...initialTransactionPagination },
       // Reset other state when unloading
       ...(loaded
         ? {}
@@ -239,6 +256,25 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
   setAvailableValidatorWallets: (wallets) => set({ availableValidatorWallets: wallets }),
 
   setCreationResult: (result) => set({ creationResult: result }),
+
+  setTransactionPage: (page, transactions, totalCount) =>
+    set((state) => ({
+      transactions,
+      transactionPagination: {
+        ...state.transactionPagination,
+        currentPage: page,
+        totalCount,
+        isLoading: false,
+      },
+    })),
+
+  setPageLoading: (loading) =>
+    set((state) => ({
+      transactionPagination: {
+        ...state.transactionPagination,
+        isLoading: loading,
+      },
+    })),
 
   reset: () => set(initialState),
 }));

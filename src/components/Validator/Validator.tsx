@@ -47,6 +47,7 @@ import { useValidatorStore, useUiStore } from "@/stores";
 import { tauriCommand, useTauriCommand } from "@/hooks";
 import { cn, shardsToXtal, formatTimeAgo, parseXtalToShards, copyToClipboard } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
+import { PAGE_SIZE, getPageOffset, normalizePage } from "@/lib/pagination";
 import type {
   FruitSpec,
   FruitDetail,
@@ -58,7 +59,6 @@ import type {
   ValidatorEarnings,
   ValidatorBalanceInfo,
   FruitProductionStats,
-  Transaction,
   TransactionHistoryResponse,
 } from "@/types";
 
@@ -375,6 +375,10 @@ export default function Validator() {
   const recentFruits = useValidatorStore((state) => state.recentFruits);
   const wsProductionStats = useValidatorStore((state) => state.productionStats);
   const fruitDifficultyHistory = useValidatorStore((state) => state.fruitDifficultyHistory);
+  const transactions = useValidatorStore((state) => state.transactions);
+  const transactionPagination = useValidatorStore((state) => state.transactionPagination);
+  const setTransactionPage = useValidatorStore((state) => state.setTransactionPage);
+  const setPageLoading = useValidatorStore((state) => state.setPageLoading);
   const setLoaded = useValidatorStore((state) => state.setLoaded);
   const setRunning = useValidatorStore((state) => state.setRunning);
   const setFruitSpecs = useValidatorStore((state) => state.setFruitSpecs);
@@ -404,7 +408,6 @@ export default function Validator() {
   const [selectedWallet, setSelectedWallet] = useState<string | null>(null);
   const [stakeAmount, setStakeAmount] = useState("");
   const [newWalletName, setNewWalletName] = useState("");
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [hideBalances, setHideBalances] = useState(false);
   const [importStep, setImportStep] = useState<"mnemonic" | "password">("mnemonic");
   const [importWords, setImportWords] = useState<string[]>([]);
@@ -423,6 +426,9 @@ export default function Validator() {
   const [isUnstakeFeeEstimating, setIsUnstakeFeeEstimating] = useState(false);
   const [unstakeFeeEstimateError, setUnstakeFeeEstimateError] = useState<string | null>(null);
   const lastEarningsFetchRef = useRef(0);
+  // Holds the page the user is currently viewing so background refreshes
+  // (new blocks, fruit events) re-fetch that page instead of snapping to page 1.
+  const transactionPageRef = useRef(1);
 
   const {
     data: fruitDetail,
@@ -633,19 +639,72 @@ export default function Validator() {
     }
   }, [address, setBalanceInfo]);
 
-  // Fetch transaction history for validator wallet
-  const fetchTransactions = useCallback(async () => {
-    if (!address) return;
-    try {
+  // Load one page of validator transaction history into the store.
+  // Throws on failure so callers can decide how loudly to report it.
+  const loadTransactionPage = useCallback(
+    async (page?: number) => {
+      if (!address) return;
+      const requestedPage = normalizePage(page ?? transactionPageRef.current);
       const response = await tauriCommand<TransactionHistoryResponse>("get_transaction_history", {
-        limit: 50,
-        address: address,
+        limit: PAGE_SIZE,
+        offset: getPageOffset(requestedPage),
+        address,
       });
-      setTransactions(response.transactions);
-    } catch (err) {
-      console.error("Failed to fetch transactions:", err);
-    }
-  }, [address]);
+
+      // History can shrink under us (e.g. a reorg drops confirmed txs). If the
+      // requested page no longer exists, fall back to the last valid page.
+      const totalPages = Math.max(1, Math.ceil(response.totalCount / PAGE_SIZE));
+      if (requestedPage > totalPages) {
+        const clamped = await tauriCommand<TransactionHistoryResponse>("get_transaction_history", {
+          limit: PAGE_SIZE,
+          offset: getPageOffset(totalPages),
+          address,
+        });
+        transactionPageRef.current = totalPages;
+        setTransactionPage(totalPages, clamped.transactions, clamped.totalCount);
+        return;
+      }
+
+      transactionPageRef.current = requestedPage;
+      setTransactionPage(requestedPage, response.transactions, response.totalCount);
+    },
+    [address, setTransactionPage]
+  );
+
+  // Background refresh (mount, new blocks, fruit events) — stays quiet on failure,
+  // since the user did not ask for it and a toast per block would be noise.
+  const fetchTransactions = useCallback(
+    async (page?: number) => {
+      try {
+        await loadTransactionPage(page);
+      } catch (err) {
+        console.error("Failed to fetch transactions:", err);
+        setPageLoading(false);
+      }
+    },
+    [loadTransactionPage, setPageLoading]
+  );
+
+  // User-driven page change from the transaction list pager — reports failures.
+  const fetchTransactionPage = useCallback(
+    async (page: number) => {
+      setPageLoading(true);
+      try {
+        await loadTransactionPage(page);
+      } catch (err) {
+        console.error("Failed to load transactions:", err);
+        const message = err instanceof Error ? err.message : String(err);
+        addToast({
+          type: "error",
+          title: "Failed to load transactions",
+          message,
+          duration: 5000,
+        });
+        setPageLoading(false);
+      }
+    },
+    [addToast, loadTransactionPage, setPageLoading]
+  );
 
   // Fetch personalized fruit production stats (with validator-specific effective difficulty)
   const fetchProductionStats = useCallback(async () => {
@@ -680,7 +739,10 @@ export default function Validator() {
       refreshValidatorStatus();
       fetchValidatorEarnings();
       fetchBalanceInfo();
-      fetchTransactions();
+      // A freshly loaded wallet always starts at page 1, so reset the ref too —
+      // otherwise a page number from the previous validator wallet would leak.
+      transactionPageRef.current = 1;
+      fetchTransactions(1);
       fetchProductionStats();
     }
   }, [
@@ -1343,6 +1405,12 @@ export default function Validator() {
             surface="validator"
             title="TRANSACTIONS"
             address={address ?? undefined}
+            currentPage={transactionPagination.currentPage}
+            totalPages={
+              Math.ceil(transactionPagination.totalCount / transactionPagination.pageSize) || 1
+            }
+            isLoading={transactionPagination.isLoading}
+            onPageChange={fetchTransactionPage}
           />
         </>
       )}
