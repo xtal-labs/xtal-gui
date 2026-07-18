@@ -8,6 +8,7 @@ import type { WidgetProps } from "./registry";
 
 export default function ValidatorWidget({ size, shellProps }: WidgetProps) {
   const isValidating = useValidatorStore((s) => s.isRunning);
+  const activeStake = useValidatorStore((s) => s.effectiveStake);
   const withdrawableStake = useValidatorStore((s) => s.withdrawableStake);
   const pendingStake = useValidatorStore((s) => s.pendingStake);
   const totalFruitsProduced = useValidatorStore((s) => s.totalFruitsProduced);
@@ -29,9 +30,13 @@ export default function ValidatorWidget({ size, shellProps }: WidgetProps) {
       {validatorAddress ? (
         <>
           <div className={cn("font-heading font-bold tabular-nums", VALUE_SIZE_CLASSES[size])}>
-            {totalStake > 0 ? formatXtal(totalStake) : "No stake"}
+            {activeStake > 0 ? formatXtal(activeStake) : "No active stake"}
           </div>
           <p className="text-xs text-foreground-muted mt-1 font-mono">
+            Active stake
+            {totalStake !== activeStake && <> &bull; {formatXtal(totalStake)} total</>}
+          </p>
+          <p className="text-xs text-foreground-muted mt-0.5 font-mono">
             {isValidating ? "Active" : "Inactive"}
             {" "}&bull;{" "}
             {totalFruitsProduced} fruit{totalFruitsProduced !== 1 ? "s" : ""} produced
