@@ -2,6 +2,8 @@
 //!
 //! Commands for querying mempool state and pending transactions.
 
+use xtal::shards::Shards;
+
 use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,7 +37,7 @@ pub struct MempoolInfo {
 pub struct MempoolTransaction {
     pub txid: String,
     pub tx_type: String,
-    pub fee: u64,
+    pub fee: Shards,
     pub size_bytes: usize,
     pub age_secs: u64,
 }
@@ -50,7 +52,7 @@ impl MempoolTransaction {
         Some(Self {
             txid,
             tx_type: get_tx_type_name(tx).to_string(),
-            fee,
+            fee: fee.into(),
             size_bytes: tx.serialized_size().unwrap_or(0),
             age_secs: now.saturating_sub(timestamp),
         })
@@ -136,7 +138,7 @@ pub struct IncomingMempoolTransaction {
     #[serde(flatten)]
     pub summary: MempoolTransaction,
     /// Total shards paying wallet-owned PKHs in this transaction.
-    pub incoming_amount: u64,
+    pub incoming_amount: Shards,
 }
 
 /// Get pending mempool transactions with outputs paying the loaded wallet.
@@ -175,7 +177,7 @@ pub async fn get_incoming_mempool_transactions(
         if let Some(summary) = MempoolTransaction::from_entry(&tx, fee, timestamp, now) {
             results.push(IncomingMempoolTransaction {
                 summary,
-                incoming_amount,
+                incoming_amount: incoming_amount.into(),
             });
         }
     }
@@ -219,7 +221,7 @@ pub struct MempoolTransactionDetail {
     // Common fields
     pub txid: String,
     pub tx_type: String,
-    pub fee: u64,
+    pub fee: Shards,
     pub size_bytes: usize,
     pub age_secs: u64,
     pub is_sponsored: bool,
@@ -280,7 +282,7 @@ pub async fn get_mempool_transaction_detail(
     let mut detail = MempoolTransactionDetail {
         txid: hex::encode(txid_bytes),
         tx_type,
-        fee,
+        fee: fee.into(),
         size_bytes,
         age_secs,
         is_sponsored,
@@ -307,8 +309,12 @@ pub async fn get_mempool_transaction_detail(
             let blockchain = state.services.blockchain();
             let inputs = extract_inputs(&std_tx.inputs, &blockchain).unwrap_or_default();
             let outputs = extract_outputs(&std_tx.outputs, "p2pkh");
-            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            let total_input: u64 = inputs
+                .iter()
+                .filter_map(|i| i.amount)
+                .map(Shards::get)
+                .sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
             detail.inputs = Some(inputs);
             detail.outputs = Some(outputs);
             detail.total_input = Some(total_input);
@@ -318,8 +324,12 @@ pub async fn get_mempool_transaction_detail(
             let blockchain = state.services.blockchain();
             let inputs = extract_inputs(&stake_tx.inputs, &blockchain).unwrap_or_default();
             let outputs = extract_outputs(&stake_tx.outputs, "stake");
-            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            let total_input: u64 = inputs
+                .iter()
+                .filter_map(|i| i.amount)
+                .map(Shards::get)
+                .sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
             detail.inputs = Some(inputs);
             detail.outputs = Some(outputs);
             detail.total_input = Some(total_input);
@@ -329,8 +339,12 @@ pub async fn get_mempool_transaction_detail(
             let blockchain = state.services.blockchain();
             let inputs = extract_inputs(&unstake_tx.inputs, &blockchain).unwrap_or_default();
             let outputs = extract_outputs(&unstake_tx.outputs, "unstake");
-            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            let total_input: u64 = inputs
+                .iter()
+                .filter_map(|i| i.amount)
+                .map(Shards::get)
+                .sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
             detail.inputs = Some(inputs);
             detail.outputs = Some(outputs);
             detail.total_input = Some(total_input);

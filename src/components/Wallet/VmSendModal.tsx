@@ -25,6 +25,10 @@ import {
   isValidXtalInput,
   parseXtalToShards,
   truncateAddress,
+  toShards,
+  addShards,
+  subShards,
+  type ShardAmount,
 } from "@/lib/utils";
 import { parseAddressInput, formatVmAddress } from "@/lib/address";
 import { tauriCommand, tauriCommandSafe } from "@/hooks";
@@ -34,7 +38,7 @@ import type { SweepPlan, SweepSubmitResult, VmAccountBalance } from "@/types/wal
 interface VmSendModalProps {
   isOpen: boolean;
   onClose: () => void;
-  maxBalance: number;
+  maxBalance: ShardAmount;
 }
 
 type SendStep = "form" | "confirm" | "sending" | "success" | "error";
@@ -98,7 +102,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
 
   // Derived values
   const parsedAmountShards = parseXtalToShards(amount);
-  const amountShards = parsedAmountShards ?? 0;
+  const amountShards = toShards(parsedAmountShards ?? "0");
   const amountError = getXtalInputError(amount);
   const effectiveGasLimit = parseInt(gasLimit) || gasConfig?.defaultGasLimit || 21000;
   const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
@@ -108,14 +112,14 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
   // the sendable total is the sum of per-account spendable balances — NOT the
   // aggregate VM balance, and gas is never added on top of the amount here.
   const sendableNow =
-    vmAccounts?.accounts.reduce(
-      (sum, account) => sum + Math.max(0, account.balance - maxFee),
-      0,
-    ) ?? null;
+    vmAccounts?.accounts.reduce((sum, account) => {
+      const spendable = subShards(account.balance, maxFee);
+      return sum + (spendable > 0n ? spendable : 0n);
+    }, 0n) ?? null;
   const hasInsufficientFunds =
     sendableNow !== null
-      ? amountShards > 0 && amountShards > sendableNow
-      : amountShards + maxFee > maxBalance;
+      ? amountShards > 0n && amountShards > sendableNow
+      : addShards(amountShards, maxFee) > toShards(maxBalance);
 
   // Plan-derived values (available on the confirm step)
   const maxGasFeePerLeg = plan ? Number(plan.maxGasFeePerLeg) : maxFee;
@@ -158,13 +162,13 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
   const canProceed =
     recipient.length > 0 &&
     parsedAddress !== null &&
-    amountShards > 0 &&
+    amountShards > 0n &&
     !amountError &&
     !hasInsufficientFunds &&
     !hasGasError;
 
   const handleContinue = async () => {
-    if (parsedAmountShards === null || parsedAmountShards <= 0) {
+    if (parsedAmountShards === null || toShards(parsedAmountShards) <= 0n) {
       setError(amountError || "Please enter a valid amount");
       return;
     }
@@ -209,7 +213,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
       setError("Please enter your password");
       return;
     }
-    if (parsedAmountShards === null || parsedAmountShards <= 0) {
+    if (parsedAmountShards === null || toShards(parsedAmountShards) <= 0n) {
       setError(amountError || "Please enter a valid amount");
       return;
     }
@@ -420,8 +424,9 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
                     onClick={() => {
                       // Per-account spendable already excludes the per-leg gas
                       // reservation; fall back to the aggregate while loading.
-                      const maxShards = sendableNow ?? Math.max(0, maxBalance - maxFee);
-                      setAmount(formatDecimalInput(maxShards / SHARDS_PER_XTAL));
+                      const fallback = subShards(maxBalance, maxFee);
+                      const maxShards = sendableNow ?? (fallback > 0n ? fallback : 0n);
+                      setAmount(formatDecimalInput(Number(maxShards) / SHARDS_PER_XTAL));
                     }}
                   >
                     MAX
@@ -558,7 +563,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-heading font-medium">TOTAL (MAX)</span>
                   <AmountDisplay
-                    amount={amountShards + totalMaxGasFee}
+                    amount={addShards(amountShards, totalMaxGasFee)}
                     size="sm"
                     showSymbol
                     className="font-medium"

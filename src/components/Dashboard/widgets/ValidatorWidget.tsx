@@ -3,7 +3,7 @@ import { Shield } from "lucide-react";
 import { WidgetIcon, WidgetShell } from "@/components/Dashboard/WidgetShell";
 import { VALUE_SIZE_CLASSES } from "@/components/Dashboard/sizing";
 import { useValidatorStore } from "@/stores";
-import { formatXtal, cn } from "@/lib/utils";
+import { formatXtal, cn, toShards, addShards } from "@/lib/utils";
 import type { WidgetProps } from "./registry";
 
 export default function ValidatorWidget({ size, shellProps }: WidgetProps) {
@@ -13,7 +13,7 @@ export default function ValidatorWidget({ size, shellProps }: WidgetProps) {
   const pendingStake = useValidatorStore((s) => s.pendingStake);
   const totalFruitsProduced = useValidatorStore((s) => s.totalFruitsProduced);
   const validatorAddress = useValidatorStore((s) => s.address);
-  const totalStake = withdrawableStake + pendingStake;
+  const totalStake = addShards(withdrawableStake, pendingStake);
 
   return (
     <WidgetShell
@@ -30,11 +30,11 @@ export default function ValidatorWidget({ size, shellProps }: WidgetProps) {
       {validatorAddress ? (
         <>
           <div className={cn("font-heading font-bold tabular-nums", VALUE_SIZE_CLASSES[size])}>
-            {activeStake > 0 ? formatXtal(activeStake) : "No active stake"}
+            {toShards(activeStake) > 0n ? formatXtal(activeStake) : "No active stake"}
           </div>
           <p className="text-xs text-foreground-muted mt-1 font-mono">
             Active stake
-            {totalStake !== activeStake && <> &bull; {formatXtal(totalStake)} total</>}
+            {totalStake !== toShards(activeStake) && <> &bull; {formatXtal(totalStake)} total</>}
           </p>
           <p className="text-xs text-foreground-muted mt-0.5 font-mono">
             {isValidating ? "Active" : "Inactive"}

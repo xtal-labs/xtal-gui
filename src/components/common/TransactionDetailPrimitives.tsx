@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AmountDisplay } from "@/components/common/AmountDisplay";
 import { HashDisplay } from "@/components/common/HashDisplay";
-import { cn } from "@/lib/utils";
+import { cn, type ShardAmount } from "@/lib/utils";
 import { ownershipBorderClass, type IOFlow } from "@/lib/txOwnership";
 
 /** Collapsible header + animated body, used for INPUTS/OUTPUTS/LOGS sections. */
@@ -75,7 +75,7 @@ export function IORow({
   redeemScriptType,
 }: {
   address?: string;
-  amount?: number;
+  amount?: ShardAmount;
   index: number;
   isMine?: boolean;
   flow: IOFlow;

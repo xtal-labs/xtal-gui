@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { AmountDisplay } from "@/components/common";
 import { MnemonicInput } from "@/components/common/MnemonicInput";
 import { RecoveryPhraseDisplay } from "@/components/common/RecoveryPhraseDisplay";
-import { isValidXtalInput, shardsToXtal } from "@/lib/utils";
+import { isValidXtalInput, shardsToXtal, toShards, type ShardAmount } from "@/lib/utils";
 import type { ValidatorWalletCreationResult } from "@/types";
 
 // Modal IDs
@@ -17,7 +17,7 @@ const MODAL_STAKE = "validator-stake";
 const MODAL_UNSTAKE = "validator-unstake";
 
 interface FeeEstimate {
-  fee: number;
+  fee: ShardAmount;
   txSize: number;
   inputCount: number;
   outputCount: number;
@@ -422,11 +422,11 @@ function StakeModal({
 }: {
   show: boolean;
   stakeAmount: string;
-  availableBalance: number;
-  totalStake: number;
-  effectiveStake: number;
-  withdrawableStake: number;
-  pendingStake: number;
+  availableBalance: ShardAmount;
+  totalStake: ShardAmount;
+  effectiveStake: ShardAmount;
+  withdrawableStake: ShardAmount;
+  pendingStake: ShardAmount;
   feeEstimate: FeeEstimate | null;
   isFeeEstimating: boolean;
   feeEstimateError: string | null;
@@ -490,7 +490,7 @@ function StakeModal({
               <span className="font-mono">{shardsToXtal(effectiveStake).toLocaleString()} XTAL</span>
             </p>
             <p>Mature stake <span className="text-foreground-muted">(withdrawable)</span>: <span className="font-mono">{shardsToXtal(withdrawableStake).toLocaleString()} XTAL</span></p>
-            {pendingStake > 0 && (
+            {toShards(pendingStake) > 0n && (
               <p className="text-warning">Pending stake <span className="opacity-80">(locked, maturing)</span>: <span className="font-mono">{shardsToXtal(pendingStake).toLocaleString()} XTAL</span></p>
             )}
             <div className="h-px bg-border/60 my-2" />
@@ -551,8 +551,8 @@ function UnstakeModal({
 }: {
   show: boolean;
   stakeAmount: string;
-  withdrawableStake: number;
-  pendingUnstake: number;
+  withdrawableStake: ShardAmount;
+  pendingUnstake: ShardAmount;
   feeEstimate: FeeEstimate | null;
   isFeeEstimating: boolean;
   feeEstimateError: string | null;
@@ -609,7 +609,7 @@ function UnstakeModal({
           </div>
           <div className="text-sm text-foreground-muted bg-muted/50 p-3 chamfered-sm space-y-1">
             <p>Withdrawable stake: <span className="font-mono font-semibold text-foreground">{shardsToXtal(withdrawableStake).toLocaleString()} XTAL</span></p>
-            {pendingUnstake > 0 && (
+            {toShards(pendingUnstake) > 0n && (
               <p className="text-warning">Pending unstake: <span className="font-mono">{shardsToXtal(pendingUnstake).toLocaleString()} XTAL</span></p>
             )}
             <div className="h-px bg-border/60 my-2" />

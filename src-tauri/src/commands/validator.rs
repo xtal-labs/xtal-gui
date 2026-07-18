@@ -3,6 +3,8 @@
 //! Commands for starting, stopping, and managing PoS validators.
 //! Validator wallets are completely separate from user wallets.
 
+use xtal::shards::Shards;
+
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -39,7 +41,7 @@ pub struct FruitProductionCount {
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidatorInfo {
     pub address: String,
-    pub effective_stake: u64,
+    pub effective_stake: Shards,
     pub is_active: bool,
     pub active_productions: Vec<String>,
     pub total_fruits_produced: u64,
@@ -65,7 +67,7 @@ pub async fn list_validators(state: State<'_, AppState>) -> Result<Vec<Validator
             if let Ok(status) = service.get_status() {
                 validators.push(ValidatorInfo {
                     address: status.validator_address,
-                    effective_stake: status.stake,
+                    effective_stake: status.stake.into(),
                     is_active: !status.active_productions.is_empty(),
                     active_productions: status
                         .active_productions
@@ -203,7 +205,7 @@ pub async fn get_validator_status(
 
         Ok(Some(ValidatorInfo {
             address: status.validator_address,
-            effective_stake: status.stake,
+            effective_stake: status.stake.into(),
             is_active: !status.active_productions.is_empty(),
             active_productions: status
                 .active_productions
@@ -306,14 +308,14 @@ pub async fn get_validator_stake(
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidatorBalanceInfo {
     pub validator_address: String,
-    pub available_balance: u64, // UTXO balance (unstaked, available to stake)
-    pub withdrawable_stake: u64, // Staked XTAL available to unstake
-    pub mature_stake: u64,      // Backward-compatible alias for withdrawable_stake
-    pub pending_stake: u64,     // Immature stake not yet effective
-    pub total_stake: u64,       // Mature + pending stake
-    pub pending_unstake: u64,   // Pending unstake (locked)
-    pub immature_balance: u64,  // Non-stake immature balance + unconfirmed incoming
-    pub total_value: u64,       // Sum of all
+    pub available_balance: Shards, // UTXO balance (unstaked, available to stake)
+    pub withdrawable_stake: Shards, // Staked XTAL available to unstake
+    pub mature_stake: Shards,      // Backward-compatible alias for withdrawable_stake
+    pub pending_stake: Shards,     // Immature stake not yet effective
+    pub total_stake: Shards,       // Mature + pending stake
+    pub pending_unstake: Shards,   // Pending unstake (locked)
+    pub immature_balance: Shards,  // Non-stake immature balance + unconfirmed incoming
+    pub total_value: Shards,       // Sum of all
 }
 
 /// Get validator balance breakdown (available, staked, pending)
@@ -405,14 +407,14 @@ pub async fn get_validator_balance_info(
 
     Ok(ValidatorBalanceInfo {
         validator_address: address,
-        available_balance,
-        withdrawable_stake,
-        mature_stake: withdrawable_stake,
-        pending_stake,
-        total_stake,
-        pending_unstake,
-        immature_balance,
-        total_value,
+        available_balance: available_balance.into(),
+        withdrawable_stake: withdrawable_stake.into(),
+        mature_stake: withdrawable_stake.into(),
+        pending_stake: pending_stake.into(),
+        total_stake: total_stake.into(),
+        pending_unstake: pending_unstake.into(),
+        immature_balance: immature_balance.into(),
+        total_value: total_value.into(),
     })
 }
 
@@ -440,7 +442,7 @@ fn parse_fruit_type(s: &str) -> Result<FruitType, String> {
 #[derive(Debug, Clone, Serialize)]
 pub struct FruitSpec {
     pub fruit_type: String,
-    pub min_stake: u64, // In shards
+    pub min_stake: Shards, // In shards
     pub target_interval_secs: u64,
     pub max_size_bytes: usize,
     pub max_fuel: u64,
@@ -452,8 +454,8 @@ pub struct FruitSpec {
 pub struct EligibleFruit {
     pub fruit_type: String,
     pub is_eligible: bool,
-    pub min_stake: u64, // In shards
-    pub shortfall: u64, // In shards
+    pub min_stake: Shards, // In shards
+    pub shortfall: Shards, // In shards
     pub emoji: String,
 }
 
@@ -469,7 +471,7 @@ pub async fn get_fruit_specifications() -> Result<Vec<FruitSpec>, String> {
             let emoji = fruit_to_emoji(fruit_type);
             FruitSpec {
                 fruit_type: format!("{:?}", fruit_type),
-                min_stake: spec.min_stake_threshold, // Keep in shards
+                min_stake: spec.min_stake_threshold.into(), // Keep in shards
                 target_interval_secs: spec.target_interval_secs.unwrap_or(0),
                 max_size_bytes: spec.max_size_bytes.unwrap_or(0),
                 max_fuel: spec.max_fuel_per_fruit,
@@ -515,8 +517,8 @@ pub async fn get_eligible_fruits(
             EligibleFruit {
                 fruit_type: format!("{:?}", fruit_type),
                 is_eligible,
-                min_stake, // Keep in shards
-                shortfall, // Keep in shards
+                min_stake: min_stake.into(), // Keep in shards
+                shortfall: shortfall.into(), // Keep in shards
                 emoji,
             }
         })
@@ -594,7 +596,7 @@ fn collect_mature_stake_utxos(state: &AppState, validator_pkh: &[u8; 20]) -> (Ve
 pub async fn estimate_validator_stake_fee(
     state: State<'_, AppState>,
     address: String,
-    amount: u64,
+    amount: Shards,
 ) -> Result<FeeEstimate, String> {
     let service = state
         .services
@@ -602,11 +604,11 @@ pub async fn estimate_validator_stake_fee(
         .ok_or_else(|| format!("Validator not found: {}", address))?;
 
     let estimate = service
-        .estimate_stake_to_contract(None, amount)
+        .estimate_stake_to_contract(None, amount.get())
         .map_err(|e| format!("Failed to estimate stake fee: {}", e))?;
 
     Ok(FeeEstimate {
-        fee: estimate.fee,
+        fee: estimate.fee.into(),
         tx_size: estimate.tx_size,
         input_count: estimate.selected_inputs.len(),
         output_count: estimate.transaction.utxo_outputs().len(),
@@ -618,7 +620,7 @@ pub async fn estimate_validator_stake_fee(
 pub async fn estimate_validator_unstake_fee(
     state: State<'_, AppState>,
     address: String,
-    amount: u64,
+    amount: Shards,
 ) -> Result<FeeEstimate, String> {
     let service = state
         .services
@@ -629,7 +631,7 @@ pub async fn estimate_validator_unstake_fee(
         .map_err(|e| format!("Invalid address: {}", e))?;
     let (_, mature_stake) = collect_mature_stake_utxos(&state, &validator_pkh);
 
-    if amount > mature_stake {
+    if amount.get() > mature_stake {
         return Err(format!(
             "Insufficient withdrawable stake. Requested: {} shards, available withdrawable stake: {} shards. \
              Some of your stake is still locked or immature and cannot be unstaked yet.",
@@ -638,11 +640,11 @@ pub async fn estimate_validator_unstake_fee(
     }
 
     let estimate = service
-        .estimate_unstake_funds(amount)
+        .estimate_unstake_funds(amount.get())
         .map_err(|e| format!("Failed to estimate unstake fee: {}", e))?;
 
     Ok(FeeEstimate {
-        fee: estimate.fee,
+        fee: estimate.fee.into(),
         tx_size: estimate.tx_size,
         input_count: estimate.selected_inputs.len(),
         output_count: estimate.transaction.utxo_outputs().len(),
@@ -656,7 +658,7 @@ pub async fn estimate_validator_unstake_fee(
 pub async fn validator_stake(
     state: State<'_, AppState>,
     address: String,
-    amount: u64, // In shards
+    amount: Shards,
 ) -> Result<String, String> {
     let service = state
         .services
@@ -665,7 +667,7 @@ pub async fn validator_stake(
 
     // Use the ValidatorProduction trait's stake_to_contract method
     let tx_hash = service
-        .stake_to_contract(None, amount)
+        .stake_to_contract(None, amount.get())
         .map_err(|e| format!("Failed to stake: {}", e))?;
 
     Ok(hex::encode(tx_hash))
@@ -679,7 +681,7 @@ pub async fn validator_stake(
 pub async fn validator_unstake(
     state: State<'_, AppState>,
     address: String,
-    amount: u64, // In shards
+    amount: Shards,
 ) -> Result<String, String> {
     let service = state
         .services
@@ -691,7 +693,7 @@ pub async fn validator_unstake(
     let (_, mature_stake) = collect_mature_stake_utxos(&state, &validator_pkh);
 
     // Validate: the requested amount must not exceed withdrawable stake
-    if amount > mature_stake {
+    if amount.get() > mature_stake {
         return Err(format!(
             "Insufficient withdrawable stake. Requested: {} shards, available withdrawable stake: {} shards. \
              Some of your stake is still locked or immature and cannot be unstaked yet.",
@@ -702,7 +704,7 @@ pub async fn validator_unstake(
     // Use the ValidatorProduction trait's unstake_funds method
     // At this point, amount <= withdrawable stake, so only eligible outputs will be consumed
     let tx_hash = service
-        .unstake_funds(amount)
+        .unstake_funds(amount.get())
         .map_err(|e| format!("Failed to unstake: {}", e))?;
 
     Ok(hex::encode(tx_hash))
@@ -861,7 +863,7 @@ pub async fn list_validator_wallets(
 #[derive(Debug, Clone, Serialize)]
 pub struct NetworkValidatorStats {
     pub current_epoch: u32,
-    pub total_staked: u64,
+    pub total_staked: Shards,
     pub validator_count: usize,
 }
 
@@ -882,7 +884,7 @@ pub async fn get_network_validator_stats(
 
     Ok(NetworkValidatorStats {
         current_epoch,
-        total_staked,
+        total_staked: total_staked.into(),
         validator_count,
     })
 }
@@ -891,10 +893,10 @@ pub async fn get_network_validator_stats(
 #[derive(Debug, Clone, Serialize)]
 pub struct ValidatorEarnings {
     pub validator_address: String,
-    pub total_earned: u64,
-    pub leaf_mining: u64,
-    pub stem_credits: u64,
-    pub fruit_rewards: u64,
+    pub total_earned: Shards,
+    pub leaf_mining: Shards,
+    pub stem_credits: Shards,
+    pub fruit_rewards: Shards,
     pub coinbase_count: u64,
 }
 
@@ -971,10 +973,10 @@ pub async fn get_validator_earnings(
 
     Ok(ValidatorEarnings {
         validator_address: address,
-        total_earned,
-        leaf_mining,
-        stem_credits,
-        fruit_rewards,
+        total_earned: total_earned.into(),
+        leaf_mining: leaf_mining.into(),
+        stem_credits: stem_credits.into(),
+        fruit_rewards: fruit_rewards.into(),
         coinbase_count,
     })
 }
@@ -989,7 +991,7 @@ pub async fn get_validator_earnings(
 pub struct FruitProductionStats {
     pub fruit_type: String,
     pub emoji: String,
-    pub min_stake: u64,
+    pub min_stake: Shards,
     pub target_interval_secs: u64,
 
     // Dynamic difficulty (current epoch)
@@ -1165,7 +1167,7 @@ pub async fn get_fruit_production_stats(
         stats.push(FruitProductionStats {
             fruit_type: format!("{:?}", fruit_type),
             emoji: fruit_to_emoji(fruit_type),
-            min_stake: spec.min_stake_threshold,
+            min_stake: spec.min_stake_threshold.into(),
             target_interval_secs: spec.target_interval_secs.unwrap_or(60),
             current_difficulty_bits: current_difficulty.bits(),
             expected_time_secs: network_estimate.expected_time_secs,

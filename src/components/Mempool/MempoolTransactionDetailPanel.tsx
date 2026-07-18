@@ -24,7 +24,7 @@ import {
   CollapsibleSection,
   IORow,
 } from "@/components/common/TransactionDetailPrimitives";
-import { cn, formatBytes, formatGas } from "@/lib/utils";
+import { cn, formatBytes, formatGas, toShards } from "@/lib/utils";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import type { MempoolTransactionDetail } from "@/types/wallet";
 
@@ -364,7 +364,7 @@ export function MempoolTransactionDetailPanel({
                         size="sm"
                       />
                     </div>
-                    {detail.fee > 0 && (
+                    {toShards(detail.fee) > 0n && (
                       <>
                         <div className="h-px bg-border/50" />
                         <div className="flex justify-between text-sm">
@@ -435,7 +435,7 @@ export function MempoolTransactionDetailPanel({
                       )}
 
                       {detail.transferAmount != null &&
-                        detail.transferAmount > 0 && (
+                        toShards(detail.transferAmount) > 0n && (
                           <DetailRow label="Amount">
                             <AmountDisplay
                               amount={detail.transferAmount}
@@ -536,7 +536,7 @@ export function MempoolTransactionDetailPanel({
                         </DetailRow>
                       )}
 
-                      {detail.value != null && detail.value > 0 && (
+                      {detail.value != null && toShards(detail.value) > 0n && (
                         <DetailRow label="Value">
                           <AmountDisplay amount={detail.value} size="sm" />
                         </DetailRow>

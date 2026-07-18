@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import { Switch } from "@/components/ui/switch";
-import { cn, shardsToXtal, formatDuration, formatNumber } from "@/lib/utils";
+import { cn, shardsToXtal, formatDuration, formatNumber, type ShardAmount } from "@/lib/utils";
 import { FRUIT_COLORS } from "@/lib/fruitColors";
 import { difficultyDelta } from "@/lib/difficulty";
 import { tauriCommand } from "@/hooks";
@@ -52,10 +52,10 @@ function fetchDifficultyHistory(fruitType: string) {
 interface FruitCardProps {
   fruitType: string;
   emoji: string;
-  minStake: number;
+  minStake: ShardAmount;
   isEligible: boolean;
   isActive: boolean;
-  shortfall: number;
+  shortfall: ShardAmount;
   fruitsProduced: number;
   onToggle: (active: boolean) => void;
   isLoading?: boolean;

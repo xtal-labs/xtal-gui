@@ -51,7 +51,7 @@ export interface IncomingTransactionEvent
     "IncomingTransaction",
     {
       txid: string;
-      amount: number;
+      amount: string;
       timestamp: number;
     }
   > {}
@@ -62,7 +62,7 @@ export interface OutgoingTransactionEvent
     "OutgoingTransaction",
     {
       txid: string;
-      amount: number;
+      amount: string;
       timestamp: number;
     }
   > {}

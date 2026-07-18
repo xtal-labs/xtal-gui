@@ -29,7 +29,7 @@ import {
   CollapsibleSection,
   IORow,
 } from "@/components/common/TransactionDetailPrimitives";
-import { cn, formatTimeAgo, formatBytes, formatGas } from "@/lib/utils";
+import { cn, formatTimeAgo, formatBytes, formatGas, toShards, absShards, type ShardAmount } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import { getMaturityDisplay } from "@/lib/maturity";
 import type { TransactionDetail, UTXODetail, VMDetail } from "@/types";
@@ -43,7 +43,7 @@ interface TransactionDetailPanelProps {
 
 function getTransactionStyle(
   txType: string,
-  netAmount: number,
+  netAmount: ShardAmount,
   preferredFruitType?: string,
 ) {
   switch (txType) {
@@ -134,7 +134,7 @@ function getTransactionStyle(
         gradient: "from-emerald-400/10 via-transparent to-transparent",
       };
     default:
-      if (netAmount > 0) {
+      if (toShards(netAmount) > 0n) {
         return {
           icon: Download,
           color: "text-success",
@@ -216,9 +216,9 @@ function getAmountPresentation(detail: TransactionDetail) {
 
     return {
       label: "Net Amount",
-      amount: Math.abs(payload.netAmount),
-      positive: payload.netAmount > 0,
-      negative: payload.netAmount < 0,
+      amount: absShards(payload.netAmount),
+      positive: toShards(payload.netAmount) > 0n,
+      negative: toShards(payload.netAmount) < 0n,
     };
   }
 
@@ -247,7 +247,7 @@ function getAmountPresentation(detail: TransactionDetail) {
         negative: false,
       };
     case "contract_call":
-      if ((payload.value ?? 0) > 0) {
+      if (toShards(payload.value ?? 0) > 0n) {
         return {
           label: "Call Value",
           amount: payload.value ?? 0,
@@ -433,7 +433,7 @@ function UtxoDetailBody({
             <span className="text-foreground-muted font-heading">Total Output</span>
             <AmountDisplay amount={utxoDetail.totalOutput} size="sm" />
           </div>
-          {detail.fee !== undefined && detail.fee > 0 && (
+          {detail.fee !== undefined && toShards(detail.fee) > 0n && (
             <>
               <div className="h-px bg-border/50" />
               <div className="flex justify-between text-sm">
@@ -559,7 +559,7 @@ function VmDetailBody({
             </DetailRow>
           )}
 
-          {vmDetail.transferAmount != null && vmDetail.transferAmount > 0 && (
+          {vmDetail.transferAmount != null && toShards(vmDetail.transferAmount) > 0n && (
             <DetailRow label="Amount">
               <AmountDisplay amount={vmDetail.transferAmount} size="sm" />
             </DetailRow>
@@ -627,7 +627,7 @@ function VmDetailBody({
                 Max Fee
               </p>
               <span className="text-sm font-mono font-semibold tabular-nums">
-                {(detail.fee ?? 0) > 0 ? formatGas(detail.fee ?? 0) : "0"}
+                {toShards(detail.fee ?? 0) > 0n ? formatGas(detail.fee ?? 0) : "0"}
               </span>
             </CardContent>
           </Card>
@@ -651,7 +651,7 @@ function VmDetailBody({
             </DetailRow>
           )}
 
-          {vmDetail.value != null && vmDetail.value > 0 && (
+          {vmDetail.value != null && toShards(vmDetail.value) > 0n && (
             <DetailRow label="Value">
               <AmountDisplay amount={vmDetail.value} size="sm" />
             </DetailRow>

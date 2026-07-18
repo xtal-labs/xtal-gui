@@ -4,7 +4,7 @@ import { Layers, Database, Activity, Cpu, ArrowUpDown, Copy, Check } from "lucid
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn, SHARDS_PER_XTAL } from "@/lib/utils";
+import { cn, SHARDS_PER_XTAL, toShards, compareShards, type ShardAmount } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import { MempoolTransactionDetailPanel } from "./MempoolTransactionDetailPanel";
 
@@ -48,9 +48,10 @@ const formatAge = (secs: number): string => {
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 };
 
-const formatFee = (fee: number): string => {
-  const xtal = fee / SHARDS_PER_XTAL;
-  if (xtal < 0.0001) return `${fee.toLocaleString()} shards`;
+const formatFee = (fee: ShardAmount): string => {
+  const shards = toShards(fee);
+  const xtal = Number(shards) / SHARDS_PER_XTAL;
+  if (xtal < 0.0001) return `${shards.toLocaleString()} shards`;
   return `${xtal.toFixed(6)} XTAL`;
 };
 
@@ -343,7 +344,7 @@ export const Mempool = () => {
           cmp = a.age_secs - b.age_secs;
           break;
         case "fee":
-          cmp = a.fee - b.fee;
+          cmp = compareShards(a.fee, b.fee);
           break;
         case "size":
           cmp = a.size_bytes - b.size_bytes;

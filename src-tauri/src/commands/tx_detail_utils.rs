@@ -1,5 +1,7 @@
 //! Shared transaction detail helpers for wallet + explorer commands.
 
+use xtal::shards::Shards;
+
 use xtal::address_format::{format_script_address, format_utxo_address};
 use xtal::crypto::hash_public_key;
 use xtal::interfaces::ChainDataProvider;
@@ -79,7 +81,7 @@ pub fn extract_transaction_details(
                             txid: d.txid,
                             output_index: d.index,
                             address: d.address,
-                            amount: Some(d.amount),
+                            amount: Some(d.amount.into()),
                             is_mine: false,
                             // Redeem details aren't persisted; decode them from the
                             // live unlocking script so the P2SH badge survives the
@@ -99,8 +101,12 @@ pub fn extract_transaction_details(
         Transaction::Standard(std_tx) => {
             let inputs = get_inputs(&std_tx.inputs)?;
             let outputs = extract_outputs(&std_tx.outputs, "p2pkh");
-            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            let total_input: u64 = inputs
+                .iter()
+                .filter_map(|i| i.amount)
+                .map(Shards::get)
+                .sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
             let fee = if is_pending {
                 Some(pending_fee)
             } else if total_input > 0 {
@@ -122,7 +128,7 @@ pub fn extract_transaction_details(
             let inputs = vec![];
             let mut outputs = vec![TransactionOutput {
                 index: 0,
-                amount: cb_tx.output().amount,
+                amount: cb_tx.output().amount.into(),
                 currency: "XTAL".to_string(),
                 address: extract_address_from_txout(&cb_tx.output()),
                 script_type: "coinbase".to_string(),
@@ -132,7 +138,7 @@ pub fn extract_transaction_details(
             for (idx, out) in cb_tx.stem_outputs().iter().enumerate() {
                 outputs.push(TransactionOutput {
                     index: (idx + 1) as u16,
-                    amount: out.amount,
+                    amount: out.amount.into(),
                     currency: "XTAL".to_string(),
                     address: extract_address_from_txout(out),
                     script_type: "coinbase".to_string(),
@@ -144,14 +150,14 @@ pub fn extract_transaction_details(
             for (idx, out) in cb_tx.fruit_outputs().iter().enumerate() {
                 outputs.push(TransactionOutput {
                     index: (fruit_start + idx) as u16,
-                    amount: out.amount,
+                    amount: out.amount.into(),
                     currency: "XTAL".to_string(),
                     address: extract_address_from_txout(out),
                     script_type: "stake".to_string(),
                     is_mine: false,
                 });
             }
-            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
             Ok((
                 "coinbase".to_string(),
                 inputs,
@@ -164,8 +170,12 @@ pub fn extract_transaction_details(
         Transaction::Stake(stake_tx) => {
             let inputs = get_inputs(&stake_tx.inputs)?;
             let outputs = extract_outputs(&stake_tx.outputs, "stake");
-            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            let total_input: u64 = inputs
+                .iter()
+                .filter_map(|i| i.amount)
+                .map(Shards::get)
+                .sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
             let fee = if total_input > 0 {
                 Some(total_input.saturating_sub(total_output))
             } else {
@@ -183,8 +193,12 @@ pub fn extract_transaction_details(
         Transaction::Unstake(unstake_tx) => {
             let inputs = get_inputs(&unstake_tx.inputs)?;
             let outputs = extract_outputs(&unstake_tx.outputs, "unstake");
-            let total_input: u64 = inputs.iter().filter_map(|i| i.amount).sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount).sum();
+            let total_input: u64 = inputs
+                .iter()
+                .filter_map(|i| i.amount)
+                .map(Shards::get)
+                .sum();
+            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
             let fee = if total_input > 0 {
                 Some(total_input.saturating_sub(total_output))
             } else {
@@ -229,7 +243,7 @@ pub fn extract_transaction_details(
                         txid: hex::encode(consumed_txid),
                         output_index: consumed_vout,
                         address,
-                        amount,
+                        amount: amount.map(Shards::from),
                         is_mine: false,
                         redeem_script_type: None,
                     }];
@@ -262,7 +276,7 @@ pub fn extract_transaction_details(
             let inputs = vec![];
             let outputs = vec![TransactionOutput {
                 index: 0,
-                amount: at_tx.amount,
+                amount: at_tx.amount.into(),
                 currency: "XTAL".to_string(),
                 address: Some(format!("0x{}", hex::encode(at_tx.recipient.as_bytes()))),
                 script_type: "account".to_string(),
@@ -282,7 +296,7 @@ pub fn extract_transaction_details(
             let inputs = vec![];
             let outputs = vec![TransactionOutput {
                 index: 0,
-                amount: vw_tx.output.amount,
+                amount: vw_tx.output.amount.into(),
                 currency: "XTAL".to_string(),
                 address: extract_address_from_txout(&vw_tx.output),
                 script_type: "vm_withdrawal".to_string(),
@@ -355,7 +369,7 @@ pub fn extract_inputs(
             txid: hex::encode(inp.tx_id),
             output_index: inp.output_index,
             address,
-            amount,
+            amount: amount.map(Shards::from),
             is_mine: false,
             redeem_script_type: p2sh.map(|(_, label)| label),
         });
@@ -379,7 +393,7 @@ fn vm_deposit_input_from_receipt(receipt: &TransactionReceipt) -> Option<(Transa
         txid: hex::encode(consumed.position.tx_id),
         output_index: consumed.position.output_index,
         address: Some(format_utxo_address(&consumed.owner)),
-        amount: Some(consumed.amount),
+        amount: Some(consumed.amount.into()),
         is_mine: false,
         redeem_script_type: None,
     };
@@ -436,7 +450,7 @@ pub fn extract_outputs(tx_outputs: &[TxOut], script_type: &str) -> Vec<Transacti
             };
             TransactionOutput {
                 index: idx as u16,
-                amount: out.amount,
+                amount: out.amount.into(),
                 currency: format!("{:?}", out.currency),
                 address: extract_address_from_txout(out),
                 script_type: resolved_type.to_string(),

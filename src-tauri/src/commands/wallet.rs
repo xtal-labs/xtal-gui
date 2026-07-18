@@ -7,6 +7,8 @@
 //! so it knows its own wallet directory. This eliminates the need
 //! to rebuild directory configuration on every command.
 
+use xtal::shards::{Shards, SignedShards};
+
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -58,13 +60,13 @@ use crate::state::AppState;
 #[derive(Debug, Clone, Serialize)]
 pub struct WalletBalance {
     /// Spendable balance (excludes immature and mempool-consumed UTXOs)
-    pub confirmed: u64,
+    pub confirmed: Shards,
     /// Wallet-owned XTAL outputs created by live mempool transactions
-    pub pending: u64,
+    pub pending: Shards,
     /// Immature coinbase/withdrawal rewards (not yet spendable)
-    pub immature: u64,
+    pub immature: Shards,
     /// Projected wallet-owned UTXO total after live mempool transactions settle
-    pub total: u64,
+    pub total: Shards,
     pub currency: String,
 }
 
@@ -72,7 +74,7 @@ pub struct WalletBalance {
 #[derive(Debug, Clone, Serialize)]
 pub struct VmAccountBalance {
     /// Total VM account balance in shards
-    pub balance: u64,
+    pub balance: Shards,
     /// Highest observed nonce across wallet-owned account-state entries
     pub nonce: u64,
     pub currency: String,
@@ -89,7 +91,7 @@ pub struct VmAccountEntry {
     /// Account address ("0x" + 40 hex chars)
     pub address: String,
     /// Account balance in shards
-    pub balance: u64,
+    pub balance: Shards,
     /// Account nonce
     pub nonce: u64,
 }
@@ -168,7 +170,7 @@ pub struct VmAddressInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FeeEstimate {
-    pub fee: u64,
+    pub fee: Shards,
     pub tx_size: usize,
     pub input_count: usize,
     pub output_count: usize,
@@ -184,7 +186,7 @@ pub struct SendFeeEstimate {
     pub estimate: FeeEstimate,
     /// Max amount sendable at this fee rate after spending every spendable UTXO
     /// (total spendable minus the full-drain fee). Amount-independent.
-    pub max_sendable: u64,
+    pub max_sendable: Shards,
 }
 
 /// Maturity status for coinbase/withdrawal transactions
@@ -206,8 +208,8 @@ pub struct MaturityStatus {
 #[derive(Debug, Clone, Serialize)]
 pub struct TransactionSummary {
     pub txid: String,
-    pub amount: i64,
-    pub fee: u64,
+    pub amount: SignedShards,
+    pub fee: Shards,
     pub confirmations: u32,
     pub timestamp: u64,
     pub tx_type: String,
@@ -226,8 +228,10 @@ fn transaction_matches_history_filter(
 ) -> Result<bool, String> {
     match filter {
         "all" => Ok(true),
-        "sent" => Ok(tx.tx_type == "send" || (tx.tx_type == "standard" && tx.amount < 0)),
-        "received" => Ok(tx.tx_type == "receive" || (tx.tx_type == "standard" && tx.amount > 0)),
+        "sent" => Ok(tx.tx_type == "send" || (tx.tx_type == "standard" && tx.amount.get() < 0)),
+        "received" => {
+            Ok(tx.tx_type == "receive" || (tx.tx_type == "standard" && tx.amount.get() > 0))
+        }
         "mining_rewards" => Ok(tx.tx_type == "coinbase"),
         "staking" => Ok(tx.tx_type == "stake"),
         "unstaking" => Ok(tx.tx_type == "unstake"),
@@ -413,7 +417,7 @@ pub struct TransactionInput {
     /// Decoded address (if extractable from script)
     pub address: Option<String>,
     /// Amount from the previous output (if known)
-    pub amount: Option<u64>,
+    pub amount: Option<Shards>,
     /// Whether this input belongs to the loaded wallet
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_mine: bool,
@@ -428,7 +432,7 @@ pub struct TransactionOutput {
     /// Index in this transaction's outputs
     pub index: u16,
     /// Amount in shards
-    pub amount: u64,
+    pub amount: Shards,
     /// Currency type (e.g., "XTAL")
     pub currency: String,
     /// Decoded address from script_pubkey
@@ -448,7 +452,7 @@ pub struct TransactionReceiptDetail {
     pub transaction_index: u32,
     pub gas_used: u64,
     pub gas_price: u64,
-    pub fee_paid: u64,
+    pub fee_paid: Shards,
     pub contract_address: Option<String>,
     pub events: Vec<ContractEventDetail>,
     pub return_data: String,
@@ -1106,7 +1110,7 @@ impl From<xtal::transaction::receipt::TransactionReceipt> for TransactionReceipt
             transaction_index: receipt.tx_index,
             gas_used: receipt.gas_used,
             gas_price: receipt.gas_price,
-            fee_paid: receipt.fee_paid,
+            fee_paid: receipt.fee_paid.into(),
             contract_address: receipt
                 .contract_address
                 .map(|address| format!("0x{}", hex::encode(address))),
@@ -1130,7 +1134,7 @@ impl From<StoredReceipt> for TransactionReceiptDetail {
             transaction_index: stored.tx_index,
             gas_used: receipt.gas_used,
             gas_price: receipt.gas_price,
-            fee_paid: receipt.fee_paid,
+            fee_paid: receipt.fee_paid.into(),
             contract_address: receipt
                 .contract_address
                 .map(|address| format!("0x{}", hex::encode(address))),
@@ -1154,7 +1158,7 @@ pub struct TransactionDetail {
     /// Domain-specific detail payload
     pub detail: TransactionDetailPayload,
     /// Transaction fee (if applicable)
-    pub fee: Option<u64>,
+    pub fee: Option<Shards>,
     /// Number of confirmations (0 for pending)
     pub confirmations: u32,
     /// Block timestamp or submission time for pending
@@ -1182,9 +1186,9 @@ pub enum TransactionDetailPayload {
 pub struct UTXODetail {
     pub inputs: Vec<TransactionInput>,
     pub outputs: Vec<TransactionOutput>,
-    pub total_input: u64,
-    pub total_output: u64,
-    pub net_amount: i64,
+    pub total_input: Shards,
+    pub total_output: Shards,
+    pub net_amount: SignedShards,
     pub maturity_status: Option<MaturityStatus>,
     pub bridge: Option<UTXOBridgeDetail>,
 }
@@ -1206,11 +1210,11 @@ pub struct VMDetail {
     pub gas_limit: Option<u64>,
     pub gas_price: Option<u64>,
     pub nonce: Option<u64>,
-    pub value: Option<u64>,
+    pub value: Option<Shards>,
     pub data_size: Option<usize>,
     pub preferred_fruit_type: Option<String>,
     pub recipient: Option<String>,
-    pub transfer_amount: Option<u64>,
+    pub transfer_amount: Option<Shards>,
     pub currency: Option<String>,
     pub bridge: Option<VMBridgeDetail>,
 }
@@ -1219,12 +1223,12 @@ pub struct VMDetail {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VMBridgeDetail {
     VmDeposit {
-        deposited_amount: u64,
+        deposited_amount: Shards,
         source_input: Option<TransactionInput>,
     },
     CageWithdrawal {
-        requested_amount: u64,
-        net_withdrawal_amount: Option<u64>,
+        requested_amount: Shards,
+        net_withdrawal_amount: Option<Shards>,
         requested_recipient: String,
         produced_output_recipient: Option<String>,
     },
@@ -1287,7 +1291,7 @@ struct ProducedWithdrawalView {
 #[derive(Debug, Clone, Serialize)]
 pub struct SendResult {
     pub txid: String,
-    pub fee: u64,
+    pub fee: Shards,
 }
 
 /// Gas configuration constants from the blockchain layer
@@ -1796,10 +1800,10 @@ pub async fn get_wallet_balance(state: State<'_, AppState>) -> Result<WalletBala
         .saturating_add(pending);
 
     Ok(WalletBalance {
-        confirmed: totals.confirmed,
-        pending,
-        immature: totals.immature,
-        total: projected_total,
+        confirmed: totals.confirmed.into(),
+        pending: pending.into(),
+        immature: totals.immature.into(),
+        total: projected_total.into(),
         currency: "XTAL".to_string(),
     })
 }
@@ -1912,7 +1916,7 @@ pub struct WalletUtxo {
     /// Output index within the transaction
     pub vout: u16,
     /// Amount in shards
-    pub amount: u64,
+    pub amount: Shards,
     /// Base58Check formatted owner address
     pub address: String,
     /// Number of leaf confirmations
@@ -2000,7 +2004,7 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
             utxos.push(WalletUtxo {
                 txid: hex::encode(utxo.outpoint.0),
                 vout: utxo.outpoint.1,
-                amount: utxo.output.amount,
+                amount: utxo.output.amount.into(),
                 address: address.clone(),
                 confirmations,
                 is_eligible,
@@ -2430,13 +2434,13 @@ pub async fn estimate_send_transaction_fee(
 
     Ok(SendFeeEstimate {
         estimate: FeeEstimate {
-            fee: estimate.fee,
+            fee: estimate.fee.into(),
             tx_size: estimate.tx_size,
             input_count: estimate.input_count,
             output_count: estimate.output_count,
             fee_rate,
         },
-        max_sendable: estimate.max_sendable,
+        max_sendable: estimate.max_sendable.into(),
     })
 }
 
@@ -2445,7 +2449,7 @@ pub async fn estimate_send_transaction_fee(
 pub async fn send_transaction(
     state: State<'_, AppState>,
     to_address: String,
-    amount: u64,
+    amount: Shards,
     fee: Option<u64>,
     fee_rate: Option<u64>,
     password: String,
@@ -2467,7 +2471,7 @@ pub async fn send_transaction(
     // now sends a per-byte rate so the builder can price by selected UTXO size.
     let fee_strategy = fee_strategy_from_request(fee, fee_rate)?;
 
-    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount)])
+    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount.get())])
         .with_fee(fee_strategy);
     let blockchain = state.services.blockchain();
     let outcome = wallet
@@ -2505,7 +2509,7 @@ pub async fn send_transaction(
             txid,
             raw_tx: outcome.transaction.encode(),
             tx_type: TransactionType::Send,
-            amount,
+            amount: amount.get(),
             fee: Some(actual_fee),
             to_address: Some(to_address.clone()),
             memo: None,
@@ -2527,7 +2531,7 @@ pub async fn send_transaction(
 
     Ok(SendResult {
         txid: hex::encode(txid),
-        fee: actual_fee,
+        fee: actual_fee.into(),
     })
 }
 
@@ -2683,8 +2687,8 @@ pub async fn get_transaction_history(
                         seen_txids.insert(ptx.txid);
                         transactions.push(TransactionSummary {
                             txid: hex::encode(ptx.txid),
-                            amount: -(ptx.amount as i64),
-                            fee: ptx.fee.unwrap_or(0),
+                            amount: (-(ptx.amount as i64)).into(),
+                            fee: ptx.fee.unwrap_or(0).into(),
                             confirmations: 0,
                             timestamp: ptx.created_at as u64,
                             tx_type: ptx.tx_type.as_str().to_string(),
@@ -2744,8 +2748,8 @@ pub async fn get_transaction_history(
                             seen_txids.insert(ptx.txid);
                             transactions.push(TransactionSummary {
                                 txid: hex::encode(ptx.txid),
-                                amount: -(ptx.amount as i64),
-                                fee: ptx.fee.unwrap_or(0),
+                                amount: (-(ptx.amount as i64)).into(),
+                                fee: ptx.fee.unwrap_or(0).into(),
                                 confirmations,
                                 timestamp: block_ts,
                                 tx_type: ptx.tx_type.as_str().to_string(),
@@ -2793,8 +2797,8 @@ pub async fn get_transaction_history(
 
                     transactions.push(TransactionSummary {
                         txid: hex::encode(ctx.txid),
-                        amount: -(ctx.amount as i64), // Negative for outgoing
-                        fee: ctx.fee.unwrap_or(0),
+                        amount: (-(ctx.amount as i64)).into(), // Negative for outgoing
+                        fee: ctx.fee.unwrap_or(0).into(),
                         confirmations,
                         timestamp,
                         tx_type: ctx.tx_type.as_str().to_string(),
@@ -2949,8 +2953,8 @@ pub async fn get_transaction_history(
 
                     transactions.push(TransactionSummary {
                         txid: hex::encode(ctx.txid),
-                        amount,
-                        fee: ctx.fee.unwrap_or(0),
+                        amount: amount.into(),
+                        fee: ctx.fee.unwrap_or(0).into(),
                         confirmations,
                         timestamp,
                         tx_type: ctx.tx_type.as_str().to_string(),
@@ -3052,7 +3056,11 @@ pub async fn get_transaction_history(
                 .utxo_inputs()
                 .and_then(|inputs| extract_inputs(inputs, &blockchain).ok())
                 .map(|parsed| {
-                    let total_in: u64 = parsed.iter().filter_map(|i| i.amount).sum();
+                    let total_in: u64 = parsed
+                        .iter()
+                        .filter_map(|i| i.amount)
+                        .map(Shards::get)
+                        .sum();
                     let total_out: u64 = tx.utxo_outputs().iter().map(|o| o.amount).sum();
                     if total_in > 0 && parsed.iter().all(|i| i.amount.is_some()) {
                         total_in.saturating_sub(total_out)
@@ -3065,8 +3073,8 @@ pub async fn get_transaction_history(
             seen_txids.insert(tx_hash);
             transactions.push(TransactionSummary {
                 txid: hex::encode(tx_hash),
-                amount: incoming_amount as i64, // Positive for incoming
-                fee,
+                amount: (incoming_amount as i64).into(), // Positive for incoming
+                fee: fee.into(),
                 confirmations: 0,
                 timestamp: now,
                 tx_type: "receive".to_string(),
@@ -3238,7 +3246,7 @@ pub async fn get_transaction_history(
                                     .map(|i| InputDetail {
                                         txid: i.txid.clone(),
                                         index: i.output_index,
-                                        amount: i.amount.unwrap_or(0),
+                                        amount: i.amount.map(Shards::get).unwrap_or(0),
                                         address: i.address.clone(),
                                     })
                                     .collect();
@@ -3249,7 +3257,11 @@ pub async fn get_transaction_history(
                         let fee = parsed_inputs
                             .as_ref()
                             .map(|parsed| {
-                                let total_in: u64 = parsed.iter().filter_map(|i| i.amount).sum();
+                                let total_in: u64 = parsed
+                                    .iter()
+                                    .filter_map(|i| i.amount)
+                                    .map(Shards::get)
+                                    .sum();
                                 let total_out: u64 =
                                     found_tx.utxo_outputs().iter().map(|o| o.amount).sum();
                                 if total_in > 0 && parsed.iter().all(|i| i.amount.is_some()) {
@@ -3326,8 +3338,8 @@ pub async fn get_transaction_history(
 
         transactions.push(TransactionSummary {
             txid: hex::encode(tx_id),
-            amount: info.total_amount as i64,
-            fee: tx_fee,
+            amount: (info.total_amount as i64).into(),
+            fee: tx_fee.into(),
             confirmations,
             timestamp,
             tx_type,
@@ -3626,9 +3638,9 @@ fn build_utxo_detail(
     UTXODetail {
         inputs,
         outputs,
-        total_input,
-        total_output,
-        net_amount,
+        total_input: total_input.into(),
+        total_output: total_output.into(),
+        net_amount: net_amount.into(),
         maturity_status,
         bridge,
     }
@@ -3645,7 +3657,7 @@ fn build_vm_detail(
         Transaction::ContractCall(call_tx) => {
             let bridge = if tx_type == "vm_deposit" {
                 Some(VMBridgeDetail::VmDeposit {
-                    deposited_amount: total_input,
+                    deposited_amount: total_input.into(),
                     source_input: inputs.first().cloned(),
                 })
             } else {
@@ -3662,7 +3674,7 @@ fn build_vm_detail(
                 gas_limit: Some(call_tx.gas_limit),
                 gas_price: call_tx.gas_price,
                 nonce: Some(call_tx.nonce),
-                value: Some(call_tx.value),
+                value: Some(call_tx.value.into()),
                 data_size: Some(call_tx.data.len()),
                 preferred_fruit_type: None,
                 recipient: None,
@@ -3708,7 +3720,7 @@ fn build_vm_detail(
                 "0x{}",
                 hex::encode(transfer_tx.recipient.as_bytes())
             )),
-            transfer_amount: Some(transfer_tx.amount),
+            transfer_amount: Some(transfer_tx.amount.into()),
             currency: Some(format!("{:?}", transfer_tx.currency)),
             bridge: None,
         },
@@ -3738,8 +3750,10 @@ fn build_cage_withdrawal_bridge(
     let produced = extract_produced_withdrawal(raw_receipt);
 
     Some(VMBridgeDetail::CageWithdrawal {
-        requested_amount: decoded.requested_amount,
-        net_withdrawal_amount: produced.as_ref().map(|view| view.net_withdrawal_amount),
+        requested_amount: decoded.requested_amount.into(),
+        net_withdrawal_amount: produced
+            .as_ref()
+            .map(|view| view.net_withdrawal_amount.into()),
         requested_recipient: decoded.requested_recipient,
         produced_output_recipient: produced.and_then(|view| view.produced_output_recipient),
     })
@@ -3894,7 +3908,7 @@ pub(crate) fn build_transaction_detail_response(
         txid,
         tx_type,
         detail,
-        fee,
+        fee: fee.map(Shards::from),
         confirmations,
         timestamp,
         block_hash,
@@ -4212,8 +4226,8 @@ fn vm_summary_from_record(
 
     Some(TransactionSummary {
         txid: hex::encode(record.txid),
-        amount: view.summary_amount,
-        fee: view.fee,
+        amount: view.summary_amount.into(),
+        fee: view.fee.into(),
         confirmations,
         timestamp,
         tx_type: view.tx_type.as_str().to_string(),
@@ -4715,8 +4729,8 @@ fn collect_pending_vm_mempool_transactions(
         seen_txids.insert(tx_hash);
         summaries.push(TransactionSummary {
             txid: hex::encode(tx_hash),
-            amount: view.summary_amount,
-            fee: view.fee,
+            amount: view.summary_amount.into(),
+            fee: view.fee.into(),
             confirmations: 0,
             timestamp,
             tx_type: view.tx_type.as_str().to_string(),
@@ -4786,8 +4800,8 @@ fn collect_active_stem_vm_transactions(
                 seen_txids.insert(tx_hash);
                 summaries.push(TransactionSummary {
                     txid: hex::encode(tx_hash),
-                    amount: view.summary_amount,
-                    fee: view.fee,
+                    amount: view.summary_amount.into(),
+                    fee: view.fee.into(),
                     confirmations: 0,
                     timestamp: stem_block.header.timestamp.max(stem_timestamp),
                     tx_type: view.tx_type.as_str().to_string(),
@@ -4892,7 +4906,7 @@ fn calculate_net_amount(
     for out in outputs {
         if let Some(ref addr) = out.address {
             if wallet_addresses.contains(addr) {
-                received = received.saturating_add(out.amount);
+                received = received.saturating_add(out.amount.get());
             }
         }
     }
@@ -4903,7 +4917,7 @@ fn calculate_net_amount(
         if let Some(ref addr) = inp.address {
             if wallet_addresses.contains(addr) {
                 if let Some(amount) = inp.amount {
-                    spent = spent.saturating_add(amount);
+                    spent = spent.saturating_add(amount.get());
                 }
             }
         }
@@ -5041,13 +5055,13 @@ pub async fn get_vm_account_balance(
         .iter()
         .map(|entry| VmAccountEntry {
             address: entry.hex_address.clone(),
-            balance: entry.balance,
+            balance: entry.balance.into(),
             nonce: entry.nonce,
         })
         .collect();
 
     Ok(VmAccountBalance {
-        balance: total_vm_balance,
+        balance: total_vm_balance.into(),
         nonce: primary_nonce,
         currency: "XTAL".to_string(),
         accounts,

@@ -1,12 +1,12 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Clock, Coins, Users, TrendingUp } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatXtal } from "@/lib/utils";
+import { formatXtal, type ShardAmount } from "@/lib/utils";
 import type { NetworkValidatorStats } from "@/types";
 
 interface DashboardStatsProps {
   networkStats: NetworkValidatorStats | null;
-  validatorEarnings: number | null;
+  validatorEarnings: ShardAmount | null;
   isValidatorLoaded: boolean;
   hideBalances: boolean;
 }

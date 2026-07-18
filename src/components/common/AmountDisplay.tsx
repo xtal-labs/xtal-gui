@@ -1,7 +1,7 @@
-import { formatXtalFull, cn } from "@/lib/utils";
+import { formatXtalFull, cn, type ShardAmount } from "@/lib/utils";
 
 interface AmountDisplayProps {
-  amount: number; // in shards
+  amount: ShardAmount; // in shards
   className?: string;
   showSymbol?: boolean;
   showFull?: boolean;

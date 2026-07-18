@@ -27,6 +27,9 @@ import {
   getXtalInputError,
   isValidXtalInput,
   parseXtalToShards,
+  toShards,
+  addShards,
+  type ShardAmount,
 } from "@/lib/utils";
 import { parseAddressInput, hexToBase58Address } from "@/lib/address";
 import { tauriCommand } from "@/hooks";
@@ -35,7 +38,7 @@ import { useUiStore, useWalletStore } from "@/stores";
 interface SendModalProps {
   isOpen: boolean;
   onClose: () => void;
-  maxBalance: number;
+  maxBalance: ShardAmount;
 }
 
 type SendStep = "form" | "confirm" | "sending" | "success" | "error";
@@ -91,7 +94,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
 
   // Derived values
   const parsedAmountShards = parseXtalToShards(amount);
-  const amountShards = parsedAmountShards ?? 0;
+  const amountShards = toShards(parsedAmountShards ?? "0");
   const amountError = getXtalInputError(amount);
   const feeOption = FEE_OPTIONS.find((f) => f.id === selectedFee) || FEE_OPTIONS[1];
   const customFeeRateKbNum = Number(customFeeRateKb);
@@ -103,9 +106,9 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
     selectedFee === "custom" && !customFeeRateError
       ? Math.max(1, Math.ceil(customFeeRateKbNum / 1000))
       : feeOption.rate;
-  const estimatedFee = feeEstimate?.fee ?? 0;
-  const totalAmount = amountShards + estimatedFee;
-  const hasInsufficientFunds = feeEstimate !== null && totalAmount > maxBalance;
+  const estimatedFee = toShards(feeEstimate?.fee ?? "0");
+  const totalAmount = addShards(amountShards, estimatedFee);
+  const hasInsufficientFunds = feeEstimate !== null && totalAmount > toShards(maxBalance);
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -138,7 +141,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
   useEffect(() => {
     if (
       !isOpen ||
-      amountShards <= 0 ||
+      amountShards <= 0n ||
       amountError ||
       customFeeRateError ||
       feeRate <= 0
@@ -159,7 +162,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
       try {
         const result = await tauriCommand<SendFeeEstimate>("estimate_send_transaction_fee", {
           toAddress: estimateRecipient,
-          amount: amountShards,
+          amount: amountShards.toString(),
           feeRate,
         });
         if (isCurrent) {
@@ -189,14 +192,15 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
   // maxSendable is amount-independent, so this settles after one no-op sync.
   useEffect(() => {
     if (!isMaxSend || !feeEstimate) return;
-    const formatted = formatDecimalInput(Math.max(0, feeEstimate.maxSendable) / SHARDS_PER_XTAL);
+    const maxShards = toShards(feeEstimate.maxSendable);
+    const formatted = formatDecimalInput(Number(maxShards > 0n ? maxShards : 0n) / SHARDS_PER_XTAL);
     setAmount((prev) => (prev === formatted ? prev : formatted));
   }, [isMaxSend, feeEstimate]);
 
   const canProceed =
     recipient.length > 0 &&
     parsedAddress !== null &&
-    amountShards > 0 &&
+    amountShards > 0n &&
     !amountError &&
     feeEstimate !== null &&
     !isFeeEstimating &&
@@ -209,7 +213,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
       setError("Please enter your password");
       return;
     }
-    if (parsedAmountShards === null || parsedAmountShards <= 0) {
+    if (parsedAmountShards === null || toShards(parsedAmountShards) <= 0n) {
       setError(amountError || "Please enter a valid amount");
       return;
     }
@@ -384,11 +388,12 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                           "estimate_send_transaction_fee",
                           {
                             toAddress: recipientPkh || ESTIMATE_RECIPIENT_HEX,
-                            amount: amountShards > 0 ? amountShards : 1,
+                            amount: (amountShards > 0n ? amountShards : 1n).toString(),
                             feeRate,
                           }
                         );
-                        const maxXtal = Math.max(0, est.maxSendable) / SHARDS_PER_XTAL;
+                        const estMax = toShards(est.maxSendable);
+                        const maxXtal = Number(estMax > 0n ? estMax : 0n) / SHARDS_PER_XTAL;
                         if (maxXtal <= 0) {
                           addToast({
                             type: "warning",
@@ -551,7 +556,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
               </div>
 
               {/* Insufficient funds warning */}
-              {hasInsufficientFunds && amountShards > 0 && (
+              {hasInsufficientFunds && amountShards > 0n && (
                 <div className="flex items-center gap-2 text-destructive text-sm p-3 chamfered-sm bg-destructive/10">
                   <AlertCircle className="h-4 w-4 flex-shrink-0" />
                   <span>Insufficient funds (including network fee)</span>

@@ -22,20 +22,20 @@ interface ValidatorState {
   isRunning: boolean;
   address: string | null;
   walletName: string | null;
-  withdrawableStake: number;
-  matureStake: number;
-  pendingStake: number;
-  effectiveStake: number;
-  availableBalance: number; // UTXO balance (unstaked)
-  pendingUnstake: number;   // Pending unstake (locked)
-  immatureBalance: number;  // Immature coinbase/withdrawal + unconfirmed incoming
+  withdrawableStake: string;
+  matureStake: string;
+  pendingStake: string;
+  effectiveStake: string;
+  availableBalance: string; // UTXO balance (unstaked)
+  pendingUnstake: string;   // Pending unstake (locked)
+  immatureBalance: string;  // Immature coinbase/withdrawal + unconfirmed incoming
   totalFruitsProduced: number;
 
   // Network-wide statistics (for dashboard)
   networkStats: NetworkValidatorStats | null;
 
   // Validator earnings (from coinbase rewards)
-  validatorEarnings: number | null; // In shards
+  validatorEarnings: string | null; // In shards
 
   // Fruit specifications (static, fetched once)
   fruitSpecs: FruitSpec[];
@@ -71,14 +71,14 @@ interface ValidatorState {
   setLoaded: (loaded: boolean, walletName: string | null, address: string | null) => void;
   setRunning: (running: boolean) => void;
   setBalanceInfo: (
-    available: number,
-    withdrawableStake: number,
-    pendingStake: number,
-    pendingUnstake: number,
-    immature: number,
+    available: string,
+    withdrawableStake: string,
+    pendingStake: string,
+    pendingUnstake: string,
+    immature: string,
   ) => void;
   setNetworkStats: (stats: NetworkValidatorStats | null) => void;
-  setValidatorEarnings: (earnings: number | null) => void;
+  setValidatorEarnings: (earnings: string | null) => void;
   setFruitSpecs: (specs: FruitSpec[]) => void;
   setProductions: (productions: FruitProduction[]) => void;
   setProductionActive: (fruitType: string, active: boolean) => void;
@@ -100,16 +100,16 @@ const initialState = {
   isRunning: false,
   address: null as string | null,
   walletName: null as string | null,
-  withdrawableStake: 0,
-  matureStake: 0,
-  pendingStake: 0,
-  effectiveStake: 0,
-  availableBalance: 0,
-  pendingUnstake: 0,
-  immatureBalance: 0,
+  withdrawableStake: "0",
+  matureStake: "0",
+  pendingStake: "0",
+  effectiveStake: "0",
+  availableBalance: "0",
+  pendingUnstake: "0",
+  immatureBalance: "0",
   totalFruitsProduced: 0,
   networkStats: null as NetworkValidatorStats | null,
-  validatorEarnings: null as number | null,
+  validatorEarnings: null as string | null,
   fruitSpecs: [] as FruitSpec[],
   productions: {} as Record<string, FruitProduction>,
   sessionStartTime: null as number | null,
@@ -142,13 +142,13 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
         ? {}
         : {
             isRunning: false,
-            withdrawableStake: 0,
-            matureStake: 0,
-            pendingStake: 0,
-            effectiveStake: 0,
-            availableBalance: 0,
-            pendingUnstake: 0,
-            immatureBalance: 0,
+            withdrawableStake: "0",
+            matureStake: "0",
+            pendingStake: "0",
+            effectiveStake: "0",
+            availableBalance: "0",
+            pendingUnstake: "0",
+            immatureBalance: "0",
             totalFruitsProduced: 0,
             validatorEarnings: null,
             productions: {},

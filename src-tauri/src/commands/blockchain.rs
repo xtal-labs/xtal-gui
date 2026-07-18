@@ -2,6 +2,8 @@
 //!
 //! Commands for querying blockchain state, blocks, and sync status.
 
+use xtal::shards::Shards;
+
 use std::collections::{HashMap, HashSet};
 
 use serde::Serialize;
@@ -73,7 +75,7 @@ pub struct BlockSummary {
 pub struct BlockTransactionSummary {
     pub txid: String,
     pub tx_type: String,
-    pub total_output: u64,
+    pub total_output: Shards,
 }
 
 /// Fruit summary for stem block detail view
@@ -93,9 +95,9 @@ pub struct FruitTransactionSummary {
     pub tx_type: String,
     pub vm_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub amount: Option<u64>,
+    pub amount: Option<Shards>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub fee: Option<u64>,
+    pub fee: Option<Shards>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -255,7 +257,7 @@ fn summarize_tx(tx: &Transaction) -> BlockTransactionSummary {
     BlockTransactionSummary {
         txid,
         tx_type: tx_type_label(tx).to_string(),
-        total_output: tx_total_output(tx),
+        total_output: tx_total_output(tx).into(),
     }
 }
 
@@ -686,8 +688,8 @@ fn summarize_fruit_transaction(tx: &FruitTx) -> FruitTransactionSummary {
             txid: hex::encode(tx.hash()),
             tx_type: "account_transfer".to_string(),
             vm_type: "Account Transfer".to_string(),
-            amount: Some(at_tx.amount),
-            fee: Some(tx.gas_limit().saturating_mul(tx.gas_price())),
+            amount: Some(at_tx.amount.into()),
+            fee: Some(tx.gas_limit().saturating_mul(tx.gas_price()).into()),
             from: Some(hex::encode(hash_public_key(&at_tx.sender))),
             to: Some(hex::encode(at_tx.recipient)),
             nonce: at_tx.nonce,
@@ -696,8 +698,8 @@ fn summarize_fruit_transaction(tx: &FruitTx) -> FruitTransactionSummary {
             txid: hex::encode(tx.hash()),
             tx_type: "contract_call".to_string(),
             vm_type: "Contract Call".to_string(),
-            amount: Some(cc_tx.value),
-            fee: Some(tx.gas_limit().saturating_mul(tx.gas_price())),
+            amount: Some(cc_tx.value.into()),
+            fee: Some(tx.gas_limit().saturating_mul(tx.gas_price()).into()),
             from: Some(hex::encode(hash_public_key(&cc_tx.caller))),
             to: Some(hex::encode(cc_tx.contract_address)),
             nonce: cc_tx.nonce,
@@ -707,7 +709,7 @@ fn summarize_fruit_transaction(tx: &FruitTx) -> FruitTransactionSummary {
             tx_type: "contract_deploy".to_string(),
             vm_type: "Contract Deploy".to_string(),
             amount: None,
-            fee: Some(tx.gas_limit().saturating_mul(tx.gas_price())),
+            fee: Some(tx.gas_limit().saturating_mul(tx.gas_price()).into()),
             from: Some(hex::encode(hash_public_key(&cd_tx.sender))),
             to: cd_tx
                 .calculate_contract_address()

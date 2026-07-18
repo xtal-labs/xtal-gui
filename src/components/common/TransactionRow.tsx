@@ -1,7 +1,7 @@
 import { Download, Send, Pickaxe, Lock, Unlock, FileCode, ArrowRightLeft, LogOut, Upload, Clock } from "lucide-react";
 import { AmountDisplay } from "./AmountDisplay";
 import { Badge } from "@/components/ui/badge";
-import { formatTimeAgo, cn } from "@/lib/utils";
+import { formatTimeAgo, cn, toShards, absShards, type ShardAmount } from "@/lib/utils";
 import { getMaturityDisplay } from "@/lib/maturity";
 import type { Transaction } from "@/types";
 
@@ -16,7 +16,7 @@ interface TransactionRowProps {
 /**
  * Get icon and color for transaction type
  */
-function getTransactionIcon(type: string, amount: number) {
+function getTransactionIcon(type: string, amount: ShardAmount) {
   switch (type) {
     case "coinbase":
       return { icon: Pickaxe, color: "text-warning", bg: "bg-warning/20" };
@@ -37,7 +37,7 @@ function getTransactionIcon(type: string, amount: number) {
       return { icon: Upload, color: "text-emerald-400", bg: "bg-emerald-400/20" };
     default:
       // Standard send/receive based on amount
-      if (amount > 0) {
+      if (toShards(amount) > 0n) {
         return { icon: Download, color: "text-success", bg: "bg-success/20" };
       }
       return { icon: Send, color: "text-primary", bg: "bg-primary/20" };
@@ -47,7 +47,7 @@ function getTransactionIcon(type: string, amount: number) {
 /**
  * Get display label for transaction type
  */
-function getTransactionLabel(type: string, amount: number, walletType?: "normal" | "validator"): string {
+function getTransactionLabel(type: string, amount: ShardAmount, walletType?: "normal" | "validator"): string {
   switch (type) {
     case "coinbase":
       // Use "Staking Rewards" for validator wallets, "Mining Reward" for normal wallets
@@ -69,9 +69,9 @@ function getTransactionLabel(type: string, amount: number, walletType?: "normal"
     case "vm_deposit":
       return "Deposit";
     case "standard":
-      return amount > 0 ? "Receive" : "Send";
+      return toShards(amount) > 0n ? "Receive" : "Send";
     default:
-      return amount > 0 ? "Receive" : "Send";
+      return toShards(amount) > 0n ? "Receive" : "Send";
   }
 }
 
@@ -137,10 +137,10 @@ export function TransactionRow({ transaction, onClick, isSelected, walletType, s
           </div>
         )}
         <AmountDisplay
-          amount={Math.abs(transaction.amount)}
+          amount={absShards(transaction.amount)}
           size="sm"
-          positive={transaction.amount > 0}
-          negative={transaction.amount < 0}
+          positive={toShards(transaction.amount) > 0n}
+          negative={toShards(transaction.amount) < 0n}
         />
         <p className="text-xs text-foreground-muted font-mono">
           {transaction.confirmations === 0 ? (

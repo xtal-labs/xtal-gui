@@ -3,6 +3,8 @@
 //! This module handles wallet-specific GUI events via Tauri.
 //! Node-level events (blocks, mining, sync, peers) are handled via WebSocket.
 
+use xtal::shards::Shards;
+
 #[cfg(debug_assertions)]
 use log::info;
 use log::{debug, error, warn};
@@ -90,14 +92,14 @@ pub enum GuiEvent {
     /// Incoming transaction detected in mempool
     IncomingTransaction {
         txid: String,
-        amount: u64,
+        amount: Shards,
         timestamp: u64,
     },
 
     /// Outgoing transaction submitted to mempool (triggers wallet refresh)
     OutgoingTransaction {
         txid: String,
-        amount: u64,
+        amount: Shards,
         timestamp: u64,
     },
 
@@ -320,7 +322,7 @@ fn handle_wallet_sync_event(app: &AppHandle, event: WalletSyncEvent) {
         (
             GuiEvent::OutgoingTransaction {
                 txid: hex::encode(txid),
-                amount,
+                amount: amount.into(),
                 timestamp,
             },
             "OutgoingTransaction",
@@ -329,7 +331,7 @@ fn handle_wallet_sync_event(app: &AppHandle, event: WalletSyncEvent) {
         (
             GuiEvent::IncomingTransaction {
                 txid: hex::encode(txid),
-                amount,
+                amount: amount.into(),
                 timestamp,
             },
             "IncomingTransaction",

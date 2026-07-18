@@ -798,7 +798,7 @@ function AppContent() {
       });
     } else if (event.type === "WalletUnloaded") {
       setWalletLoaded(false, null);
-      setWalletBalance({ total: 0, confirmed: 0, pending: 0, immature: 0 });
+      setWalletBalance({ total: "0", confirmed: "0", pending: "0", immature: "0" });
       setWalletAddresses([]);
       setWalletTransactionPage(1, [], 0);
       addToast({

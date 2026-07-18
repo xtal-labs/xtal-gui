@@ -3,6 +3,8 @@
 //! Provides Tauri commands for deploying, calling, querying, and managing
 //! smart contracts through the GUI.
 
+use xtal::shards::Shards;
+
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -128,7 +130,7 @@ pub struct ContractInfo {
     pub address: String,
     pub exists: bool,
     pub is_contract: bool,
-    pub balance: u64,
+    pub balance: Shards,
     pub code_hash: Option<String>,
     pub fruit_type: Option<String>,
 }
@@ -565,7 +567,7 @@ pub async fn call_contract(
 
     Ok(SendResult {
         txid: hex::encode(tx_hash),
-        fee: max_fee,
+        fee: max_fee.into(),
     })
 }
 
@@ -1182,7 +1184,7 @@ pub async fn get_contract_info(
                 address: format!("0x{}", hex::encode(addr)),
                 exists: true,
                 is_contract: acc.code_hash.is_some(),
-                balance,
+                balance: balance.into(),
                 code_hash: acc.code_hash.map(hex::encode),
                 fruit_type: acc.fruit_type.map(fruit_type_name).map(String::from),
             })
@@ -1191,7 +1193,7 @@ pub async fn get_contract_info(
             address: format!("0x{}", hex::encode(addr)),
             exists: false,
             is_contract: false,
-            balance: 0,
+            balance: Shards::ZERO,
             code_hash: None,
             fruit_type: None,
         }),

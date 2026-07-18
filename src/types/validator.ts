@@ -14,7 +14,7 @@ export interface FruitProductionCount {
 /** Validator information returned from list_validators */
 export interface ValidatorInfo {
   address: string;
-  effectiveStake: number; // In shards
+  effectiveStake: string; // In shards
   isActive: boolean;
   activeProductions: string[];
   totalFruitsProduced: number;
@@ -31,7 +31,7 @@ export interface ValidatorStartResult {
 /** Fruit specification for UI display */
 export interface FruitSpec {
   fruitType: string;
-  minStake: number; // In shards
+  minStake: string; // In shards
   targetIntervalSecs: number;
   maxSizeBytes: number;
   maxFuel: number;
@@ -42,8 +42,8 @@ export interface FruitSpec {
 export interface EligibleFruit {
   fruitType: string;
   isEligible: boolean;
-  minStake: number; // In shards
-  shortfall: number; // In shards
+  minStake: string; // In shards
+  shortfall: string; // In shards
   emoji: string;
 }
 
@@ -53,8 +53,8 @@ export interface FruitProduction {
   isActive: boolean;
   isEligible: boolean;
   fruitsProduced: number;
-  minStake: number; // In shards
-  shortfall: number; // In shards
+  minStake: string; // In shards
+  shortfall: string; // In shards
   emoji: string;
 }
 
@@ -64,8 +64,8 @@ export interface ValidatorStatus {
   isRunning: boolean;
   address: string | null;
   walletName: string | null;
-  totalStake: number; // In shards
-  effectiveStake: number; // In shards
+  totalStake: string; // In shards
+  effectiveStake: string; // In shards
   totalFruitsProduced: number;
   productions: FruitProduction[];
 }
@@ -88,38 +88,38 @@ export interface ValidatorWalletCreationResult {
 /** Network-wide validator statistics */
 export interface NetworkValidatorStats {
   currentEpoch: number;
-  totalStaked: number; // In shards
+  totalStaked: string; // In shards
   validatorCount: number;
 }
 
 /** Validator earnings from coinbase rewards */
 export interface ValidatorEarnings {
   validatorAddress: string;
-  totalEarned: number; // In shards
-  leafMining: number; // In shards
-  stemCredits: number; // In shards
-  fruitRewards: number; // In shards (auto-staked validator rewards)
+  totalEarned: string; // In shards
+  leafMining: string; // In shards
+  stemCredits: string; // In shards
+  fruitRewards: string; // In shards (auto-staked validator rewards)
   coinbaseCount: number;
 }
 
 /** Validator balance breakdown */
 export interface ValidatorBalanceInfo {
   validatorAddress: string;
-  availableBalance: number;  // UTXO balance (unstaked, available to stake)
-  withdrawableStake?: number; // Staked XTAL available to unstake
-  matureStake: number;       // Backward-compatible alias for withdrawableStake
-  pendingStake: number;      // Immature stake not yet effective
-  totalStake: number;        // Mature + pending stake
-  pendingUnstake: number;    // Pending unstake (locked)
-  immatureBalance: number;   // Non-stake immature balance + unconfirmed incoming
-  totalValue: number;        // Sum of all
+  availableBalance: string;  // UTXO balance (unstaked, available to stake)
+  withdrawableStake?: string; // Staked XTAL available to unstake
+  matureStake: string;       // Backward-compatible alias for withdrawableStake
+  pendingStake: string;      // Immature stake not yet effective
+  totalStake: string;        // Mature + pending stake
+  pendingUnstake: string;    // Pending unstake (locked)
+  immatureBalance: string;   // Non-stake immature balance + unconfirmed incoming
+  totalValue: string;        // Sum of all
 }
 
 /** Fruit production statistics with dynamic difficulty */
 export interface FruitProductionStats {
   fruitType: string;
   emoji: string;
-  minStake: number; // In shards
+  minStake: string; // In shards
   targetIntervalSecs: number;
 
   // Dynamic difficulty (current epoch)

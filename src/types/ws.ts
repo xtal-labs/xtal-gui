@@ -132,7 +132,7 @@ export interface WsFruitProduced {
 /** `validator_network_stats` payload (camelCase). */
 export interface WsValidatorNetworkStats {
   currentEpoch: number;
-  totalStaked: number;
+  totalStaked: string;
   validatorCount: number;
   productionStats?: FruitProductionStats[];
 }

@@ -12,6 +12,7 @@ import {
   initialTransactionPagination,
   type TransactionPagination,
 } from "@/lib/pagination";
+import { toShards } from "@/lib/utils";
 
 interface WalletState {
   // Wallet status
@@ -64,10 +65,10 @@ interface WalletState {
 }
 
 const initialBalance: WalletBalance = {
-  confirmed: 0,
-  pending: 0,
-  immature: 0,
-  total: 0,
+  confirmed: "0",
+  pending: "0",
+  immature: "0",
+  total: "0",
 };
 
 const initialPagination: TransactionPagination = { ...initialTransactionPagination };
@@ -106,7 +107,7 @@ export const useWalletStore = create<WalletState>((set) => ({
     set({
       balance,
       pendingTxCount:
-        balance.pending > 0
+        toShards(balance.pending) > 0n
           ? 1 // We don't track individual pending txs from balance
           : 0,
     }),

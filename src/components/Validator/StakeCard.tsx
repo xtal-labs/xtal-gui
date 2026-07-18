@@ -3,15 +3,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AmountDisplay } from "@/components/common";
-import { shardsToXtal } from "@/lib/utils";
+import { shardsToXtal, addShards, toShards, type ShardAmount } from "@/lib/utils";
 
 interface StakeCardProps {
-  withdrawableStake: number;
-  activeStake: number;
-  pendingStake: number;
-  availableBalance: number;
-  pendingUnstake: number;
-  immatureBalance: number;
+  withdrawableStake: ShardAmount;
+  activeStake: ShardAmount;
+  pendingStake: ShardAmount;
+  availableBalance: ShardAmount;
+  pendingUnstake: ShardAmount;
+  immatureBalance: ShardAmount;
   hideBalances: boolean;
   onToggleHide: () => void;
   onStake: () => void;
@@ -36,7 +36,7 @@ function StakeCard({
   onStake,
   onUnstake,
 }: StakeCardProps) {
-  const otherPending = pendingUnstake + immatureBalance;
+  const otherPending = addShards(pendingUnstake, immatureBalance);
 
   return (
     <Card variant="crystalline" className="bg-gradient-to-br from-primary/10 via-transparent to-accent/10 border-primary/20 relative">
@@ -76,7 +76,7 @@ function StakeCard({
                   {hideBalances ? MASKED_VALUE : shardsToXtal(availableBalance).toLocaleString()} XTAL
                 </span>
               </div>
-              {withdrawableStake > 0 && (
+              {toShards(withdrawableStake) > 0n && (
                 <div className="flex items-center justify-between gap-3 text-foreground-muted">
                   <span>Mature stake</span>
                   <span className="text-foreground">
@@ -84,7 +84,7 @@ function StakeCard({
                   </span>
                 </div>
               )}
-              {pendingStake > 0 && (
+              {toShards(pendingStake) > 0n && (
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-warning">Pending stake</span>
                   <span className="text-foreground">

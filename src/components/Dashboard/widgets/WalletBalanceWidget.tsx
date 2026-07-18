@@ -3,7 +3,7 @@ import { Wallet } from "lucide-react";
 import { WidgetIcon, WidgetShell } from "@/components/Dashboard/WidgetShell";
 import { VALUE_SIZE_CLASSES } from "@/components/Dashboard/sizing";
 import { useWalletStore } from "@/stores";
-import { formatXtal, cn } from "@/lib/utils";
+import { formatXtal, cn, toShards } from "@/lib/utils";
 import type { WidgetProps } from "./registry";
 
 export default function WalletBalanceWidget({ size, shellProps }: WidgetProps) {
@@ -31,10 +31,10 @@ export default function WalletBalanceWidget({ size, shellProps }: WidgetProps) {
           </div>
           <p className="text-xs text-foreground-muted mt-1 font-mono">
             {formatXtal(balance.confirmed)} confirmed
-            {balance.pending > 0 && <> &bull; {formatXtal(balance.pending)} pending</>}
-            {balance.immature > 0 && <> &bull; {formatXtal(balance.immature)} immature</>}
+            {toShards(balance.pending) > 0n && <> &bull; {formatXtal(balance.pending)} pending</>}
+            {toShards(balance.immature) > 0n && <> &bull; {formatXtal(balance.immature)} immature</>}
           </p>
-          {vmBalance !== null && vmBalance.balance > 0 && (
+          {vmBalance !== null && toShards(vmBalance.balance) > 0n && (
             <p className="text-xs text-foreground-muted mt-0.5 font-mono">
               {formatXtal(vmBalance.balance)} VM account
             </p>

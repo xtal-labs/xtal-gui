@@ -26,6 +26,10 @@ import {
   isValidXtalInput,
   parseXtalToShards,
   truncateAddress,
+  toShards,
+  addShards,
+  subShards,
+  type ShardAmount,
 } from "@/lib/utils";
 import { parseAddressInput } from "@/lib/address";
 import { tauriCommand } from "@/hooks";
@@ -36,7 +40,7 @@ import type { SweepPlan, SweepSubmitResult, VmAccountBalance } from "@/types/wal
 interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
-  maxBalance: number;
+  maxBalance: ShardAmount;
   defaultRecipient?: string; // Base58Check UTXO address
 }
 
@@ -118,12 +122,14 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
 
   // Derived values — parseXtalToShards used for display only, not sent to backend
   const parsedAmountShards = parseXtalToShards(amount);
-  const amountShards = parsedAmountShards ?? 0;
+  const amountShards = toShards(parsedAmountShards ?? "0");
   const amountError = getXtalInputError(amount);
   const feeRateBps = cageConfig?.withdrawFeeBps;
-  const feeRate = feeRateBps ? feeRateBps / 10000 : 0;
   const cageConfigLoaded = cageConfig !== null && feeRateBps !== undefined;
-  const cageFee = amountShards > 0 ? Math.ceil(amountShards * feeRate) : 0;
+  const cageFee =
+    amountShards > 0n && feeRateBps !== undefined
+      ? (amountShards * BigInt(feeRateBps) + 9999n) / 10000n
+      : 0n;
   // A withdrawal is a CAGE contract call, so it must meet the contract-call gas
   // floor (minCallGas), not the lower intrinsic transfer floor (defaultGasLimit).
   const minCallGas = gasConfig?.minCallGas ?? 100_000;
@@ -136,16 +142,16 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   // the aggregate VM balance, and gas is never added on top of the amount here.
   const withdrawableNow =
     vmAccounts?.accounts.reduce((sum, account) => {
-      const spendable = Math.max(0, account.balance - maxGasFee);
-      return spendable >= MIN_WITHDRAW_LEG_SHARDS ? sum + spendable : sum;
-    }, 0) ?? null;
+      const spendable = subShards(account.balance, maxGasFee);
+      return spendable >= BigInt(MIN_WITHDRAW_LEG_SHARDS) ? sum + spendable : sum;
+    }, 0n) ?? null;
   const hasInsufficientFunds =
-    withdrawableNow !== null && amountShards > withdrawableNow && amountShards > 0;
+    withdrawableNow !== null && amountShards > withdrawableNow && amountShards > 0n;
 
   // Plan-derived values (available on the confirm step)
   const maxGasFeePerLeg = plan ? Number(plan.maxGasFeePerLeg) : maxGasFee;
   const totalMaxGasFee = plan ? plan.legCount * Number(plan.maxGasFeePerLeg) : maxGasFee;
-  const totalDeducted = amountShards + totalMaxGasFee;
+  const totalDeducted = addShards(amountShards, totalMaxGasFee);
   const uneconomicalLeg = plan?.legs.find((leg) => Number(leg.amount) <= maxGasFeePerLeg);
   const isPartialFailure = partialTxids !== null && partialTxids.length > 0;
 
@@ -166,8 +172,9 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
           return sum + (fee === 0n ? 1n : fee);
         }, 0n)
       : null;
-  const cageFeeDisplay = planFeeShards !== null ? Number(planFeeShards) : cageFee;
-  const netAmountDisplay = Math.max(0, amountShards - cageFeeDisplay);
+  const cageFeeDisplay = planFeeShards !== null ? planFeeShards : cageFee;
+  const netAmountRaw = amountShards - cageFeeDisplay;
+  const netAmountDisplay = netAmountRaw > 0n ? netAmountRaw : 0n;
 
   // Withdrawals only support UTXO/Base58 recipients.
   const parsedAddress = parseAddressInput(recipient);
@@ -188,7 +195,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
     !hasGasError;
 
   const handleContinue = async () => {
-    if (parsedAmountShards === null || parsedAmountShards <= 0) {
+    if (parsedAmountShards === null || toShards(parsedAmountShards) <= 0n) {
       setError(amountError || "Please enter a valid amount");
       return;
     }
@@ -237,7 +244,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
       setError("Please enter your password");
       return;
     }
-    if (parsedAmountShards === null || parsedAmountShards <= 0) {
+    if (parsedAmountShards === null || toShards(parsedAmountShards) <= 0n) {
       setError(amountError || "Please enter a valid amount");
       return;
     }
@@ -470,8 +477,9 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                     onClick={() => {
                       // Per-account spendable already excludes the per-leg gas
                       // reservation; fall back to the aggregate while loading.
-                      const maxShards = withdrawableNow ?? Math.max(0, maxBalance - maxGasFee);
-                      setAmount(formatDecimalInput(maxShards / SHARDS_PER_XTAL));
+                      const fallback = subShards(maxBalance, maxGasFee);
+                      const maxShards = withdrawableNow ?? (fallback > 0n ? fallback : 0n);
+                      setAmount(formatDecimalInput(Number(maxShards) / SHARDS_PER_XTAL));
                     }}
                   >
                     MAX

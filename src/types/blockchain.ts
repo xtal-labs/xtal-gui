@@ -126,7 +126,7 @@ export interface ChainTip {
 export interface BlockTransactionSummary {
   txid: string;
   txType: string;
-  totalOutput: number;
+  totalOutput: string;
 }
 
 export interface FruitSummary {
@@ -141,8 +141,8 @@ export interface FruitTransactionSummary {
   txid: string;
   txType: string;
   vmType: string;
-  amount?: number;
-  fee?: number;
+  amount?: string;
+  fee?: string;
   from?: string;
   to?: string;
   nonce: number;

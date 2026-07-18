@@ -45,7 +45,7 @@ import {
 } from "./ValidatorModals";
 import { useValidatorStore, useUiStore } from "@/stores";
 import { tauriCommand, useTauriCommand } from "@/hooks";
-import { cn, shardsToXtal, formatTimeAgo, parseXtalToShards, copyToClipboard } from "@/lib/utils";
+import { cn, shardsToXtal, formatTimeAgo, parseXtalToShards, copyToClipboard, toShards, addShards } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import { PAGE_SIZE, getPageOffset, normalizePage } from "@/lib/pagination";
 import type {
@@ -457,7 +457,7 @@ export default function Validator() {
   const productionStats = isLoaded && personalProductionStats.length > 0
     ? personalProductionStats
     : wsProductionStats;
-  const totalStake = withdrawableStake + pendingStake;
+  const totalStake = addShards(withdrawableStake, pendingStake);
   const parsedStakeAmount = parseXtalToShards(stakeAmount);
 
   // Modal state
@@ -469,7 +469,7 @@ export default function Validator() {
   const showUnstakeModal = activeModal === MODAL_UNSTAKE;
 
   useEffect(() => {
-    if (!showStakeModal || !address || parsedStakeAmount === null || parsedStakeAmount <= 0) {
+    if (!showStakeModal || !address || parsedStakeAmount === null || toShards(parsedStakeAmount) <= 0n) {
       setStakeFeeEstimate(null);
       setIsStakeFeeEstimating(false);
       setStakeFeeEstimateError(null);
@@ -509,7 +509,7 @@ export default function Validator() {
   }, [showStakeModal, address, parsedStakeAmount]);
 
   useEffect(() => {
-    if (!showUnstakeModal || !address || parsedStakeAmount === null || parsedStakeAmount <= 0) {
+    if (!showUnstakeModal || !address || parsedStakeAmount === null || toShards(parsedStakeAmount) <= 0n) {
       setUnstakeFeeEstimate(null);
       setIsUnstakeFeeEstimating(false);
       setUnstakeFeeEstimateError(null);
@@ -550,15 +550,15 @@ export default function Validator() {
 
   const canSubmitStake =
     parsedStakeAmount !== null &&
-    parsedStakeAmount > 0 &&
+    toShards(parsedStakeAmount) > 0n &&
     stakeFeeEstimate !== null &&
     !isStakeFeeEstimating &&
     !stakeFeeEstimateError &&
-    parsedStakeAmount + stakeFeeEstimate.fee <= availableBalance;
+    addShards(parsedStakeAmount, stakeFeeEstimate.fee) <= toShards(availableBalance);
 
   const canSubmitUnstake =
     parsedStakeAmount !== null &&
-    parsedStakeAmount > 0 &&
+    toShards(parsedStakeAmount) > 0n &&
     unstakeFeeEstimate !== null &&
     !isUnstakeFeeEstimating &&
     !unstakeFeeEstimateError;
@@ -1024,7 +1024,7 @@ export default function Validator() {
     if (!address || !stakeAmount) return;
 
     const amountShards = parseXtalToShards(stakeAmount);
-    if (amountShards === null || amountShards <= 0) {
+    if (amountShards === null || toShards(amountShards) <= 0n) {
       setError("Please enter a valid amount");
       return;
     }
@@ -1035,7 +1035,7 @@ export default function Validator() {
     }
 
     // Check if user has sufficient balance including the builder-estimated fee.
-    if (amountShards + stakeFeeEstimate.fee > availableBalance) {
+    if (addShards(amountShards, stakeFeeEstimate.fee) > toShards(availableBalance)) {
       setError(`Insufficient balance. Available: ${shardsToXtal(availableBalance).toLocaleString()} XTAL`);
       return;
     }
@@ -1075,7 +1075,7 @@ export default function Validator() {
     if (!address || !stakeAmount) return;
 
     const amountShards = parseXtalToShards(stakeAmount);
-    if (amountShards === null || amountShards <= 0) {
+    if (amountShards === null || toShards(amountShards) <= 0n) {
       setError("Please enter a valid amount");
       return;
     }

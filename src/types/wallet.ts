@@ -11,10 +11,10 @@ export interface WalletInfo {
 export type NetworkType = "Mainnet" | "Testnet" | "Regtest";
 
 export interface WalletBalance {
-  confirmed: number; // in shards (1 XTAL = 10^9 shards)
-  pending: number; // wallet-owned outputs in live mempool transactions
-  immature: number; // coinbase rewards not yet spendable
-  total: number; // projected wallet-owned UTXO total after pending transactions settle
+  confirmed: string; // in shards (1 XTAL = 10^9 shards)
+  pending: string; // wallet-owned outputs in live mempool transactions
+  immature: string; // coinbase rewards not yet spendable
+  total: string; // projected wallet-owned UTXO total after pending transactions settle
 }
 
 export interface Address {
@@ -74,7 +74,7 @@ export interface Transaction {
   txid: string;
   /** Transaction type - comes as txType from API (snake_case tx_type converted) */
   txType: TransactionType;
-  amount: number; // positive for receive, negative for send
+  amount: string; // positive for receive, negative for send
   fee?: number;
   confirmations: number;
   timestamp: number;
@@ -121,7 +121,7 @@ export interface TransactionInput {
   /** Decoded address (if extractable from script) */
   address?: string;
   /** Amount from the previous output (in shards) */
-  amount?: number;
+  amount?: string;
   /** Whether this input belongs to the loaded wallet */
   isMine?: boolean;
   /** Decoded redeem-script label for a P2SH spend (e.g. "2-of-3 multisig") */
@@ -135,7 +135,7 @@ export interface TransactionOutput {
   /** Index in this transaction's outputs */
   index: number;
   /** Amount in shards */
-  amount: number;
+  amount: string;
   /** Currency type (e.g., "XTAL") */
   currency: string;
   /** Decoded address from script_pubkey */
@@ -148,20 +148,20 @@ export interface TransactionOutput {
 
 export type UTXOBridgeDetail = {
   kind: "vm_withdrawal";
-  withdrawalValue: number;
+  withdrawalValue: string;
   createdOutput?: TransactionOutput;
 };
 
 export type VMBridgeDetail =
   | {
       kind: "vm_deposit";
-      depositedAmount: number;
+      depositedAmount: string;
       sourceInput?: TransactionInput;
     }
   | {
       kind: "cage_withdrawal";
-      requestedAmount: number;
-      netWithdrawalAmount?: number;
+      requestedAmount: string;
+      netWithdrawalAmount?: string;
       requestedRecipient: string;
       producedOutputRecipient?: string;
     };
@@ -170,9 +170,9 @@ export interface UTXODetail {
   kind: "utxo";
   inputs: TransactionInput[];
   outputs: TransactionOutput[];
-  totalInput: number;
-  totalOutput: number;
-  netAmount: number;
+  totalInput: string;
+  totalOutput: string;
+  netAmount: string;
   maturityStatus?: MaturityStatus;
   bridge?: UTXOBridgeDetail;
 }
@@ -185,11 +185,11 @@ export interface VMDetail {
   gasLimit?: number;
   gasPrice?: number;
   nonce?: number;
-  value?: number;
+  value?: string;
   dataSize?: number;
   preferredFruitType?: string;
   recipient?: string;
-  transferAmount?: number;
+  transferAmount?: string;
   currency?: string;
   bridge?: VMBridgeDetail;
 }
@@ -205,7 +205,7 @@ export interface TransactionDetail {
   /** UTXO- or VM-specific detail payload */
   detail: UTXODetail | VMDetail;
   /** Transaction fee (if applicable, in shards) */
-  fee?: number;
+  fee?: string;
   /** Number of confirmations (0 for pending) */
   confirmations: number;
   /** Block timestamp or submission time for pending */
@@ -228,7 +228,7 @@ export interface TransactionReceipt {
   transactionIndex: number;
   gasUsed: number;
   gasPrice: number;
-  feePaid: number;
+  feePaid: string;
   contractAddress?: string;
   events: ContractEventDetail[];
   returnData: string;
@@ -264,7 +264,7 @@ export interface VmAccountEntry {
   /** VM address ("0x" + 40 hex chars) */
   address: string;
   /** Account balance in shards */
-  balance: number;
+  balance: string;
   /** Account nonce */
   nonce: number;
 }
@@ -274,7 +274,7 @@ export interface VmAccountEntry {
  */
 export interface VmAccountBalance {
   /** VM account balance in shards (sum across wallet-owned accounts) */
-  balance: number;
+  balance: string;
   /** Nonce of the primary address */
   nonce: number;
   /** Currency type */
@@ -331,7 +331,7 @@ export interface SweepSubmitResult {
 
 export interface SendRequest {
   toAddress: string;
-  amount: number; // in shards
+  amount: string; // in shards
   fee?: number;
   feeRate?: number; // shards per byte
   memo?: string;
@@ -340,7 +340,7 @@ export interface SendRequest {
 
 export interface SendResult {
   txid: string;
-  fee: number;
+  fee: string;
 }
 
 export interface WalletCreateRequest {
@@ -368,7 +368,7 @@ export interface WalletStatus {
 export interface MempoolTransactionDetail {
   txid: string;
   txType: string;
-  fee: number;
+  fee: string;
   sizeBytes: number;
   ageSecs: number;
   isSponsored: boolean;
@@ -376,8 +376,8 @@ export interface MempoolTransactionDetail {
   // UTXO-specific
   inputs?: TransactionInput[];
   outputs?: TransactionOutput[];
-  totalInput?: number;
-  totalOutput?: number;
+  totalInput?: string;
+  totalOutput?: string;
 
   // VM-specific
   caller?: string;
@@ -386,7 +386,7 @@ export interface MempoolTransactionDetail {
   gasLimit?: number;
   gasPrice?: number;
   nonce?: number;
-  value?: number;
+  value?: string;
   dataSize?: number;
 
   // ContractDeploy-specific
@@ -394,7 +394,7 @@ export interface MempoolTransactionDetail {
 
   // AccountTransfer-specific
   recipient?: string;
-  transferAmount?: number;
+  transferAmount?: string;
   currency?: string;
 }
 

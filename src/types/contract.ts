@@ -85,7 +85,7 @@ export interface CachedContract {
 export interface DeployResult {
   txid: string;
   contractAddress: string;
-  fee: number;
+  fee: string;
   abiCid?: string;
 }
 
@@ -101,7 +101,7 @@ export interface ContractInfo {
   address: string;
   exists: boolean;
   isContract: boolean;
-  balance: number;
+  balance: string;
   codeHash?: string;
   fruitType?: string;
 }
@@ -112,7 +112,7 @@ export interface ContractStorageResult {
 
 export interface GasEstimate {
   gasEstimate: number;
-  feeEstimate: number;
+  feeEstimate: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ export interface GasEstimate {
 export interface WalletUtxo {
   txid: string;
   vout: number;
-  amount: number;
+  amount: string;
   address: string;
   confirmations: number;
   isEligible: boolean;
@@ -131,8 +131,8 @@ export interface WalletUtxo {
 
 export interface DepositUtxoResult {
   txid: string;
-  fee: number;
-  amount: number;
+  fee: string;
+  amount: string;
   anchorStemHash: string;
 }
 

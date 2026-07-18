@@ -15,51 +15,126 @@ export function cn(...inputs: ClassValue[]) {
 export const SHARDS_PER_XTAL = 1_000_000_000;
 export const XTAL_DECIMALS = String(SHARDS_PER_XTAL).length - 1;
 
+const SHARDS_PER_XTAL_BIG = BigInt(SHARDS_PER_XTAL);
+
+/** Largest shard amount the backend's u64 representation can hold. */
+export const MAX_SHARDS = (1n << 64n) - 1n;
+
 const XTAL_INPUT_PATTERN = new RegExp(`^\\d*(?:\\.\\d{0,${XTAL_DECIMALS}})?$`);
 
 /**
- * Convert shards to XTAL (raw number, not formatted)
+ * A shard amount as it crosses the wire.
+ *
+ * The backend sends shard amounts as decimal strings: above 2^53-1 shards
+ * (~9,007,199 XTAL) a JSON number is silently rounded by JSON.parse. Number is
+ * still accepted for locally-computed values that are known to be small.
  */
-export function shardsToXtal(shards: number | bigint): number {
-  const value = typeof shards === "bigint" ? Number(shards) : shards;
-  return value / SHARDS_PER_XTAL;
+export type ShardAmount = string | bigint | number;
+
+/**
+ * Normalize any shard representation to bigint.
+ *
+ * Throws on a malformed string rather than defaulting to zero — a bad amount
+ * must be loud, since silently rendering 0 is the exact failure this encoding
+ * exists to prevent.
+ */
+export function toShards(value: ShardAmount | null | undefined): bigint {
+  if (value === null || value === undefined) return 0n;
+  if (typeof value === "bigint") return value;
+  if (typeof value === "number") return BigInt(Math.trunc(value));
+  const trimmed = value.trim();
+  return trimmed === "" ? 0n : BigInt(trimmed);
+}
+
+/** Sum shard amounts exactly. */
+export function addShards(...amounts: (ShardAmount | null | undefined)[]): bigint {
+  return amounts.reduce<bigint>((total, amount) => total + toShards(amount), 0n);
+}
+
+/** Subtract shard amounts exactly. */
+export function subShards(a: ShardAmount | null | undefined, b: ShardAmount | null | undefined): bigint {
+  return toShards(a) - toShards(b);
+}
+
+/** Absolute value of a shard amount. */
+export function absShards(amount: ShardAmount | null | undefined): bigint {
+  const value = toShards(amount);
+  return value < 0n ? -value : value;
+}
+
+/** Compare shard amounts; suitable for Array.prototype.sort. */
+export function compareShards(a: ShardAmount | null | undefined, b: ShardAmount | null | undefined): number {
+  const left = toShards(a);
+  const right = toShards(b);
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/** Split a shard amount into exact whole-XTAL and zero-padded fractional parts. */
+function splitXtal(shards: ShardAmount | null | undefined): {
+  negative: boolean;
+  whole: bigint;
+  fraction: string;
+} {
+  const value = toShards(shards);
+  const negative = value < 0n;
+  const magnitude = negative ? -value : value;
+  return {
+    negative,
+    whole: magnitude / SHARDS_PER_XTAL_BIG,
+    fraction: (magnitude % SHARDS_PER_XTAL_BIG).toString().padStart(XTAL_DECIMALS, "0"),
+  };
 }
 
 /**
- * Format XTAL amounts.
+ * Convert shards to XTAL as a float.
+ *
+ * Lossy above 2^53 shards by construction — use only where an approximation is
+ * acceptable (ratios, chart scales). For anything displayed as a balance, use
+ * formatXtal/formatXtalFull, which stay exact.
  */
-export function formatXtal(shards: number | bigint): string {
-  const value = typeof shards === "bigint" ? Number(shards) : shards;
-  const xtal = value / SHARDS_PER_XTAL;
+export function shardsToXtal(shards: ShardAmount): number {
+  return Number(toShards(shards)) / SHARDS_PER_XTAL;
+}
 
-  if (xtal === 0) return "0";
-  if (xtal < 1 / SHARDS_PER_XTAL) return `< ${(1 / SHARDS_PER_XTAL).toFixed(XTAL_DECIMALS)}`;
-  if (xtal >= 1_000_000) {
-    return `${(xtal / 1_000_000).toLocaleString(undefined, {
+/**
+ * Format XTAL amounts, abbreviating large values.
+ */
+export function formatXtal(shards: ShardAmount): string {
+  const { negative, whole, fraction } = splitXtal(shards);
+  const sign = negative ? "-" : "";
+
+  if (whole === 0n && Number(fraction) === 0) return "0";
+
+  // Abbreviated tiers are deliberately approximate: two decimals of a
+  // thousands/millions figure never depend on the low-order shards.
+  if (whole >= 1_000_000n) {
+    return `${sign}${(Number(whole) / 1_000_000).toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}M`;
   }
-  if (xtal >= 1_000) {
-    return `${(xtal / 1_000).toLocaleString(undefined, {
+  if (whole >= 1_000n) {
+    return `${sign}${(Number(whole) / 1_000).toLocaleString(undefined, {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}K`;
   }
 
-  return xtal.toLocaleString(undefined, {
+  // Below 1000 XTAL the whole part is far inside the safe-integer range, so
+  // recombining for locale formatting is exact.
+  const exact = Number(whole) + Number(fraction) / SHARDS_PER_XTAL;
+  return `${sign}${exact.toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: XTAL_DECIMALS,
-  });
+  })}`;
 }
 
 /**
- * Format full XTAL amount with all decimals
+ * Format a full XTAL amount with all decimals, exact at any magnitude.
  */
-export function formatXtalFull(shards: number | bigint): string {
-  const value = typeof shards === "bigint" ? Number(shards) : shards;
-  const xtal = value / SHARDS_PER_XTAL;
-  return xtal.toFixed(XTAL_DECIMALS);
+export function formatXtalFull(shards: ShardAmount): string {
+  const { negative, whole, fraction } = splitXtal(shards);
+  return `${negative ? "-" : ""}${whole}.${fraction}`;
 }
 
 /**
@@ -79,12 +154,16 @@ export function isValidXtalInput(value: string): boolean {
 }
 
 /**
- * Convert a user-entered XTAL decimal string to shards without float math.
+ * Convert a user-entered XTAL decimal string to a decimal shard string.
+ *
+ * Returns a string rather than a number so amounts above 2^53-1 shards
+ * (~9,007,199 XTAL) survive — the previous safe-integer cap rejected them
+ * outright, making large balances unspendable.
  */
-export function parseXtalToShards(value: string): number | null {
+export function parseXtalToShards(value: string): string | null {
   const trimmed = value.trim();
 
-  if (trimmed === "" || trimmed === ".") return 0;
+  if (trimmed === "" || trimmed === ".") return "0";
   if (!XTAL_INPUT_PATTERN.test(trimmed)) return null;
 
   const [wholePartRaw = "0", fractionPartRaw = ""] = trimmed.split(".");
@@ -93,10 +172,11 @@ export function parseXtalToShards(value: string): number | null {
   if (!/^\d+$/.test(wholePart) || !/^\d*$/.test(fractionPartRaw)) return null;
 
   const shardsString = `${wholePart}${fractionPartRaw.padEnd(XTAL_DECIMALS, "0")}`;
-  const normalized = shardsString.replace(/^0+(?=\d)/, "");
-  const shards = Number(normalized || "0");
+  const normalized = shardsString.replace(/^0+(?=\d)/, "") || "0";
 
-  return Number.isSafeInteger(shards) ? shards : null;
+  // The backend carries shard amounts as u64; reject overflow here so the user
+  // sees an input error instead of a submission failure.
+  return BigInt(normalized) > MAX_SHARDS ? null : normalized;
 }
 
 export function getXtalInputError(value: string): string | null {
@@ -251,10 +331,11 @@ export function formatBytes(bytes: number): string {
 }
 
 /** Abbreviate a gas amount (e.g. 1_500_000 → "1.5M", 2_400 → "2.4K"). */
-export function formatGas(gas: number): string {
-  if (gas >= 1_000_000) return `${(gas / 1_000_000).toFixed(1)}M`;
-  if (gas >= 1_000) return `${(gas / 1_000).toFixed(1)}K`;
-  return gas.toLocaleString();
+export function formatGas(gas: ShardAmount): string {
+  const value = Number(toShards(gas));
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toLocaleString();
 }
 
 /**

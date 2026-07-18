@@ -42,7 +42,7 @@ import { AmountDisplay, HashDisplay, StatusBadge, TransactionList } from "@/comp
 import { useWalletStore, useUiStore } from "@/stores";
 import { tauriCommand } from "@/hooks";
 
-import { cn } from "@/lib/utils";
+import { cn, toShards } from "@/lib/utils";
 import { PAGE_SIZE, getPageOffset, normalizePage } from "@/lib/pagination";
 import type {
   WalletBalance,
@@ -796,7 +796,7 @@ export default function Wallet() {
       await tauriCommand("unload_wallet");
       setLoaded(false, null);
       // Reset wallet data
-      setBalance({ total: 0, confirmed: 0, pending: 0, immature: 0 });
+      setBalance({ total: "0", confirmed: "0", pending: "0", immature: "0" });
       setAddresses([]);
       setTransactionPage(1, [], 0);
       // Refresh available wallets list
@@ -940,15 +940,15 @@ export default function Wallet() {
               AVAILABLE BALANCE
             </p>
             <AmountDisplay amount={balance.confirmed} size="xl" showSymbol />
-            {(balance.pending > 0 || balance.immature > 0) && (
+            {(toShards(balance.pending) > 0n || toShards(balance.immature) > 0n) && (
               <div className="flex items-center justify-center gap-4 mt-4 text-sm">
-                {balance.pending > 0 && (
+                {toShards(balance.pending) > 0n && (
                   <div>
                     <p className="text-foreground-muted font-heading text-xs">PENDING</p>
                     <AmountDisplay amount={balance.pending} size="sm" showSymbol={false} />
                   </div>
                 )}
-                {balance.immature > 0 && (
+                {toShards(balance.immature) > 0n && (
                   <div>
                     <p className="text-foreground-muted font-heading text-xs">IMMATURE</p>
                     <AmountDisplay amount={balance.immature} size="sm" showSymbol={false} />
