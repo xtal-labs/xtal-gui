@@ -4,6 +4,7 @@
 
 use serde::Serialize;
 use tauri::State;
+use xtal::address_format::format_utxo_address;
 use xtal::MiningStatsDisplay;
 
 use crate::platform;
@@ -63,29 +64,19 @@ pub async fn stop_mining(state: State<'_, AppState>) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_mining_status(state: State<'_, AppState>) -> Result<MiningStatus, String> {
     // Get wallet info if available
-    let (wallet_name, mining_address) = if let Some(wallet) = &state.services.wallet {
+    let wallet_name = if let Some(wallet) = &state.services.wallet {
         if wallet.is_loaded() {
-            let name = wallet.get_wallet_path().and_then(|p| {
+            wallet.get_wallet_path().and_then(|p| {
                 std::path::Path::new(&p)
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .map(String::from)
-            });
-
-            let addr = wallet
-                .with_wallet(|w| {
-                    w.get_all_mining_keys()
-                        .map(|keys| keys.first().map(|(_, addr, _)| addr.clone()))
-                })
-                .ok()
-                .flatten();
-
-            (name, addr)
+            })
         } else {
-            (None, None)
+            None
         }
     } else {
-        (None, None)
+        None
     };
 
     let max_threads = std::thread::available_parallelism()
@@ -96,12 +87,29 @@ pub async fn get_mining_status(state: State<'_, AppState>) -> Result<MiningStatu
         Some(mining) => {
             let is_active = mining.is_running();
 
-            // When mining is running, use the snapshotted wallet name (locked at start)
-            // When not running, use the currently loaded wallet name
+            // When mining is running, use the snapshotted wallet (locked at
+            // start; coinbases keep paying it even if the loaded wallet is
+            // switched). When not running, use the currently loaded wallet.
             let effective_wallet_name = if is_active {
                 mining.mining_wallet_name().await.or(wallet_name)
             } else {
                 wallet_name
+            };
+            let reward_wallet_id = if is_active {
+                mining.mining_wallet_id().await
+            } else {
+                state
+                    .services
+                    .wallet
+                    .as_ref()
+                    .and_then(|wallet| wallet.current_wallet_id())
+            };
+            let mining_address = match (&state.services.wallet, reward_wallet_id) {
+                (Some(wallet), Some(wallet_id)) => wallet
+                    .get_mining_pkh_for_wallet(&wallet_id)
+                    .ok()
+                    .map(|pkh| format_utxo_address(&pkh)),
+                _ => None,
             };
 
             Ok(MiningStatus {
@@ -117,7 +125,7 @@ pub async fn get_mining_status(state: State<'_, AppState>) -> Result<MiningStatu
             threads: 0,
             max_threads,
             wallet_name,
-            mining_address,
+            mining_address: None,
         }),
     }
 }
