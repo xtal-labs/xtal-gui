@@ -16,6 +16,16 @@ import {
   type TransactionPagination,
 } from "@/lib/pagination";
 
+/** Backend-computed balance axes; `totalStake` comes from Rust, never re-derived. */
+export interface ValidatorBalances {
+  availableBalance: string;
+  withdrawableStake: string;
+  pendingStake: string;
+  totalStake: string;
+  pendingUnstake: string;
+  immatureBalance: string;
+}
+
 interface ValidatorState {
   // Status
   isLoaded: boolean;
@@ -27,6 +37,7 @@ interface ValidatorState {
   pendingStake: string;
   effectiveStake: string;
   availableBalance: string; // UTXO balance (unstaked)
+  totalStake: string;       // Mature + pending, as computed by the backend
   pendingUnstake: string;   // Pending unstake (locked)
   immatureBalance: string;  // Immature coinbase/withdrawal + unconfirmed incoming
   totalFruitsProduced: number;
@@ -70,13 +81,7 @@ interface ValidatorState {
   addProducedFruit: (fruit: ProducedFruit) => void;
   setLoaded: (loaded: boolean, walletName: string | null, address: string | null) => void;
   setRunning: (running: boolean) => void;
-  setBalanceInfo: (
-    available: string,
-    withdrawableStake: string,
-    pendingStake: string,
-    pendingUnstake: string,
-    immature: string,
-  ) => void;
+  setBalanceInfo: (balances: ValidatorBalances) => void;
   setNetworkStats: (stats: NetworkValidatorStats | null) => void;
   setValidatorEarnings: (earnings: string | null) => void;
   setFruitSpecs: (specs: FruitSpec[]) => void;
@@ -105,6 +110,7 @@ const initialState = {
   pendingStake: "0",
   effectiveStake: "0",
   availableBalance: "0",
+  totalStake: "0",
   pendingUnstake: "0",
   immatureBalance: "0",
   totalFruitsProduced: 0,
@@ -147,6 +153,7 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
             pendingStake: "0",
             effectiveStake: "0",
             availableBalance: "0",
+            totalStake: "0",
             pendingUnstake: "0",
             immatureBalance: "0",
             totalFruitsProduced: 0,
@@ -165,14 +172,22 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
       sessionStartTime: running && !state.sessionStartTime ? Date.now() : state.sessionStartTime,
     })),
 
-  setBalanceInfo: (available, withdrawableStake, pendingStake, pendingUnstake, immature) =>
+  setBalanceInfo: ({
+    availableBalance,
+    withdrawableStake,
+    pendingStake,
+    totalStake,
+    pendingUnstake,
+    immatureBalance,
+  }) =>
     set({
-      availableBalance: available,
+      availableBalance,
       withdrawableStake,
       matureStake: withdrawableStake,
       pendingStake,
+      totalStake,
       pendingUnstake,
-      immatureBalance: immature,
+      immatureBalance,
     }),
 
   setNetworkStats: (stats) => set({ networkStats: stats }),

@@ -22,11 +22,10 @@ import { ModalShell } from "@/components/ui/modal-shell";
 import { AmountDisplay } from "@/components/common";
 import {
   cn,
-  SHARDS_PER_XTAL,
-  formatDecimalInput,
   getXtalInputError,
   isValidXtalInput,
   parseXtalToShards,
+  formatXtalInput,
   toShards,
   addShards,
   type ShardAmount,
@@ -193,7 +192,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
   useEffect(() => {
     if (!isMaxSend || !feeEstimate) return;
     const maxShards = toShards(feeEstimate.maxSendable);
-    const formatted = formatDecimalInput(Number(maxShards > 0n ? maxShards : 0n) / SHARDS_PER_XTAL);
+    const formatted = formatXtalInput(maxShards > 0n ? maxShards : 0n);
     setAmount((prev) => (prev === formatted ? prev : formatted));
   }, [isMaxSend, feeEstimate]);
 
@@ -393,8 +392,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                           }
                         );
                         const estMax = toShards(est.maxSendable);
-                        const maxXtal = Number(estMax > 0n ? estMax : 0n) / SHARDS_PER_XTAL;
-                        if (maxXtal <= 0) {
+                        if (estMax <= 0n) {
                           addToast({
                             type: "warning",
                             title: "Balance too low",
@@ -402,7 +400,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                             duration: 4000,
                           });
                         }
-                        setAmount(formatDecimalInput(maxXtal));
+                        setAmount(formatXtalInput(estMax > 0n ? estMax : 0n));
                       } catch (err) {
                         setIsMaxSend(false);
                         addToast({

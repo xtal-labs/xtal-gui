@@ -42,7 +42,7 @@ import { AmountDisplay, HashDisplay, StatusBadge, TransactionList } from "@/comp
 import { useWalletStore, useUiStore } from "@/stores";
 import { tauriCommand } from "@/hooks";
 
-import { cn, toShards } from "@/lib/utils";
+import { cn, toShards, addShards } from "@/lib/utils";
 import { PAGE_SIZE, getPageOffset, normalizePage } from "@/lib/pagination";
 import type {
   WalletBalance,
@@ -1303,7 +1303,7 @@ export default function Wallet() {
           <div className="flex items-center gap-1.5 shrink-0">
             <span className="text-xs font-heading tracking-wide text-foreground-muted">TOTAL</span>
             <AmountDisplay 
-              amount={balance.total + (vmBalance?.balance ?? 0)}
+              amount={addShards(balance.total, vmBalance?.balance)}
               size="sm" 
               showSymbol 
             />

@@ -3,7 +3,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { AmountDisplay } from "@/components/common";
-import { shardsToXtal, addShards, toShards, type ShardAmount } from "@/lib/utils";
+import { formatXtalExact, addShards, toShards, type ShardAmount } from "@/lib/utils";
 
 interface StakeCardProps {
   withdrawableStake: ShardAmount;
@@ -73,14 +73,14 @@ function StakeCard({
               <div className="flex items-center justify-between gap-3 text-foreground-muted">
                 <span>Available</span>
                 <span className="text-foreground">
-                  {hideBalances ? MASKED_VALUE : shardsToXtal(availableBalance).toLocaleString()} XTAL
+                  {hideBalances ? MASKED_VALUE : formatXtalExact(availableBalance)} XTAL
                 </span>
               </div>
               {toShards(withdrawableStake) > 0n && (
                 <div className="flex items-center justify-between gap-3 text-foreground-muted">
                   <span>Mature stake</span>
                   <span className="text-foreground">
-                    {hideBalances ? MASKED_VALUE : shardsToXtal(withdrawableStake).toLocaleString()} XTAL
+                    {hideBalances ? MASKED_VALUE : formatXtalExact(withdrawableStake)} XTAL
                   </span>
                 </div>
               )}
@@ -88,7 +88,7 @@ function StakeCard({
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-warning">Pending stake</span>
                   <span className="text-foreground">
-                    {hideBalances ? MASKED_VALUE : shardsToXtal(pendingStake).toLocaleString()} XTAL
+                    {hideBalances ? MASKED_VALUE : formatXtalExact(pendingStake)} XTAL
                   </span>
                 </div>
               )}
@@ -96,7 +96,7 @@ function StakeCard({
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-warning">Other pending</span>
                   <span className="text-foreground">
-                    {hideBalances ? MASKED_VALUE : shardsToXtal(otherPending).toLocaleString()} XTAL
+                    {hideBalances ? MASKED_VALUE : formatXtalExact(otherPending)} XTAL
                   </span>
                 </div>
               )}

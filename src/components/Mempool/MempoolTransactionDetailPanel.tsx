@@ -251,7 +251,6 @@ export function MempoolTransactionDetailPanel({
                     <AmountDisplay
                       amount={detail.fee}
                       size="xl"
-                      showFull
                     />
                   </div>
 

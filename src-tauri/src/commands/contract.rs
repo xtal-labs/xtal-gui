@@ -30,7 +30,7 @@ use xtal::transaction::builders::{
 };
 use xtal::transaction::{CurrencyType, MAX_GAS_LIMIT, MIN_GAS_PRICE};
 use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
-use xtal::vm::cage_contract::{CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
+use xtal::vm::cage_contract::{withdrawal_fee, CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
 use xtal::vm::CrystalVm;
 use xtal::wallet::database::models::{
     InputDetail, TransactionExecutionStatus, TransactionRecord, TransactionType,
@@ -175,6 +175,10 @@ pub struct PlanWithdrawalResponse {
     /// Upfront gas reservation per leg transaction, in shards (string)
     pub max_gas_fee_per_leg: String,
     pub leg_count: usize,
+    /// Exact total CAGE fee across all legs
+    pub cage_fee_total: Shards,
+    /// Amount the recipient receives after CAGE fees
+    pub net_amount: Shards,
 }
 
 /// Result of a multi-leg VM → UTXO withdrawal
@@ -766,6 +770,10 @@ struct WithdrawalPlan {
     gas_price: u64,
     /// Upfront gas reservation per leg transaction
     max_gas_fee: u64,
+    /// Sum of the CAGE fee each leg will be charged, in shards
+    cage_fee_total: u64,
+    /// What the recipient actually receives after CAGE fees
+    net_amount: u64,
     legs: Vec<PlannedSweepLeg>,
 }
 
@@ -824,14 +832,47 @@ fn prepare_withdrawal_plan(
     let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
     let legs = plan_vm_withdrawal_legs(&account_entries, total_amount, gas_limit, gas_price)?;
 
+    // The contract charges per leg and floors each one independently, so the
+    // total is the sum of per-leg fees — not a single rate applied to the whole.
+    let fee_bps = read_cage_fee_bps(&mpt)?;
+    let cage_fee_total = legs.iter().fold(0u64, |sum, leg| {
+        sum.saturating_add(withdrawal_fee(leg.amount, fee_bps))
+    });
+
     Ok(WithdrawalPlan {
         recipient: recipient.to_string(),
         total_amount,
         gas_price,
         // The planner already rejected gas_limit * gas_price overflow.
         max_gas_fee: gas_limit.saturating_mul(gas_price),
+        cage_fee_total,
+        net_amount: total_amount.saturating_sub(cage_fee_total),
         legs,
     })
+}
+
+/// Reads the CAGE withdrawal fee rate from contract storage.
+///
+/// `__fee_basis_points` is stored little-endian. Shared by the planner and
+/// `get_cage_config` so the rate behind a quoted fee is always the one the
+/// contract will actually charge.
+fn read_cage_fee_bps(mpt: &UnifiedMPT) -> Result<u64, String> {
+    let raw = mpt
+        .get_storage(
+            &CAGE_CONTRACT_ADDRESS,
+            FruitType::Apple,
+            b"__fee_basis_points",
+        )
+        .map_err(|e| format!("Failed to read CAGE fee config: {}", e))?;
+
+    match raw {
+        Some(bytes) if bytes.len() >= 8 => Ok(u64::from_le_bytes(
+            bytes[..8]
+                .try_into()
+                .map_err(|_| "Invalid fee bps length")?,
+        )),
+        _ => Err("Failed to read CAGE withdrawal fee from contract storage".to_string()),
+    }
 }
 
 /// CAGE `withdraw` params in the same shape the frontend passes to
@@ -869,6 +910,8 @@ pub async fn plan_withdrawal(
     Ok(PlanWithdrawalResponse {
         leg_count: plan.legs.len(),
         max_gas_fee_per_leg: plan.max_gas_fee.to_string(),
+        cage_fee_total: plan.cage_fee_total.into(),
+        net_amount: plan.net_amount.into(),
         legs: plan
             .legs
             .iter()
@@ -878,6 +921,30 @@ pub async fn plan_withdrawal(
             })
             .collect(),
     })
+}
+
+/// Quote the CAGE withdrawal fee for a single amount, before a plan exists.
+///
+/// The form step needs a figure as the user types, but the exact charge depends
+/// on how the sweep splits into legs (each floored independently). This quotes
+/// the single-leg case; `plan_withdrawal` returns the exact total.
+#[tauri::command]
+pub async fn estimate_cage_withdrawal_fee(
+    state: State<'_, AppState>,
+    amount: Shards,
+) -> Result<Shards, String> {
+    let mpt = if let Some((stem_state, _state_root)) = state.services.blockchain().stem_state() {
+        stem_state
+    } else {
+        state
+            .services
+            .blockchain()
+            .get_current_state_mpt()
+            .map_err(|e| format!("Failed to load current state: {}", e))?
+    };
+
+    let fee_bps = read_cage_fee_bps(&mpt)?;
+    Ok(withdrawal_fee(amount.get(), fee_bps).into())
 }
 
 /// Withdraw VM account balance to a UTXO address via the CAGE bridge,
@@ -1080,25 +1147,7 @@ pub async fn get_cage_config(state: State<'_, AppState>) -> Result<CageConfig, S
     ));
     let mpt = Arc::new(UnifiedMPT::new(backend).map_err(|e| format!("MPT error: {}", e))?);
 
-    // __fee_basis_points key — stored as little-endian u64
-    let fee_bps_value = mpt
-        .get_storage(
-            &CAGE_CONTRACT_ADDRESS,
-            FruitType::Apple,
-            b"__fee_basis_points",
-        )
-        .map_err(|e| format!("Failed to read CAGE fee config: {}", e))?;
-
-    let withdraw_fee_bps = match fee_bps_value {
-        Some(bytes) if bytes.len() >= 8 => u64::from_le_bytes(
-            bytes[..8]
-                .try_into()
-                .map_err(|_| "Invalid fee bps length")?,
-        ),
-        _ => {
-            return Err("Failed to read CAGE withdrawal fee from contract storage".to_string());
-        }
-    };
+    let withdraw_fee_bps = read_cage_fee_bps(&mpt)?;
 
     Ok(CageConfig {
         address: address_hex,

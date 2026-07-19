@@ -863,6 +863,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_contract_storage_value,
             commands::estimate_contract_gas,
             commands::get_cage_config,
+            commands::estimate_cage_withdrawal_fee,
             commands::load_contract_abi,
             commands::list_cached_contracts,
             commands::import_contract_abi,

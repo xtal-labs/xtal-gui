@@ -2,7 +2,7 @@
  * Validator types for the Validator tab
  *
  * NOTE: All monetary amounts are in shards (base units).
- * Use shardsToXtal() for display conversion.
+ * Format them with formatXtalExact()/formatXtalFull(), which stay exact above 2^53.
  */
 
 /** Per-fruit production count from backend */

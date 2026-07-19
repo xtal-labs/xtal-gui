@@ -45,7 +45,7 @@ import {
 } from "./ValidatorModals";
 import { useValidatorStore, useUiStore } from "@/stores";
 import { tauriCommand, useTauriCommand } from "@/hooks";
-import { cn, shardsToXtal, formatTimeAgo, parseXtalToShards, copyToClipboard, toShards, addShards } from "@/lib/utils";
+import { cn, formatXtalExact, formatTimeAgo, parseXtalToShards, copyToClipboard, toShards, addShards } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import { PAGE_SIZE, getPageOffset, normalizePage } from "@/lib/pagination";
 import type {
@@ -225,7 +225,7 @@ function FruitStakeRequirements({ fruitSpecs }: FruitStakeRequirementsProps) {
             >
               <span className="text-lg">{spec.emoji}</span>
               <span className="text-xs font-mono text-foreground-muted">
-                {shardsToXtal(spec.minStake).toLocaleString()}
+                {formatXtalExact(spec.minStake)}
               </span>
             </div>
           ))}
@@ -299,7 +299,7 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
                         <span className="font-heading">{s.fruitType}</span>
                       </td>
                       <td className="text-right font-mono tabular-nums">
-                        {shardsToXtal(s.minStake).toLocaleString()}
+                        {formatXtalExact(s.minStake)}
                       </td>
                       <td className="text-right">
                         <span className={cn(
@@ -359,6 +359,7 @@ export default function Validator() {
   const walletName = useValidatorStore((state) => state.walletName);
   const withdrawableStake = useValidatorStore((state) => state.withdrawableStake);
   const pendingStake = useValidatorStore((state) => state.pendingStake);
+  const totalStake = useValidatorStore((state) => state.totalStake);
   const effectiveStake = useValidatorStore((state) => state.effectiveStake);
   const availableBalance = useValidatorStore((state) => state.availableBalance);
   const pendingUnstake = useValidatorStore((state) => state.pendingUnstake);
@@ -457,7 +458,6 @@ export default function Validator() {
   const productionStats = isLoaded && personalProductionStats.length > 0
     ? personalProductionStats
     : wsProductionStats;
-  const totalStake = addShards(withdrawableStake, pendingStake);
   const parsedStakeAmount = parseXtalToShards(stakeAmount);
 
   // Modal state
@@ -627,13 +627,14 @@ export default function Validator() {
     if (!address) return;
     try {
       const info = await tauriCommand<ValidatorBalanceInfo>("get_validator_balance_info", { address });
-      setBalanceInfo(
-        info.availableBalance,
-        info.withdrawableStake ?? info.matureStake,
-        info.pendingStake,
-        info.pendingUnstake,
-        info.immatureBalance,
-      );
+      setBalanceInfo({
+        availableBalance: info.availableBalance,
+        withdrawableStake: info.withdrawableStake ?? info.matureStake,
+        pendingStake: info.pendingStake,
+        totalStake: info.totalStake,
+        pendingUnstake: info.pendingUnstake,
+        immatureBalance: info.immatureBalance,
+      });
     } catch (err) {
       console.error("Failed to fetch balance info:", err);
     }
@@ -1036,7 +1037,7 @@ export default function Validator() {
 
     // Check if user has sufficient balance including the builder-estimated fee.
     if (addShards(amountShards, stakeFeeEstimate.fee) > toShards(availableBalance)) {
-      setError(`Insufficient balance. Available: ${shardsToXtal(availableBalance).toLocaleString()} XTAL`);
+      setError(`Insufficient balance. Available: ${formatXtalExact(availableBalance)} XTAL`);
       return;
     }
 

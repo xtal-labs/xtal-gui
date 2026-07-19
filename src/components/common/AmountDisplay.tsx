@@ -4,7 +4,6 @@ interface AmountDisplayProps {
   amount: ShardAmount; // in shards
   className?: string;
   showSymbol?: boolean;
-  showFull?: boolean;
   size?: "sm" | "md" | "lg" | "xl";
   positive?: boolean;
   negative?: boolean;
@@ -21,12 +20,11 @@ export function AmountDisplay({
   amount,
   className,
   showSymbol = true,
-  showFull = false,
   size = "md",
   positive,
   negative,
 }: AmountDisplayProps) {
-  const displayAmount = showFull ? formatXtalFull(amount) : formatXtalFull(amount);
+  const displayAmount = formatXtalFull(amount);
 
   const colorClass = positive
     ? "text-success"

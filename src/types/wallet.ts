@@ -304,6 +304,14 @@ export interface SweepPlan {
   maxGasFeePerLeg: string;
   /** Number of transactions the sweep is split into */
   legCount: number;
+  /**
+   * Exact total CAGE fee across all legs, in shards. Withdrawal plans only —
+   * `plan_vm_transfer` does not cross the bridge and charges no CAGE fee.
+   * Computed in Rust by xtal::vm::cage_contract::withdrawal_fee.
+   */
+  cageFeeTotal?: string;
+  /** Amount the recipient receives after CAGE fees. Withdrawal plans only. */
+  netAmount?: string;
 }
 
 /**

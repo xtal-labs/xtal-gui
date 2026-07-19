@@ -20,11 +20,10 @@ import { ModalShell } from "@/components/ui/modal-shell";
 import { AmountDisplay, GasSettings, type GasConfig } from "@/components/common";
 import {
   cn,
-  SHARDS_PER_XTAL,
-  formatDecimalInput,
   getXtalInputError,
   isValidXtalInput,
   parseXtalToShards,
+  formatXtalInput,
   truncateAddress,
   toShards,
   addShards,
@@ -91,6 +90,9 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   // because the submitted legs aren't reflected in account balances yet, so a
   // re-plan would cover the full amount again and could double-withdraw.
   const [partialTxids, setPartialTxids] = useState<string[] | null>(null);
+  // Form-step CAGE fee quote. The formula lives in Rust so the UI never has to
+  // know the contract's rounding; the plan supersedes this on the confirm step.
+  const [estimatedCageFee, setEstimatedCageFee] = useState<bigint>(0n);
 
   // Pre-fill recipient with user's own address when modal opens
   useEffect(() => {
@@ -126,10 +128,6 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   const amountError = getXtalInputError(amount);
   const feeRateBps = cageConfig?.withdrawFeeBps;
   const cageConfigLoaded = cageConfig !== null && feeRateBps !== undefined;
-  const cageFee =
-    amountShards > 0n && feeRateBps !== undefined
-      ? (amountShards * BigInt(feeRateBps) + 9999n) / 10000n
-      : 0n;
   // A withdrawal is a CAGE contract call, so it must meet the contract-call gas
   // floor (minCallGas), not the lower intrinsic transfer floor (defaultGasLimit).
   const minCallGas = gasConfig?.minCallGas ?? 100_000;
@@ -155,26 +153,40 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   const uneconomicalLeg = plan?.legs.find((leg) => Number(leg.amount) <= maxGasFeePerLeg);
   const isPartialFailure = partialTxids !== null && partialTxids.length > 0;
 
-  // Exact CAGE fee that will be charged: the sum of per-leg fees, each computed
-  // like the contract's calculate_fee — floor(amount * bps / 10000) with a
-  // 1-shard floor per non-zero leg. Because each leg rounds (and floors)
-  // independently, this can exceed a single bps calc on the total by a few
-  // shards; showing the real sum keeps the confirm step honest. BigInt avoids
-  // precision loss on large balances (amount * bps overflows JS safe integers
-  // above ~9000 XTAL). Null before a plan exists — the form step falls back to
-  // the single-total estimate.
-  const planFeeShards =
-    plan && feeRateBps !== undefined
-      ? plan.legs.reduce((sum, leg) => {
-          const legAmount = BigInt(leg.amount);
-          if (legAmount <= 0n) return sum;
-          const fee = (legAmount * BigInt(feeRateBps)) / 10000n;
-          return sum + (fee === 0n ? 1n : fee);
-        }, 0n)
-      : null;
-  const cageFeeDisplay = planFeeShards !== null ? planFeeShards : cageFee;
-  const netAmountRaw = amountShards - cageFeeDisplay;
-  const netAmountDisplay = netAmountRaw > 0n ? netAmountRaw : 0n;
+  // The CAGE fee formula lives in Rust (xtal::vm::cage_contract::withdrawal_fee),
+  // mirroring the contract. The plan carries the exact per-leg total once it
+  // exists; before that the backend quotes the single-leg case as the user types.
+  const cageFeeDisplay =
+    plan?.cageFeeTotal !== undefined ? toShards(plan.cageFeeTotal) : estimatedCageFee;
+  const netAmountDisplay =
+    plan?.netAmount !== undefined
+      ? toShards(plan.netAmount)
+      : (() => {
+          const net = subShards(amountShards, estimatedCageFee);
+          return net > 0n ? net : 0n;
+        })();
+
+  useEffect(() => {
+    if (!isOpen || amountShards <= 0n) {
+      setEstimatedCageFee(0n);
+      return;
+    }
+    let isCurrent = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const fee = await tauriCommand<string>("estimate_cage_withdrawal_fee", {
+          amount: amountShards.toString(),
+        });
+        if (isCurrent) setEstimatedCageFee(toShards(fee));
+      } catch {
+        if (isCurrent) setEstimatedCageFee(0n);
+      }
+    }, 250);
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(timer);
+    };
+  }, [isOpen, amountShards]);
 
   // Withdrawals only support UTXO/Base58 recipients.
   const parsedAddress = parseAddressInput(recipient);
@@ -479,7 +491,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                       // reservation; fall back to the aggregate while loading.
                       const fallback = subShards(maxBalance, maxGasFee);
                       const maxShards = withdrawableNow ?? (fallback > 0n ? fallback : 0n);
-                      setAmount(formatDecimalInput(Number(maxShards) / SHARDS_PER_XTAL));
+                      setAmount(formatXtalInput(maxShards));
                     }}
                   >
                     MAX
@@ -513,10 +525,10 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                   <span>{withdrawableNow !== null ? "Withdrawable now:" : "VM Balance:"}</span>
                   <AmountDisplay amount={withdrawableNow ?? maxBalance} size="sm" showSymbol />
                 </div>
-                {cageFee > 0 && cageConfigLoaded && (
+                {cageFeeDisplay > 0n && cageConfigLoaded && (
                   <div className="flex items-center justify-between text-xs text-foreground-muted">
                     <span>{(feeRateBps! / 100).toFixed(1)}% CAGE fee:</span>
-                    <AmountDisplay amount={cageFee} size="sm" showSymbol />
+                    <AmountDisplay amount={cageFeeDisplay} size="sm" showSymbol />
                   </div>
                 )}
               </div>

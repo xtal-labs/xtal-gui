@@ -86,14 +86,62 @@ function splitXtal(shards: ShardAmount | null | undefined): {
 }
 
 /**
- * Convert shards to XTAL as a float.
+ * Format a shard amount as XTAL, exactly, at any magnitude.
  *
- * Lossy above 2^53 shards by construction — use only where an approximation is
- * acceptable (ratios, chart scales). For anything displayed as a balance, use
- * formatXtal/formatXtalFull, which stay exact.
+ * The whole-XTAL part of a u64 shard amount is at most 18,446,744,073, well
+ * inside 2^53, so grouping it through `toLocaleString` is exact. The fractional
+ * digits are carried as a string and never touch a float, which is what makes
+ * this correct above the 9,007,199 XTAL mark where float division corrupts.
+ *
+ * Shape options exist so the exact path can reproduce every rendering the app
+ * already uses: `maxDecimals`/`minDecimals` bound the fraction (rounding half-up
+ * like `toLocaleString`, carrying into the whole part), and `grouping` toggles
+ * thousands separators.
  */
-export function shardsToXtal(shards: ShardAmount): number {
-  return Number(toShards(shards)) / SHARDS_PER_XTAL;
+export function formatXtalExact(
+  shards: ShardAmount,
+  { maxDecimals = 3, minDecimals = 0, grouping = true }: FormatXtalOptions = {},
+): string {
+  const { negative, whole, fraction } = splitXtal(shards);
+
+  let roundedWhole = whole;
+  let digits = fraction.slice(0, maxDecimals);
+
+  // Round half-up on the first dropped digit, carrying into the whole part
+  // when the fraction rolls over (e.g. 0.9996 at 3 decimals → 1).
+  if (fraction.charCodeAt(maxDecimals) >= FIVE_CHAR_CODE) {
+    const bumped = (BigInt(digits || "0") + 1n).toString().padStart(maxDecimals, "0");
+    if (bumped.length > maxDecimals) {
+      roundedWhole += 1n;
+      digits = "0".repeat(maxDecimals);
+    } else {
+      digits = bumped;
+    }
+  }
+
+  digits = digits.replace(/0+$/, "").padEnd(minDecimals, "0");
+
+  const wholeText = grouping ? Number(roundedWhole).toLocaleString() : roundedWhole.toString();
+  const isZero = roundedWhole === 0n && !/[1-9]/.test(digits);
+  const sign = negative && !isZero ? "-" : "";
+
+  return digits ? `${sign}${wholeText}.${digits}` : `${sign}${wholeText}`;
+}
+
+interface FormatXtalOptions {
+  maxDecimals?: number;
+  minDecimals?: number;
+  grouping?: boolean;
+}
+
+const FIVE_CHAR_CODE = "5".charCodeAt(0);
+
+/**
+ * Exact XTAL decimal for an amount input field: full precision, no grouping,
+ * no trailing zeros. Round-trips through `parseXtalToShards`.
+ */
+export function formatXtalInput(shards: ShardAmount): string {
+  return formatXtalExact(shards, { maxDecimals: XTAL_DECIMALS, grouping: false });
 }
 
 /**
@@ -133,16 +181,11 @@ export function formatXtal(shards: ShardAmount): string {
  * Format a full XTAL amount with all decimals, exact at any magnitude.
  */
 export function formatXtalFull(shards: ShardAmount): string {
-  const { negative, whole, fraction } = splitXtal(shards);
-  return `${negative ? "-" : ""}${whole}.${fraction}`;
-}
-
-/**
- * Format a decimal number for input display, preventing exponential notation.
- */
-export function formatDecimalInput(value: number, decimals: number = XTAL_DECIMALS): string {
-  if (value === 0) return "0";
-  return value.toFixed(decimals).replace(/\.?0+$/, "");
+  return formatXtalExact(shards, {
+    maxDecimals: XTAL_DECIMALS,
+    minDecimals: XTAL_DECIMALS,
+    grouping: false,
+  });
 }
 
 /**

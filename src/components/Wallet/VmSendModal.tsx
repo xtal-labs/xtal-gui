@@ -19,11 +19,10 @@ import { ModalShell } from "@/components/ui/modal-shell";
 import { AmountDisplay, GasSettings, type GasConfig } from "@/components/common";
 import {
   cn,
-  SHARDS_PER_XTAL,
-  formatDecimalInput,
   getXtalInputError,
   isValidXtalInput,
   parseXtalToShards,
+  formatXtalInput,
   truncateAddress,
   toShards,
   addShards,
@@ -426,7 +425,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
                       // reservation; fall back to the aggregate while loading.
                       const fallback = subShards(maxBalance, maxFee);
                       const maxShards = sendableNow ?? (fallback > 0n ? fallback : 0n);
-                      setAmount(formatDecimalInput(Number(maxShards) / SHARDS_PER_XTAL));
+                      setAmount(formatXtalInput(maxShards));
                     }}
                   >
                     MAX

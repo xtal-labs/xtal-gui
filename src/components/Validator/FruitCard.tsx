@@ -9,7 +9,7 @@ import {
   YAxis,
 } from "recharts";
 import { Switch } from "@/components/ui/switch";
-import { cn, shardsToXtal, formatDuration, formatNumber, type ShardAmount } from "@/lib/utils";
+import { cn, formatXtalExact, formatDuration, formatNumber, type ShardAmount } from "@/lib/utils";
 import { FRUIT_COLORS } from "@/lib/fruitColors";
 import { difficultyDelta } from "@/lib/difficulty";
 import { tauriCommand } from "@/hooks";
@@ -277,7 +277,7 @@ function FruitCard({
         ) : (
           <div className="text-xs text-warning font-heading flex items-center gap-1">
             <AlertCircle className="h-3 w-3" />
-            Need {shardsToXtal(shortfall).toLocaleString()} more XTAL
+            Need {formatXtalExact(shortfall)} more XTAL
           </div>
         )}
 
@@ -358,7 +358,7 @@ function FruitCard({
                 <span className={cn("inline-block h-1 w-1 rounded-full", colors.icon.replace("text-", "bg-"))} />
                 <span className="text-[11px] text-white/50 uppercase tracking-wider">Stake</span>
               </div>
-              <span className="font-mono text-xs text-white/80">{shardsToXtal(minStake).toLocaleString()} XTAL</span>
+              <span className="font-mono text-xs text-white/80">{formatXtalExact(minStake)} XTAL</span>
             </div>
             {targetIntervalSecs !== undefined && (
               <div className="flex items-center justify-between gap-3">

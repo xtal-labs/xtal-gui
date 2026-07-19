@@ -784,7 +784,6 @@ export function TransactionDetailPanel({
                       size="xl"
                       positive={amountPresentation.positive}
                       negative={amountPresentation.negative}
-                      showFull
                     />
                   </div>
 

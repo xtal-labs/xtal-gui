@@ -4,7 +4,7 @@ import { Layers, Database, Activity, Cpu, ArrowUpDown, Copy, Check } from "lucid
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { cn, SHARDS_PER_XTAL, toShards, compareShards, type ShardAmount } from "@/lib/utils";
+import { cn, SHARDS_PER_XTAL, toShards, compareShards, formatXtalExact, type ShardAmount } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
 import { MempoolTransactionDetailPanel } from "./MempoolTransactionDetailPanel";
 
@@ -48,11 +48,12 @@ const formatAge = (secs: number): string => {
   return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
 };
 
+const MIN_XTAL_DISPLAY_SHARDS = SHARDS_PER_XTAL / 10_000; // 0.0001 XTAL
+
 const formatFee = (fee: ShardAmount): string => {
   const shards = toShards(fee);
-  const xtal = Number(shards) / SHARDS_PER_XTAL;
-  if (xtal < 0.0001) return `${shards.toLocaleString()} shards`;
-  return `${xtal.toFixed(6)} XTAL`;
+  if (shards < BigInt(MIN_XTAL_DISPLAY_SHARDS)) return `${shards.toLocaleString()} shards`;
+  return `${formatXtalExact(shards, { maxDecimals: 6, minDecimals: 6, grouping: false })} XTAL`;
 };
 
 // Map transaction type to badge variant (matching toast colors)

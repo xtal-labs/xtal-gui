@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { AmountDisplay } from "@/components/common";
 import { MnemonicInput } from "@/components/common/MnemonicInput";
 import { RecoveryPhraseDisplay } from "@/components/common/RecoveryPhraseDisplay";
-import { isValidXtalInput, shardsToXtal, toShards, type ShardAmount } from "@/lib/utils";
+import { isValidXtalInput, formatXtalExact, toShards, type ShardAmount } from "@/lib/utils";
 import type { ValidatorWalletCreationResult } from "@/types";
 
 // Modal IDs
@@ -476,7 +476,7 @@ function StakeModal({
             />
           </div>
           <div className="text-sm text-foreground-muted bg-muted/50 p-3 chamfered-sm space-y-1">
-            <p>Available: <span className="font-mono font-semibold text-foreground">{shardsToXtal(availableBalance).toLocaleString()} XTAL</span></p>
+            <p>Available: <span className="font-mono font-semibold text-foreground">{formatXtalExact(availableBalance)} XTAL</span></p>
             <p className="flex items-center gap-1.5">
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -487,14 +487,14 @@ function StakeModal({
                 </TooltipContent>
               </Tooltip>
               <span>(producing now):</span>
-              <span className="font-mono">{shardsToXtal(effectiveStake).toLocaleString()} XTAL</span>
+              <span className="font-mono">{formatXtalExact(effectiveStake)} XTAL</span>
             </p>
-            <p>Mature stake <span className="text-foreground-muted">(withdrawable)</span>: <span className="font-mono">{shardsToXtal(withdrawableStake).toLocaleString()} XTAL</span></p>
+            <p>Mature stake <span className="text-foreground-muted">(withdrawable)</span>: <span className="font-mono">{formatXtalExact(withdrawableStake)} XTAL</span></p>
             {toShards(pendingStake) > 0n && (
-              <p className="text-warning">Pending stake <span className="opacity-80">(locked, maturing)</span>: <span className="font-mono">{shardsToXtal(pendingStake).toLocaleString()} XTAL</span></p>
+              <p className="text-warning">Pending stake <span className="opacity-80">(locked, maturing)</span>: <span className="font-mono">{formatXtalExact(pendingStake)} XTAL</span></p>
             )}
             <div className="h-px bg-border/60 my-2" />
-            <p>Total stake <span className="text-foreground-muted">(mature + pending)</span>: <span className="font-mono font-semibold text-foreground">{shardsToXtal(totalStake).toLocaleString()} XTAL</span></p>
+            <p>Total stake <span className="text-foreground-muted">(mature + pending)</span>: <span className="font-mono font-semibold text-foreground">{formatXtalExact(totalStake)} XTAL</span></p>
             <div className="h-px bg-border/60 my-2" />
             <div className="flex items-center justify-between">
               <span>Network fee:</span>
@@ -608,9 +608,9 @@ function UnstakeModal({
             />
           </div>
           <div className="text-sm text-foreground-muted bg-muted/50 p-3 chamfered-sm space-y-1">
-            <p>Withdrawable stake: <span className="font-mono font-semibold text-foreground">{shardsToXtal(withdrawableStake).toLocaleString()} XTAL</span></p>
+            <p>Withdrawable stake: <span className="font-mono font-semibold text-foreground">{formatXtalExact(withdrawableStake)} XTAL</span></p>
             {toShards(pendingUnstake) > 0n && (
-              <p className="text-warning">Pending unstake: <span className="font-mono">{shardsToXtal(pendingUnstake).toLocaleString()} XTAL</span></p>
+              <p className="text-warning">Pending unstake: <span className="font-mono">{formatXtalExact(pendingUnstake)} XTAL</span></p>
             )}
             <div className="h-px bg-border/60 my-2" />
             <div className="flex items-center justify-between">
