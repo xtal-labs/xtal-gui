@@ -506,10 +506,10 @@ export function MempoolTransactionDetailPanel({
                             Max Fee
                           </p>
                           <span className="text-sm font-mono font-semibold tabular-nums">
-                            {detail.gasLimit != null && detail.gasPrice != null
-                              ? formatGas(detail.gasLimit * detail.gasPrice)
-                              : detail.isSponsored
-                                ? "0"
+                            {detail.isSponsored
+                              ? "0"
+                              : toShards(detail.fee) > 0n
+                                ? formatGas(detail.fee)
                                 : "—"}
                           </span>
                         </CardContent>

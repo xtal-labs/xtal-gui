@@ -15,33 +15,27 @@ use xtal::vm::cage_contract::CAGE_CONTRACT_ADDRESS;
 
 use crate::commands::wallet::{TransactionInput, TransactionOutput};
 
+/// The gas a VM transaction reserves upfront: `gas_limit * gas_price`, or
+/// zero when execution is sponsored.
+///
+/// Checked rather than saturating — `None` reports "we cannot say", which
+/// callers render as unknown. A saturated product would be displayed as a
+/// `u64::MAX` fee, which is worse than admitting ignorance.
 pub fn vm_transaction_fee(tx: &Transaction) -> Option<u64> {
     let sponsored = tx.requests_free_execution();
 
-    match tx {
-        Transaction::ContractCall(call_tx) => Some(if sponsored {
-            0
-        } else {
-            call_tx
-                .gas_limit
-                .saturating_mul(call_tx.gas_price.unwrap_or(MIN_GAS_PRICE))
-        }),
-        Transaction::ContractDeploy(deploy_tx) => Some(if sponsored {
-            0
-        } else {
-            deploy_tx
-                .gas_limit
-                .saturating_mul(deploy_tx.gas_price.unwrap_or(MIN_GAS_PRICE))
-        }),
-        Transaction::AccountTransfer(transfer_tx) => Some(if sponsored {
-            0
-        } else {
-            transfer_tx
-                .gas_limit
-                .saturating_mul(transfer_tx.gas_price.unwrap_or(MIN_GAS_PRICE))
-        }),
-        _ => None,
+    let (gas_limit, gas_price) = match tx {
+        Transaction::ContractCall(call_tx) => (call_tx.gas_limit, call_tx.gas_price),
+        Transaction::ContractDeploy(deploy_tx) => (deploy_tx.gas_limit, deploy_tx.gas_price),
+        Transaction::AccountTransfer(transfer_tx) => (transfer_tx.gas_limit, transfer_tx.gas_price),
+        _ => return None,
+    };
+
+    if sponsored {
+        return Some(0);
     }
+
+    gas_limit.checked_mul(gas_price.unwrap_or(MIN_GAS_PRICE))
 }
 
 /// Extract details from a Transaction enum

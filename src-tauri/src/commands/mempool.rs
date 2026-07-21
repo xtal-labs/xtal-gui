@@ -229,8 +229,8 @@ pub struct MempoolTransactionDetail {
     // UTXO-specific fields (populated for Standard/Stake/Unstake)
     pub inputs: Option<Vec<TransactionInput>>,
     pub outputs: Option<Vec<TransactionOutput>>,
-    pub total_input: Option<u64>,
-    pub total_output: Option<u64>,
+    pub total_input: Option<Shards>,
+    pub total_output: Option<Shards>,
 
     // VM-specific fields (populated for ContractCall/ContractDeploy/AccountTransfer)
     pub caller: Option<String>,
@@ -239,7 +239,7 @@ pub struct MempoolTransactionDetail {
     pub gas_limit: Option<u64>,
     pub gas_price: Option<u64>,
     pub nonce: Option<u64>,
-    pub value: Option<u64>,
+    pub value: Option<Shards>,
     pub data_size: Option<usize>,
 
     // ContractDeploy-specific
@@ -247,7 +247,7 @@ pub struct MempoolTransactionDetail {
 
     // AccountTransfer-specific
     pub recipient: Option<String>,
-    pub transfer_amount: Option<u64>,
+    pub transfer_amount: Option<Shards>,
     pub currency: Option<String>,
 }
 
@@ -309,46 +309,55 @@ pub async fn get_mempool_transaction_detail(
             let blockchain = state.services.blockchain();
             let inputs = extract_inputs(&std_tx.inputs, &blockchain).unwrap_or_default();
             let outputs = extract_outputs(&std_tx.outputs, "p2pkh");
-            let total_input: u64 = inputs
+            let total_input = inputs
                 .iter()
                 .filter_map(|i| i.amount)
                 .map(Shards::get)
-                .sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
+                .fold(0u64, u64::saturating_add);
+            let total_output = outputs
+                .iter()
+                .map(|o| o.amount.get())
+                .fold(0u64, u64::saturating_add);
             detail.inputs = Some(inputs);
             detail.outputs = Some(outputs);
-            detail.total_input = Some(total_input);
-            detail.total_output = Some(total_output);
+            detail.total_input = Some(Shards::from(total_input));
+            detail.total_output = Some(Shards::from(total_output));
         }
         Transaction::Stake(stake_tx) => {
             let blockchain = state.services.blockchain();
             let inputs = extract_inputs(&stake_tx.inputs, &blockchain).unwrap_or_default();
             let outputs = extract_outputs(&stake_tx.outputs, "stake");
-            let total_input: u64 = inputs
+            let total_input = inputs
                 .iter()
                 .filter_map(|i| i.amount)
                 .map(Shards::get)
-                .sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
+                .fold(0u64, u64::saturating_add);
+            let total_output = outputs
+                .iter()
+                .map(|o| o.amount.get())
+                .fold(0u64, u64::saturating_add);
             detail.inputs = Some(inputs);
             detail.outputs = Some(outputs);
-            detail.total_input = Some(total_input);
-            detail.total_output = Some(total_output);
+            detail.total_input = Some(Shards::from(total_input));
+            detail.total_output = Some(Shards::from(total_output));
         }
         Transaction::Unstake(unstake_tx) => {
             let blockchain = state.services.blockchain();
             let inputs = extract_inputs(&unstake_tx.inputs, &blockchain).unwrap_or_default();
             let outputs = extract_outputs(&unstake_tx.outputs, "unstake");
-            let total_input: u64 = inputs
+            let total_input = inputs
                 .iter()
                 .filter_map(|i| i.amount)
                 .map(Shards::get)
-                .sum();
-            let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
+                .fold(0u64, u64::saturating_add);
+            let total_output = outputs
+                .iter()
+                .map(|o| o.amount.get())
+                .fold(0u64, u64::saturating_add);
             detail.inputs = Some(inputs);
             detail.outputs = Some(outputs);
-            detail.total_input = Some(total_input);
-            detail.total_output = Some(total_output);
+            detail.total_input = Some(Shards::from(total_input));
+            detail.total_output = Some(Shards::from(total_output));
         }
         Transaction::ContractCall(cc_tx) => {
             let pkh = hash_public_key(&cc_tx.caller);
@@ -358,7 +367,7 @@ pub async fn get_mempool_transaction_detail(
             detail.gas_limit = Some(cc_tx.gas_limit);
             detail.gas_price = cc_tx.gas_price;
             detail.nonce = Some(cc_tx.nonce);
-            detail.value = Some(cc_tx.value);
+            detail.value = Some(Shards::from(cc_tx.value));
             detail.data_size = Some(cc_tx.data.len());
         }
         Transaction::ContractDeploy(cd_tx) => {
@@ -374,7 +383,7 @@ pub async fn get_mempool_transaction_detail(
             let pkh = hash_public_key(&at_tx.sender);
             detail.caller = Some(format!("0x{}", hex::encode(pkh)));
             detail.recipient = Some(format!("0x{}", hex::encode(at_tx.recipient.as_bytes())));
-            detail.transfer_amount = Some(at_tx.amount);
+            detail.transfer_amount = Some(Shards::from(at_tx.amount));
             detail.currency = Some(format!("{:?}", at_tx.currency));
             detail.gas_limit = Some(at_tx.gas_limit);
             detail.gas_price = at_tx.gas_price;
