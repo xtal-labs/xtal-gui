@@ -26,15 +26,13 @@ import {
   formatXtalInput,
   truncateAddress,
   toShards,
-  addShards,
-  subShards,
   type ShardAmount,
 } from "@/lib/utils";
 import { parseAddressInput } from "@/lib/address";
 import { tauriCommand } from "@/hooks";
 import { useUiStore, useWalletStore } from "@/stores";
 import type { CageConfig } from "@/types/contract";
-import type { SweepPlan, SweepSubmitResult, VmAccountBalance } from "@/types/wallet";
+import type { SweepPlan, SweepSubmitResult } from "@/types/wallet";
 
 interface WithdrawModalProps {
   isOpen: boolean;
@@ -44,10 +42,6 @@ interface WithdrawModalProps {
 }
 
 type WithdrawStep = "form" | "confirm" | "sending" | "success" | "error";
-
-// CAGE contract minimum per withdraw call — accounts whose spendable balance
-// (balance minus per-leg gas reservation) falls below this can't fund a leg.
-const MIN_WITHDRAW_LEG_SHARDS = 1000;
 
 export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }: WithdrawModalProps) {
   const { addToast } = useUiStore();
@@ -59,16 +53,11 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   // CAGE bridge config from parent lib (address + current withdrawal fee bps)
   const [cageConfig, setCageConfig] = useState<CageConfig | null>(null);
 
-  // Per-account VM balances — one withdraw call can only draw from a single
-  // account, so validation must run against per-account spendable, not the sum.
-  const [vmAccounts, setVmAccounts] = useState<VmAccountBalance | null>(null);
-
   useEffect(() => {
     if (isOpen) {
       Promise.all([
         tauriCommand<GasConfig>("get_gas_config").then(setGasConfig).catch(() => {}),
         tauriCommand<CageConfig>("get_cage_config").then(setCageConfig).catch(() => {}),
-        tauriCommand<VmAccountBalance>("get_vm_account_balance").then(setVmAccounts).catch(() => {}),
       ]);
     }
   }, [isOpen]);
@@ -93,6 +82,11 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   // Form-step CAGE fee quote. The formula lives in Rust so the UI never has to
   // know the contract's rounding; the plan supersedes this on the confirm step.
   const [estimatedCageFee, setEstimatedCageFee] = useState<bigint>(0n);
+  const [estimatedNetAmount, setEstimatedNetAmount] = useState<bigint>(0n);
+  // Both quoted by the backend from the current gas policy, so the form can
+  // show a max and a fee before a plan exists without deriving either.
+  const [maxWithdrawable, setMaxWithdrawable] = useState<ShardAmount | null>(null);
+  const [maxGasFeeQuote, setMaxGasFeeQuote] = useState<ShardAmount | null>(null);
 
   // Pre-fill recipient with user's own address when modal opens
   useEffect(() => {
@@ -117,7 +111,8 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
         setPlanLoading(false);
         setSweepResult(null);
         setPartialTxids(null);
-        setVmAccounts(null);
+        setMaxWithdrawable(null);
+        setMaxGasFeeQuote(null);
       }, 200);
     }
   }, [isOpen]);
@@ -133,38 +128,31 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
   const minCallGas = gasConfig?.minCallGas ?? 100_000;
   const effectiveGasLimit = parseInt(gasLimit) || minCallGas;
   const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
-  const maxGasFee = effectiveGasLimit * effectiveGasPrice;
-
-  // Each leg draws from a single account and reserves its own gas upfront, so
-  // the withdrawable total is the sum of per-account spendable balances — NOT
-  // the aggregate VM balance, and gas is never added on top of the amount here.
-  const withdrawableNow =
-    vmAccounts?.accounts.reduce((sum, account) => {
-      const spendable = subShards(account.balance, maxGasFee);
-      return spendable >= BigInt(MIN_WITHDRAW_LEG_SHARDS) ? sum + spendable : sum;
-    }, 0n) ?? null;
+  // Every figure below is quoted by the Rust wallet. This component must not
+  // multiply gas limit by gas price, add a gas reservation to an amount, or
+  // reimplement the planner's per-leg minimum — the sweep planner owns those
+  // rules, and the TS copy that used to live here omitted its dust guard, so
+  // MAX could produce an amount the planner then rejected.
+  const maxGasFee = toShards(maxGasFeeQuote ?? "0");
+  const withdrawableNow = maxWithdrawable !== null ? toShards(maxWithdrawable) : null;
   const hasInsufficientFunds =
     withdrawableNow !== null && amountShards > withdrawableNow && amountShards > 0n;
 
   // Plan-derived values (available on the confirm step)
-  const maxGasFeePerLeg = plan ? Number(plan.maxGasFeePerLeg) : maxGasFee;
-  const totalMaxGasFee = plan ? plan.legCount * Number(plan.maxGasFeePerLeg) : maxGasFee;
-  const totalDeducted = addShards(amountShards, totalMaxGasFee);
-  const uneconomicalLeg = plan?.legs.find((leg) => Number(leg.amount) <= maxGasFeePerLeg);
+  const maxGasFeePerLeg = toShards(plan?.maxGasFeePerLeg ?? maxGasFeeQuote ?? "0");
+  const totalMaxGasFee = toShards(plan?.totalMaxGasFee ?? maxGasFeeQuote ?? "0");
+  const totalDeducted = toShards(plan?.totalDeducted ?? "0");
+  const uneconomicalLeg = plan?.legs.find((leg) => leg.isUneconomical);
   const isPartialFailure = partialTxids !== null && partialTxids.length > 0;
 
-  // The CAGE fee formula lives in Rust (xtal::vm::cage_contract::withdrawal_fee),
-  // mirroring the contract. The plan carries the exact per-leg total once it
-  // exists; before that the backend quotes the single-leg case as the user types.
+  // The CAGE fee is summed per leg in Rust (each floored independently by the
+  // contract), so it cannot be derived from a rate and a total. The plan
+  // carries the exact figure once it exists; before that the backend quotes
+  // the single-leg case as the user types.
   const cageFeeDisplay =
     plan?.cageFeeTotal !== undefined ? toShards(plan.cageFeeTotal) : estimatedCageFee;
   const netAmountDisplay =
-    plan?.netAmount !== undefined
-      ? toShards(plan.netAmount)
-      : (() => {
-          const net = subShards(amountShards, estimatedCageFee);
-          return net > 0n ? net : 0n;
-        })();
+    plan?.netAmount !== undefined ? toShards(plan.netAmount) : estimatedNetAmount;
 
   useEffect(() => {
     if (!isOpen || amountShards <= 0n) {
@@ -177,9 +165,17 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
         const fee = await tauriCommand<string>("estimate_cage_withdrawal_fee", {
           amount: amountShards.toString(),
         });
-        if (isCurrent) setEstimatedCageFee(toShards(fee));
+        if (isCurrent) {
+          const feeShards = toShards(fee);
+          setEstimatedCageFee(feeShards);
+          const net = amountShards - feeShards;
+          setEstimatedNetAmount(net > 0n ? net : 0n);
+        }
       } catch {
-        if (isCurrent) setEstimatedCageFee(0n);
+        if (isCurrent) {
+          setEstimatedCageFee(0n);
+          setEstimatedNetAmount(0n);
+        }
       }
     }, 250);
     return () => {
@@ -187,6 +183,36 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
       window.clearTimeout(timer);
     };
   }, [isOpen, amountShards]);
+
+  // Quote the withdrawable maximum and the per-leg gas reservation whenever
+  // the gas policy changes. The maximum honours the contract's per-leg
+  // minimum and the planner's dust guard, neither of which is reproducible
+  // here.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    const gasArgs = { gasLimit: effectiveGasLimit, gasPrice: effectiveGasPrice };
+
+    tauriCommand<ShardAmount>("max_cage_withdrawable", gasArgs)
+      .then((value) => {
+        if (!cancelled) setMaxWithdrawable(value);
+      })
+      .catch(() => {
+        if (!cancelled) setMaxWithdrawable(null);
+      });
+
+    tauriCommand<ShardAmount>("quote_max_gas_fee", gasArgs)
+      .then((value) => {
+        if (!cancelled) setMaxGasFeeQuote(value);
+      })
+      .catch(() => {
+        if (!cancelled) setMaxGasFeeQuote(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, effectiveGasLimit, effectiveGasPrice]);
 
   // Withdrawals only support UTXO/Base58 recipients.
   const parsedAddress = parseAddressInput(recipient);
@@ -487,12 +513,12 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                     type="button"
                     className="text-xs text-primary hover:text-primary/80 font-heading"
                     onClick={() => {
-                      // Per-account spendable already excludes the per-leg gas
-                      // reservation; fall back to the aggregate while loading.
-                      const fallback = subShards(maxBalance, maxGasFee);
-                      const maxShards = withdrawableNow ?? (fallback > 0n ? fallback : 0n);
-                      setAmount(formatXtalInput(maxShards));
+                      // Backend-quoted: already net of every leg's gas
+                      // reservation and the contract's per-leg minimum.
+                      if (withdrawableNow === null) return;
+                      setAmount(formatXtalInput(withdrawableNow));
                     }}
+                    disabled={withdrawableNow === null}
                   >
                     MAX
                   </button>
@@ -621,7 +647,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                       <span className="font-mono text-foreground-muted">
                         {truncateAddress(leg.fromAddress)}
                       </span>
-                      <AmountDisplay amount={Number(leg.amount)} size="sm" showSymbol />
+                      <AmountDisplay amount={leg.amount} size="sm" showSymbol />
                     </div>
                   ))}
                 </div>
@@ -657,7 +683,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                   <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
                   <p className="text-xs">
                     One of the {plan.legCount} transactions moves less value than its maximum gas
-                    cost ({Number(uneconomicalLeg.amount).toLocaleString()} vs{" "}
+                    cost ({toShards(uneconomicalLeg.amount).toLocaleString()} vs{" "}
                     {maxGasFeePerLeg.toLocaleString()} shards). You can proceed, but consider
                     leaving small balances unswept.
                   </p>

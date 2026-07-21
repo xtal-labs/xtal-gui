@@ -292,6 +292,13 @@ export interface SweepPlanLeg {
   fromAddress: string;
   /** Amount drawn from this account, in shards (string to avoid JS precision loss) */
   amount: string;
+  /** Gas reserved upfront for this leg, in shards */
+  maxGasFee: string;
+  /**
+   * This leg costs at least what it moves. Quoted by the Rust sweep planner
+   * so the UI never compares an amount against a fee itself.
+   */
+  isUneconomical: boolean;
 }
 
 /**
@@ -300,14 +307,28 @@ export interface SweepPlanLeg {
 export interface SweepPlan {
   /** One transaction per funded source account */
   legs: SweepPlanLeg[];
-  /** Max gas fee reserved per leg, in shards (string to avoid JS precision loss) */
-  maxGasFeePerLeg: string;
   /** Number of transactions the sweep is split into */
   legCount: number;
+  /** Gross total moved across all legs, in shards */
+  totalAmount: string;
+  /** Max gas fee reserved per leg, in shards (string to avoid JS precision loss) */
+  maxGasFeePerLeg: string;
+  /** Gas reserved across every leg — do NOT recompute as legCount * perLeg */
+  totalMaxGasFee: string;
+  /** Worst-case debit: totalAmount + totalMaxGasFee. Never add these yourself. */
+  totalDeducted: string;
+  /** Amount-independent maximum this gas policy can move, in shards */
+  maxSendable?: string;
+  /** Amount-independent maximum withdrawable. Withdrawal plans only. */
+  maxWithdrawable?: string;
+  /** The basis-point rate behind `cageFeeTotal`. Withdrawal plans only. */
+  feeBps?: number;
   /**
    * Exact total CAGE fee across all legs, in shards. Withdrawal plans only —
    * `plan_vm_transfer` does not cross the bridge and charges no CAGE fee.
-   * Computed in Rust by xtal::vm::cage_contract::withdrawal_fee.
+   *
+   * Summed per leg (each floored independently by the contract), so this is
+   * NOT the fee rate applied to the total.
    */
   cageFeeTotal?: string;
   /** Amount the recipient receives after CAGE fees. Withdrawal plans only. */

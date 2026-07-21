@@ -818,6 +818,8 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_vm_addresses,
             commands::plan_vm_transfer,
             commands::send_vm_transfer,
+            commands::max_vm_sendable,
+            commands::quote_max_gas_fee,
             commands::get_gas_config,
             // Validator commands
             commands::list_validators,
@@ -859,6 +861,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::deposit_utxo,
             commands::plan_withdrawal,
             commands::withdraw_to_utxo,
+            commands::max_cage_withdrawable,
             commands::get_contract_info,
             commands::get_contract_storage_value,
             commands::estimate_contract_gas,

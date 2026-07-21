@@ -25,14 +25,12 @@ import {
   formatXtalInput,
   truncateAddress,
   toShards,
-  addShards,
-  subShards,
   type ShardAmount,
 } from "@/lib/utils";
 import { parseAddressInput, formatVmAddress } from "@/lib/address";
 import { tauriCommand, tauriCommandSafe } from "@/hooks";
 import { useUiStore, useWalletStore } from "@/stores";
-import type { SweepPlan, SweepSubmitResult, VmAccountBalance } from "@/types/wallet";
+import type { SweepPlan, SweepSubmitResult } from "@/types/wallet";
 
 interface VmSendModalProps {
   isOpen: boolean;
@@ -48,12 +46,6 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
 
   // Gas config from backend
   const [gasConfig, setGasConfig] = useState<GasConfig | null>(null);
-
-  // Per-account VM balances — one transfer transaction can only draw from a
-  // single account, but the backend sweeps across accounts (one leg per
-  // funded account), so the sendable total is the sum of per-account
-  // spendable balances after each leg's gas reservation.
-  const [vmAccounts, setVmAccounts] = useState<VmAccountBalance | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -71,11 +63,6 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
         });
       }
     });
-    tauriCommand<VmAccountBalance>("get_vm_account_balance")
-      .then((balance) => {
-        if (!cancelled) setVmAccounts(balance);
-      })
-      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -98,6 +85,10 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
   // because the submitted legs aren't reflected in account balances yet, so a
   // re-plan would cover the full amount again and could double-send.
   const [partialTxids, setPartialTxids] = useState<string[] | null>(null);
+  // Both quoted by the backend from the current gas policy, so the form can
+  // show a max and a fee before a plan exists without deriving either.
+  const [maxSendable, setMaxSendable] = useState<ShardAmount | null>(null);
+  const [maxGasFeeQuote, setMaxGasFeeQuote] = useState<ShardAmount | null>(null);
 
   // Derived values
   const parsedAmountShards = parseXtalToShards(amount);
@@ -105,25 +96,50 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
   const amountError = getXtalInputError(amount);
   const effectiveGasLimit = parseInt(gasLimit) || gasConfig?.defaultGasLimit || 21000;
   const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
-  const maxFee = effectiveGasLimit * effectiveGasPrice;
 
-  // Each leg draws from a single account and reserves its own gas upfront, so
-  // the sendable total is the sum of per-account spendable balances — NOT the
-  // aggregate VM balance, and gas is never added on top of the amount here.
-  const sendableNow =
-    vmAccounts?.accounts.reduce((sum, account) => {
-      const spendable = subShards(account.balance, maxFee);
-      return sum + (spendable > 0n ? spendable : 0n);
-    }, 0n) ?? null;
+  // Every figure below is quoted by the Rust wallet. This component must not
+  // multiply gas limit by gas price, add a gas reservation to an amount, or
+  // subtract one to derive a maximum — the sweep planner owns those rules and
+  // reimplementing them here is how the two drifted apart before.
+  const maxFee = toShards(maxGasFeeQuote ?? "0");
+  const sendableNow = maxSendable !== null ? toShards(maxSendable) : null;
   const hasInsufficientFunds =
-    sendableNow !== null
-      ? amountShards > 0n && amountShards > sendableNow
-      : addShards(amountShards, maxFee) > toShards(maxBalance);
+    sendableNow !== null ? amountShards > 0n && amountShards > sendableNow : false;
 
   // Plan-derived values (available on the confirm step)
-  const maxGasFeePerLeg = plan ? Number(plan.maxGasFeePerLeg) : maxFee;
-  const totalMaxGasFee = plan ? plan.legCount * Number(plan.maxGasFeePerLeg) : maxFee;
+  const maxGasFeePerLeg = toShards(plan?.maxGasFeePerLeg ?? maxGasFeeQuote ?? "0");
+  const totalMaxGasFee = toShards(plan?.totalMaxGasFee ?? maxGasFeeQuote ?? "0");
+  const totalDeducted = toShards(plan?.totalDeducted ?? "0");
   const isPartialFailure = partialTxids !== null && partialTxids.length > 0;
+
+  // Quote the sendable maximum and the per-leg gas reservation from the
+  // backend whenever the gas policy changes. Both used to be derived here;
+  // the sweep planner is the only thing that knows the real rules.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    const gasArgs = { gasLimit: effectiveGasLimit, gasPrice: effectiveGasPrice };
+
+    tauriCommand<ShardAmount>("max_vm_sendable", gasArgs)
+      .then((value) => {
+        if (!cancelled) setMaxSendable(value);
+      })
+      .catch(() => {
+        if (!cancelled) setMaxSendable(null);
+      });
+
+    tauriCommand<ShardAmount>("quote_max_gas_fee", gasArgs)
+      .then((value) => {
+        if (!cancelled) setMaxGasFeeQuote(value);
+      })
+      .catch(() => {
+        if (!cancelled) setMaxGasFeeQuote(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, effectiveGasLimit, effectiveGasPrice]);
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -141,7 +157,8 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
         setPlanLoading(false);
         setSweepResult(null);
         setPartialTxids(null);
-        setVmAccounts(null);
+        setMaxSendable(null);
+        setMaxGasFeeQuote(null);
       }, 200);
     }
   }, [isOpen]);
@@ -421,12 +438,12 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
                     type="button"
                     className="text-xs text-accent hover:text-accent/80 font-heading"
                     onClick={() => {
-                      // Per-account spendable already excludes the per-leg gas
-                      // reservation; fall back to the aggregate while loading.
-                      const fallback = subShards(maxBalance, maxFee);
-                      const maxShards = sendableNow ?? (fallback > 0n ? fallback : 0n);
-                      setAmount(formatXtalInput(maxShards));
+                      // Backend-quoted: already net of every leg's gas
+                      // reservation and the per-leg eligibility rule.
+                      if (sendableNow === null) return;
+                      setAmount(formatXtalInput(sendableNow));
                     }}
+                    disabled={sendableNow === null}
                   >
                     MAX
                   </button>
@@ -540,7 +557,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
                       <span className="font-mono text-foreground-muted">
                         {truncateAddress(leg.fromAddress)}
                       </span>
-                      <AmountDisplay amount={Number(leg.amount)} size="sm" showSymbol />
+                      <AmountDisplay amount={leg.amount} size="sm" showSymbol />
                     </div>
                   ))}
                 </div>
@@ -562,7 +579,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-heading font-medium">TOTAL (MAX)</span>
                   <AmountDisplay
-                    amount={addShards(amountShards, totalMaxGasFee)}
+                    amount={totalDeducted}
                     size="sm"
                     showSymbol
                     className="font-medium"

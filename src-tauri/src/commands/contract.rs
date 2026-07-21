@@ -6,7 +6,7 @@
 use xtal::shards::Shards;
 
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::State;
@@ -16,7 +16,6 @@ use ed25519_dalek::Signer;
 use xtal::address_format::format_utxo_address;
 use xtal::blockchain::processing::utxo_verifier::consume_utxo_digest;
 use xtal::crypto::hash_public_key;
-use xtal::fruit::codec::Encode;
 use xtal::fruit::core::FruitType;
 use xtal::fruit::StemProvider;
 use xtal::gas::TX_BASE_GAS;
@@ -32,18 +31,17 @@ use xtal::transaction::{CurrencyType, MAX_GAS_LIMIT, MIN_GAS_PRICE};
 use xtal::vm::abi::{content_cid_from_bytes, AbiValue, ContractAbi, ParamType, ABI_CID_KEY};
 use xtal::vm::cage_contract::{withdrawal_fee, CageConsumeUtxoCallData, CAGE_CONTRACT_ADDRESS};
 use xtal::vm::CrystalVm;
-use xtal::wallet::database::models::{
-    InputDetail, TransactionExecutionStatus, TransactionRecord, TransactionType,
-};
 use xtal::wallet::database::queries::WalletQueries;
 
 use crate::commands::wallet::{
-    no_single_sender_message, plan_vm_withdrawal_legs, select_vm_sender_entry,
-    shorten_txid_like_tokens, submit_sweep_legs, surfaced_wallet_account_entries,
-    wallet_owned_pkhs_from_queries, PlannedLegView, PlannedSweepLeg, SubmittedSweepLeg,
-    SweepFailure,
+    format_sweep_failure, loaded_wallet, no_single_sender_message, select_vm_sender_entry,
+    shorten_txid_like_tokens, surfaced_wallet_account_entries, wallet_owned_pkhs_from_queries,
+    withdrawal_plan_error_message, PlannedLegView, SubmittedSweepLeg, SweepFailure,
 };
 use crate::state::AppState;
+use xtal::wallet::contracts::cage::{CageWithdrawalQuote, CageWithdrawalRequest};
+use xtal::wallet::vm_sweep::SweepGas;
+use xtal::wallet::WalletError;
 
 // ---------------------------------------------------------------------------
 // Xtal → Shards strict decimal parser
@@ -172,13 +170,40 @@ pub struct DepositResult {
 #[serde(rename_all = "camelCase")]
 pub struct PlanWithdrawalResponse {
     pub legs: Vec<PlannedLegView>,
-    /// Upfront gas reservation per leg transaction, in shards (string)
-    pub max_gas_fee_per_leg: String,
     pub leg_count: usize,
-    /// Exact total CAGE fee across all legs
+    /// Gross total leaving the wallet's VM accounts
+    pub total_amount: Shards,
+    /// Upfront gas reservation per leg transaction
+    pub max_gas_fee_per_leg: Shards,
+    /// Gas reservation across every leg
+    pub total_max_gas_fee: Shards,
+    /// Worst-case debit: total_amount + total_max_gas_fee
+    pub total_deducted: Shards,
+    /// Amount-independent maximum this gas policy can withdraw
+    pub max_withdrawable: Shards,
+    /// The rate behind `cage_fee_total`, in basis points
+    pub fee_bps: u64,
+    /// Exact total CAGE fee across all legs (summed per leg, each floored)
     pub cage_fee_total: Shards,
     /// Amount the recipient receives after CAGE fees
     pub net_amount: Shards,
+}
+
+impl From<CageWithdrawalQuote> for PlanWithdrawalResponse {
+    fn from(quote: CageWithdrawalQuote) -> Self {
+        Self {
+            legs: quote.legs.iter().map(PlannedLegView::from).collect(),
+            leg_count: quote.leg_count,
+            total_amount: Shards::from(quote.total_amount),
+            max_gas_fee_per_leg: Shards::from(quote.max_gas_fee_per_leg),
+            total_max_gas_fee: Shards::from(quote.total_max_gas_fee),
+            total_deducted: Shards::from(quote.total_deducted),
+            max_withdrawable: Shards::from(quote.max_withdrawable),
+            fee_bps: quote.fee_bps,
+            cage_fee_total: Shards::from(quote.cage_fee_total),
+            net_amount: Shards::from(quote.net_amount),
+        }
+    }
 }
 
 /// Result of a multi-leg VM → UTXO withdrawal
@@ -186,19 +211,14 @@ pub struct PlanWithdrawalResponse {
 #[serde(rename_all = "camelCase")]
 pub struct WithdrawToUtxoResponse {
     pub legs: Vec<SubmittedSweepLeg>,
+    pub total_amount: Shards,
+    pub total_max_gas_fee: Shards,
 }
 
 // ---------------------------------------------------------------------------
 // SendResult is re-exported from wallet commands
 // ---------------------------------------------------------------------------
 use super::wallet::SendResult;
-
-fn current_unix_timestamp_i64() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
 
 // ---------------------------------------------------------------------------
 // Helper: parse fruit type string
@@ -391,32 +411,21 @@ pub async fn deploy_contract(
     let contract_address = xtal::crypto::calculate_contract_address(&sender_entry.pkh, nonce);
     let tx_hash = tx.id().map_err(|e| format!("Hash failed: {}", e))?;
 
+    // Checked, and computed before broadcast: a saturated reservation would
+    // be recorded as a u64::MAX fee against a transaction that is already
+    // irrevocably sent.
+    let max_fee = SweepGas {
+        gas_limit,
+        gas_price,
+    }
+    .max_fee_per_leg()
+    .map_err(|e| e.to_string())?;
+
     state
         .services
         .mempool()
         .add_transaction(tx.clone(), TransactionSource::Local)
         .map_err(|e| format!("Broadcast failed: {}", e))?;
-
-    let max_fee = gas_limit.saturating_mul(gas_price);
-
-    let record = TransactionRecord {
-        txid: tx_hash,
-        raw_tx: tx.encode(),
-        tx_type: TransactionType::ContractDeploy,
-        amount: max_fee,
-        fee: Some(max_fee),
-        to_address: Some(format!("0x{}", hex::encode(contract_address))),
-        memo: None,
-        created_at: current_unix_timestamp_i64(),
-        confirmation: None,
-        expires_at: None,
-        priority: Some(0),
-        input_details: None,
-        execution_status: Some(TransactionExecutionStatus::Unknown),
-    };
-    if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
-        log::warn!("Failed to store pending contract deploy: {}", e);
-    }
 
     // Cache ABI locally if provided
     if let Some(json) = abi_json {
@@ -536,31 +545,21 @@ pub async fn call_contract(
         .map_err(|e| format!("Build failed: {}", e))?;
     let tx_hash = tx.id().map_err(|e| format!("Hash failed: {}", e))?;
 
+    // Checked, and computed before broadcast: a saturated reservation would
+    // be recorded as a u64::MAX fee against a transaction that is already
+    // irrevocably sent.
+    let max_fee = SweepGas {
+        gas_limit,
+        gas_price,
+    }
+    .max_fee_per_leg()
+    .map_err(|e| e.to_string())?;
+
     state
         .services
         .mempool()
         .add_transaction(tx.clone(), TransactionSource::Local)
         .map_err(|e| format!("Broadcast failed: {}", e))?;
-
-    let max_fee = gas_limit.saturating_mul(gas_price);
-    let record = TransactionRecord {
-        txid: tx_hash,
-        raw_tx: tx.encode(),
-        tx_type: TransactionType::ContractCall,
-        amount: send_value.saturating_add(max_fee),
-        fee: Some(max_fee),
-        to_address: Some(contract_address.clone()),
-        memo: None,
-        created_at: current_unix_timestamp_i64(),
-        confirmation: None,
-        expires_at: None,
-        priority: Some(0),
-        input_details: None,
-        execution_status: Some(TransactionExecutionStatus::Unknown),
-    };
-    if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
-        log::warn!("Failed to store pending contract call: {}", e);
-    }
 
     log::info!(
         "Contract call submitted: {}.{} (value={})",
@@ -710,34 +709,6 @@ pub async fn deposit_utxo(
         .add_transaction(tx.clone(), TransactionSource::Local)
         .map_err(|e| format!("Broadcast failed: {}", e))?;
 
-    if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet.current_wallet_id()) {
-        let queries = WalletQueries::new(db.connection());
-        let input_details = vec![InputDetail {
-            txid: hex::encode(txid_bytes),
-            index: vout,
-            amount: utxo_entry.amount,
-            address: Some(owner_address.clone()),
-        }];
-        let record = TransactionRecord {
-            txid: tx_hash,
-            raw_tx: tx.encode(),
-            tx_type: TransactionType::ContractCall,
-            amount: utxo_entry.amount,
-            fee: Some(0),
-            to_address: Some(format!("0x{}", hex::encode(CAGE_CONTRACT_ADDRESS))),
-            memo: None,
-            created_at: current_unix_timestamp_i64(),
-            confirmation: None,
-            expires_at: None,
-            priority: Some(0),
-            input_details: InputDetail::serialize_list(&input_details),
-            execution_status: Some(TransactionExecutionStatus::Unknown),
-        };
-        if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
-            log::warn!("Failed to store pending CAGE deposit: {}", e);
-        }
-    }
-
     log::info!(
         "CAGE deposit submitted (sponsored): UTXO {}:{} amount={} anchor={} gas_reservation={} (simulated={:?})",
         txid_hex,
@@ -759,96 +730,36 @@ pub async fn deposit_utxo(
     })
 }
 
-/// A validated per-account withdrawal plan shared by `plan_withdrawal`
-/// (read-only preview) and `withdraw_to_utxo` (execution).
-struct WithdrawalPlan {
-    /// Trimmed Base58Check recipient address
-    recipient: String,
-    /// Total requested amount in shards
-    total_amount: u64,
-    /// Effective gas price (defaults to MIN_GAS_PRICE)
-    gas_price: u64,
-    /// Upfront gas reservation per leg transaction
-    max_gas_fee: u64,
-    /// Sum of the CAGE fee each leg will be charged, in shards
-    cage_fee_total: u64,
-    /// What the recipient actually receives after CAGE fees
-    net_amount: u64,
-    legs: Vec<PlannedSweepLeg>,
-}
-
-/// Validate withdrawal arguments, load the wallet's surfaced account-state
-/// entries (same path as `call_contract`), and split the amount into
-/// per-account CAGE `withdraw` legs.
-fn prepare_withdrawal_plan(
-    state: &State<'_, AppState>,
+/// Build a CAGE withdrawal request from raw command inputs.
+///
+/// The per-leg minimum, gas bounds, and the sweep split are the library's to
+/// enforce; this only parses the wire representation.
+fn cage_withdrawal_request(
     recipient: &str,
     amount: &str,
     gas_limit: u64,
     gas_price: Option<u64>,
-) -> Result<WithdrawalPlan, String> {
-    let gas_price = gas_price.unwrap_or(MIN_GAS_PRICE);
-    if gas_limit < MIN_CALL_GAS {
-        return Err(format!("Gas limit must be at least {}", MIN_CALL_GAS));
-    }
-    if gas_limit > MAX_GAS_LIMIT {
-        return Err(format!("Gas limit cannot exceed {}", MAX_GAS_LIMIT));
-    }
-
-    let recipient = recipient.trim();
-    parse_string_to_abi_value(&ParamType::UtxoAddress, recipient)
-        .map_err(|e| format!("Invalid recipient: {}", e))?;
-
-    // Amount arrives as a shard string to avoid JS precision loss — parse it
-    // as an integer, never through floats.
+) -> Result<CageWithdrawalRequest, String> {
     let total_amount: u64 = amount
         .trim()
         .parse()
         .map_err(|_| "Invalid amount: must be a whole number of shards".to_string())?;
 
-    let wallet = state
-        .services
-        .wallet
-        .as_ref()
-        .ok_or("Wallet not available")?;
-    if !wallet.is_loaded() {
-        return Err("No wallet loaded".to_string());
+    let request =
+        CageWithdrawalRequest::new(recipient.trim(), total_amount).map_err(|e| e.to_string())?;
+
+    Ok(request.with_gas(SweepGas {
+        gas_limit,
+        gas_price: gas_price.unwrap_or(MIN_GAS_PRICE),
+    }))
+}
+
+/// Render a wallet-level sweep error in withdrawal vocabulary.
+fn cage_sweep_wallet_error_message(error: WalletError) -> String {
+    match error {
+        WalletError::VmSweepPlan(inner) => withdrawal_plan_error_message(&inner),
+        other => other.to_string(),
     }
-    let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
-    let db = wallet.database().ok_or("Wallet database not available")?;
-    let queries = WalletQueries::new(db.connection());
-
-    let mpt = if let Some((stem_state, _state_root)) = state.services.blockchain().stem_state() {
-        stem_state
-    } else {
-        state
-            .services
-            .blockchain()
-            .get_current_state_mpt()
-            .map_err(|e| format!("Failed to load current state: {}", e))?
-    };
-
-    let owned_pkhs = wallet_owned_pkhs_from_queries(&queries, &wallet_id)?;
-    let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
-    let legs = plan_vm_withdrawal_legs(&account_entries, total_amount, gas_limit, gas_price)?;
-
-    // The contract charges per leg and floors each one independently, so the
-    // total is the sum of per-leg fees — not a single rate applied to the whole.
-    let fee_bps = read_cage_fee_bps(&mpt)?;
-    let cage_fee_total = legs.iter().fold(0u64, |sum, leg| {
-        sum.saturating_add(withdrawal_fee(leg.amount, fee_bps))
-    });
-
-    Ok(WithdrawalPlan {
-        recipient: recipient.to_string(),
-        total_amount,
-        gas_price,
-        // The planner already rejected gas_limit * gas_price overflow.
-        max_gas_fee: gas_limit.saturating_mul(gas_price),
-        cage_fee_total,
-        net_amount: total_amount.saturating_sub(cage_fee_total),
-        legs,
-    })
 }
 
 /// Reads the CAGE withdrawal fee rate from contract storage.
@@ -875,28 +786,11 @@ fn read_cage_fee_bps(mpt: &UnifiedMPT) -> Result<u64, String> {
     }
 }
 
-/// CAGE `withdraw` params in the same shape the frontend passes to
-/// `encode_contract_calldata` today.
-fn cage_withdraw_params(recipient: &str, amount: u64) -> Vec<ParamInput> {
-    vec![
-        ParamInput {
-            name: "recipient".to_string(),
-            type_: "utxo_address".to_string(),
-            value: recipient.to_string(),
-        },
-        ParamInput {
-            name: "amount".to_string(),
-            type_: "u64".to_string(),
-            value: amount.to_string(),
-        },
-    ]
-}
-
 /// Plan a VM → UTXO withdrawal without submitting anything.
 ///
-/// Read-only: splits `amount` into one CAGE `withdraw` leg per funded
-/// wallet account (a single withdrawal transaction can only draw from its
-/// one caller account) and reports the resulting legs.
+/// Read-only: the library splits `amount` into one CAGE `withdraw` leg per
+/// funded wallet account (a single withdrawal transaction can only draw from
+/// its one caller account) and quotes what the sweep costs.
 #[tauri::command]
 pub async fn plan_withdrawal(
     state: State<'_, AppState>,
@@ -905,22 +799,43 @@ pub async fn plan_withdrawal(
     gas_limit: u64,
     gas_price: Option<u64>,
 ) -> Result<PlanWithdrawalResponse, String> {
-    let plan = prepare_withdrawal_plan(&state, &recipient, &amount, gas_limit, gas_price)?;
+    let wallet = loaded_wallet(&state)?;
+    let request = cage_withdrawal_request(&recipient, &amount, gas_limit, gas_price)?;
 
-    Ok(PlanWithdrawalResponse {
-        leg_count: plan.legs.len(),
-        max_gas_fee_per_leg: plan.max_gas_fee.to_string(),
-        cage_fee_total: plan.cage_fee_total.into(),
-        net_amount: plan.net_amount.into(),
-        legs: plan
-            .legs
-            .iter()
-            .map(|leg| PlannedLegView {
-                from_address: leg.hex_address.clone(),
-                amount: leg.amount.to_string(),
-            })
-            .collect(),
-    })
+    wallet
+        .quote_cage_withdrawal(
+            &request,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map(PlanWithdrawalResponse::from)
+        .map_err(cage_sweep_wallet_error_message)
+}
+
+/// The maximum a CAGE withdrawal sweep can move under this gas policy.
+///
+/// Counts only accounts clearing the per-leg contract minimum, so the
+/// frontend never reimplements that eligibility rule.
+#[tauri::command]
+pub async fn max_cage_withdrawable(
+    state: State<'_, AppState>,
+    gas_limit: u64,
+    gas_price: Option<u64>,
+) -> Result<Shards, String> {
+    let wallet = loaded_wallet(&state)?;
+    let gas = SweepGas {
+        gas_limit,
+        gas_price: gas_price.unwrap_or(MIN_GAS_PRICE),
+    };
+
+    wallet
+        .max_cage_withdrawable(
+            gas,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map(Shards::from)
+        .map_err(cage_sweep_wallet_error_message)
 }
 
 /// Quote the CAGE withdrawal fee for a single amount, before a plan exists.
@@ -933,17 +848,11 @@ pub async fn estimate_cage_withdrawal_fee(
     state: State<'_, AppState>,
     amount: Shards,
 ) -> Result<Shards, String> {
-    let mpt = if let Some((stem_state, _state_root)) = state.services.blockchain().stem_state() {
-        stem_state
-    } else {
-        state
-            .services
-            .blockchain()
-            .get_current_state_mpt()
-            .map_err(|e| format!("Failed to load current state: {}", e))?
-    };
+    let wallet = loaded_wallet(&state)?;
+    let fee_bps = wallet
+        .cage_fee_bps(state.services.blockchain().as_ref())
+        .map_err(|e| e.to_string())?;
 
-    let fee_bps = read_cage_fee_bps(&mpt)?;
     Ok(withdrawal_fee(amount.get(), fee_bps).into())
 }
 
@@ -971,15 +880,15 @@ pub async fn withdraw_to_utxo(
     gas_price: Option<u64>,
     password: String,
 ) -> Result<WithdrawToUtxoResponse, String> {
-    withdraw_to_utxo_inner(&state, &recipient, &amount, gas_limit, gas_price, &password)
-        .await
-        .map_err(|failure| match failure {
+    withdraw_to_utxo_inner(&state, &recipient, &amount, gas_limit, gas_price, &password).map_err(
+        |failure| match failure {
             SweepFailure::Total(message) => shorten_txid_like_tokens(&message),
             SweepFailure::Partial(message) => message,
-        })
+        },
+    )
 }
 
-async fn withdraw_to_utxo_inner(
+fn withdraw_to_utxo_inner(
     state: &State<'_, AppState>,
     recipient: &str,
     amount: &str,
@@ -987,94 +896,36 @@ async fn withdraw_to_utxo_inner(
     gas_price: Option<u64>,
     password: &str,
 ) -> Result<WithdrawToUtxoResponse, SweepFailure> {
-    // Unlock wallet
-    let wallet = state
-        .services
-        .wallet
-        .as_ref()
-        .ok_or("Wallet not available")?;
-    if !wallet.is_loaded() {
-        return Err("No wallet loaded".into());
-    }
+    let wallet = loaded_wallet(state)?;
+    let request = cage_withdrawal_request(recipient, amount, gas_limit, gas_price)?;
+
     wallet
         .unlock_wallet(password, Some(Duration::from_secs(30)))
         .map_err(|e| format!("Invalid password: {}", e))?;
 
-    // Re-plan at execution time against fresh account state.
-    let plan = prepare_withdrawal_plan(state, recipient, amount, gas_limit, gas_price)?;
+    let recipient_display = request.recipient.clone();
 
-    // Resolve the CAGE ABI through the same path the frontend's
-    // encode_contract_calldata call uses (cache-seeded builtin ABI).
-    let cage_address = format!("0x{}", hex::encode(CAGE_CONTRACT_ADDRESS));
-    let abi = load_contract_abi_for_encoding(state, &cage_address).await?;
-
-    let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
-    let db = wallet.database().ok_or("Wallet database not available")?;
-    let queries = WalletQueries::new(db.connection());
-
-    // Build and sign every leg before submitting any, so per-leg encoding,
-    // key, or build problems surface before anything reaches the mempool.
-    let mut prepared = Vec::with_capacity(plan.legs.len());
-    for leg in &plan.legs {
-        let params = cage_withdraw_params(&plan.recipient, leg.amount);
-        let (call_data, _) = encode_calldata_with_abi(&abi, "withdraw", &params)?;
-
-        let signing_key = wallet
-            .with_wallet(|w| w.get_signing_key_by_type(leg.key_type, leg.key_index))
-            .map_err(|e| format!("Failed to get signing key for {}: {}", leg.hex_address, e))?;
-
-        let tx = ContractCallTransactionBuilder::new()
-            .with_sender(signing_key)
-            .with_contract(CAGE_CONTRACT_ADDRESS)
-            .with_method("withdraw".to_string())
-            .with_args(call_data)
-            .with_value(0)
-            .with_gas_limit(gas_limit)
-            .with_gas_price(plan.gas_price)
-            .with_nonce(leg.nonce)
-            .build()
-            .map_err(|e| format!("Build failed for {}: {}", leg.hex_address, e))?;
-        let tx_hash = tx
-            .id()
-            .map_err(|e| format!("Hash failed for {}: {}", leg.hex_address, e))?;
-        prepared.push((leg, tx, tx_hash));
-    }
-
-    let submitted = submit_sweep_legs(
-        state.services.mempool(),
-        "Withdrawal",
-        &prepared,
-        plan.max_gas_fee,
-        |_leg, tx, tx_hash| {
-            let record = TransactionRecord {
-                txid: *tx_hash,
-                raw_tx: tx.encode(),
-                tx_type: TransactionType::ContractCall,
-                amount: plan.max_gas_fee,
-                fee: Some(plan.max_gas_fee),
-                to_address: Some(cage_address.clone()),
-                memo: None,
-                created_at: current_unix_timestamp_i64(),
-                confirmation: None,
-                expires_at: None,
-                priority: Some(0),
-                input_details: None,
-                execution_status: Some(TransactionExecutionStatus::Unknown),
-            };
-            if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
-                log::warn!("Failed to store pending CAGE withdrawal leg: {}", e);
-            }
-        },
-    )?;
+    let outcome = wallet
+        .withdraw_to_utxo(
+            &request,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+            |_, _, _| {},
+        )
+        .map_err(|error| format_sweep_failure("Withdrawal", &error))?;
 
     log::info!(
         "CAGE withdrawal submitted: {} shards to {} across {} leg(s)",
-        plan.total_amount,
-        plan.recipient,
-        submitted.len()
+        outcome.total_amount,
+        recipient_display,
+        outcome.legs.len()
     );
 
-    Ok(WithdrawToUtxoResponse { legs: submitted })
+    Ok(WithdrawToUtxoResponse {
+        legs: outcome.legs.iter().map(SubmittedSweepLeg::from).collect(),
+        total_amount: Shards::from(outcome.total_amount),
+        total_max_gas_fee: Shards::from(outcome.total_max_gas_fee),
+    })
 }
 
 #[cfg(test)]
@@ -1303,13 +1154,22 @@ pub async fn get_contract_storage_value(
     })
 }
 
-/// Estimate gas for a contract call by simulating it
+/// Estimate gas for a contract call.
+///
+/// Delegates to `Blockchain::estimate_call_gas`, the one estimation pipeline
+/// shared with sponsored calls and the `estimategas` RPC. This used to run
+/// its own simulation, which diverged in five ways that all under-quoted:
+/// it read the last persisted state root instead of the live one, hardcoded
+/// `FruitType::Apple` regardless of the contract's actual shard, passed a
+/// zero anchor stem (wrong for UTXO-consuming methods), padded 20% instead
+/// of 25%, and applied no `MIN_CALL_GAS` floor.
 #[tauri::command]
 pub async fn estimate_contract_gas(
     state: State<'_, AppState>,
     contract_address: String,
     method: String,
     data: Option<String>,
+    caller: Option<String>,
 ) -> Result<GasEstimate, String> {
     let contract_addr = decode_hex_address(&contract_address)?;
     let call_data = match &data {
@@ -1317,45 +1177,51 @@ pub async fn estimate_contract_gas(
         None => vec![],
     };
 
-    let storage = state.services.storage();
-    let chain = state.services.blockchain();
-    let timestamp = chain
-        .get_latest_block()
-        .map_err(|e| format!("Failed to get latest block: {}", e))?
-        .map(|b| b.header.timestamp)
-        .unwrap_or(0);
+    // The caller is observable to the contract, so simulate as whoever will
+    // actually send. Falls back to the zero address when no caller is given
+    // and no wallet account is available.
+    let caller_pkh = match caller {
+        Some(address) => decode_hex_address(&address)?,
+        None => wallet_vm_sender_pkh(&state).unwrap_or([0u8; 20]),
+    };
 
-    let backend = Box::new(RocksDBBackend::new(
-        storage.db.clone(),
-        "unified_state".to_string(),
-    ));
-    let mpt = Arc::new(UnifiedMPT::new(backend).map_err(|e| format!("MPT error: {}", e))?);
+    let estimate = state
+        .services
+        .blockchain()
+        .estimate_call_gas(caller_pkh, contract_addr, &method, &call_data, None)
+        .map_err(|e| format!("Gas estimation failed: {}", e))?;
 
-    let mut vm = CrystalVm::for_fruit_execution(
-        mpt,
-        storage.clone(),
-        chain.get_current_leaf_height(),
-        timestamp,
-        FruitType::Apple,
-        1,
-        [0u8; 32],
-    )
-    .map_err(|e| format!("VM init failed: {}", e))?;
-
-    let gas_used =
-        match vm.simulate_call([0u8; 20], contract_addr, &method, &call_data, MAX_GAS_LIMIT) {
-            Ok(result) => result.gas_used,
-            Err(_) => TX_BASE_GAS + 50_000, // Fallback estimate on simulation failure
-        };
-
-    // Add 20% buffer for safety
-    let gas_estimate = gas_used.saturating_add(gas_used / 5);
-    let fee_estimate = gas_estimate.saturating_mul(MIN_GAS_PRICE);
+    let fee_estimate = estimate
+        .gas_limit
+        .checked_mul(MIN_GAS_PRICE)
+        .ok_or_else(|| "Gas fee overflow while estimating".to_string())?;
 
     Ok(GasEstimate {
-        gas_estimate: gas_estimate.to_string(),
+        gas_estimate: estimate.gas_limit.to_string(),
         fee_estimate: fee_estimate.to_string(),
     })
+}
+
+/// The wallet's highest-balance VM account, for simulating as a realistic
+/// caller. `None` when no wallet is loaded or none of its accounts exist in
+/// state yet.
+fn wallet_vm_sender_pkh(state: &State<'_, AppState>) -> Option<[u8; 20]> {
+    let wallet = state.services.wallet.as_ref()?;
+    if !wallet.is_loaded() {
+        return None;
+    }
+    let wallet_id = wallet.current_wallet_id()?;
+    let db = wallet.database()?;
+    let queries = WalletQueries::new(db.connection());
+
+    let mpt = match state.services.blockchain().stem_state() {
+        Some((stem_state, _)) => stem_state,
+        None => state.services.blockchain().get_current_state_mpt().ok()?,
+    };
+
+    let owned = wallet_owned_pkhs_from_queries(&queries, &wallet_id).ok()?;
+    let entries = surfaced_wallet_account_entries(&owned, &mpt).ok()?;
+    entries.first().map(|entry| entry.pkh)
 }
 
 // ===========================================================================

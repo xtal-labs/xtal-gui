@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronDown, ChevronRight, Fuel, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AmountDisplay } from "@/components/common/AmountDisplay";
-import { cn } from "@/lib/utils";
+import { tauriCommand } from "@/hooks";
+import { cn, type ShardAmount } from "@/lib/utils";
 
 /** Gas configuration returned by the `get_gas_config` Tauri command */
 export interface GasConfig {
@@ -45,7 +46,32 @@ export function GasSettings({
   const minLimit = minGasLimit ?? config.defaultGasLimit;
   const gasLimitNum = parseInt(gasLimit) || minLimit;
   const gasPriceNum = parseInt(gasPrice) || config.defaultGasPrice;
-  const maxFee = gasLimitNum * gasPriceNum;
+
+  // Quoted by the backend rather than multiplied here. The JS product
+  // silently lost precision past 2^53, which an unbounded gas price can
+  // reach — and the fee formula is the wallet's to own, not this widget's.
+  const [maxFee, setMaxFee] = useState<ShardAmount>("0");
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      tauriCommand<ShardAmount>("quote_max_gas_fee", {
+        gasLimit: gasLimitNum,
+        gasPrice: gasPriceNum,
+      })
+        .then((value) => {
+          if (!cancelled) setMaxFee(value);
+        })
+        .catch(() => {
+          if (!cancelled) setMaxFee("0");
+        });
+    }, 150);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [gasLimitNum, gasPriceNum]);
 
   // Validation
   const gasLimitError =

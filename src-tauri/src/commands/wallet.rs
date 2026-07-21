@@ -18,34 +18,37 @@ use tauri::State;
 use xtal::fruit::codec::{Decode, Encode};
 use xtal::fruit::core::FruitTx;
 
-use xtal::address::{encode_sh, ContractAddress};
+use xtal::address::encode_sh;
 use xtal::address_format::{format_contract_address, format_utxo_address};
 use xtal::consensus::validation::COINBASE_MATURITY;
 use xtal::crypto::hash_public_key;
 use xtal::gas::{can_afford_transaction, TX_BASE_GAS};
 use xtal::interfaces::ChainDataProvider;
 use xtal::interfaces::UtxoData;
-use xtal::mempool::{Mempool, TransactionSource};
 use xtal::script::{
     extract_pkh_from_script, multisig_script_pubkey, p2sh_script_hash,
     parse_stake_or_unstake_script, TimeLock, MAX_MULTISIG_KEYS,
 };
 use xtal::storage::types::UtxoEntry;
 use xtal::storage::UnifiedMPT;
-use xtal::transaction::builders::{TransferBuilder, MIN_CALL_GAS};
+use xtal::transaction::builders::MIN_CALL_GAS;
 use xtal::transaction::receipt::{BlockReceipts, StoredReceipt, TransactionReceipt};
 use xtal::transaction::{
     ContractCallTransaction, CurrencyType, Transaction, TxOut, MAX_GAS_LIMIT, MIN_GAS_PRICE,
 };
 use xtal::vm::abi::{cage_abi, ParamType};
-use xtal::vm::cage_contract::{CAGE_CONTRACT_ADDRESS, MIN_WITHDRAWAL};
+use xtal::vm::cage_contract::CAGE_CONTRACT_ADDRESS;
 use xtal::vm::ContractEvent;
 use xtal::wallet::database::models::{
-    InputDetail, KeyType, TransactionExecutionStatus, TransactionRecord, TransactionType,
-    WalletScriptRecord, WalletType,
+    InputDetail, KeyType, TransactionRecord, TransactionType, WalletScriptRecord, WalletType,
 };
 use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::transfer::{TransferRecipient, TransferRequest};
+use xtal::wallet::vm_sweep::{
+    SubmittedSweepLeg as LibSubmittedSweepLeg, SweepGas, SweepLegQuote, SweepPlanError,
+    VmSweepError,
+};
+use xtal::wallet::vm_transfer::{VmTransferQuote, VmTransferRequest};
 use xtal::wallet::{FeeStrategy, WalletError, WalletManager};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -216,6 +219,24 @@ pub struct TransactionSummary {
     pub execution_status: Option<String>,
     /// Maturity status for coinbase/withdrawal transactions
     pub maturity_status: Option<MaturityStatus>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingOutgoingResolution {
+    Pending,
+    Confirmed { leaf_height: u64 },
+}
+
+/// A persisted outgoing transaction remains pending until the finalized chain proves otherwise.
+///
+/// In particular, absence from the local mempool is not a terminal state: the process may have
+/// restarted, the transaction may still be propagating through peers, or it may temporarily live
+/// outside this node's view. History reads must not delete the wallet's durable record.
+fn resolve_pending_outgoing(confirmed_leaf_height: Option<u64>) -> PendingOutgoingResolution {
+    match confirmed_leaf_height {
+        Some(leaf_height) => PendingOutgoingResolution::Confirmed { leaf_height },
+        None => PendingOutgoingResolution::Pending,
+    }
 }
 
 fn tx_type_has_maturity(tx_type: &str) -> bool {
@@ -705,249 +726,117 @@ pub(crate) fn no_single_sender_message(
     }
 }
 
-/// A single planned sweep leg: one transaction drawing `amount` shards from
-/// one wallet-owned VM account.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PlannedSweepLeg {
-    /// Caller account address ("0x" + 40 hex chars)
-    pub(crate) hex_address: String,
-    /// Key derivation type for `get_signing_key_by_type`
-    pub(crate) key_type: KeyType,
-    /// Key derivation index for `get_signing_key_by_type`
-    pub(crate) key_index: u32,
-    /// Current account nonce for the leg transaction
-    pub(crate) nonce: u64,
-    /// Amount for this leg in shards
-    pub(crate) amount: u64,
-}
-
-/// Why a sweep could not be planned. Each wrapper maps these to its own
-/// user-facing wording ("withdrawable" vs "sendable").
-enum SweepPlanError {
-    GasFeeOverflow {
-        gas_limit: u64,
-        gas_price: u64,
-    },
-    /// Combined gas-adjusted spendable across eligible accounts is short.
-    InsufficientSpendable {
-        spendable: u64,
-        max_gas_fee: u64,
-    },
-    /// The amount cannot cover the per-leg floor across the legs it needs.
-    Unsplittable {
-        leg_count: usize,
-        min_required: u64,
-    },
-    Unallocated {
-        remaining: u64,
-    },
-}
-
-/// Split a sweep of `total_amount` shards into per-account legs.
+/// User-facing wording for a sweep planning failure, in withdrawal terms.
 ///
-/// One transaction can only draw from its single caller account, and the
-/// chain reserves the full `gas_limit * gas_price` upfront from the caller,
-/// so each account can host at most `balance - max_gas_fee` shards. Every
-/// leg must carry at least `min_leg_amount` shards (`MIN_WITHDRAWAL` for
-/// CAGE withdrawals, 1 for plain transfers).
-///
-/// The plan is deterministic: eligible accounts are used in descending
-/// spendable order (ties broken by address), each leg taking as much as
-/// possible while reserving `min_leg_amount` shards of the remainder for
-/// every leg still to come. That reservation is the general form of the
-/// dust guard — instead of leaving a final sub-floor remainder, earlier
-/// legs shrink so every later leg (including the last) stays at or above
-/// the floor.
-fn plan_vm_sweep_legs(
-    account_entries: &[WalletAccountStateEntry],
-    total_amount: u64,
-    gas_limit: u64,
-    gas_price: u64,
-    min_leg_amount: u64,
-) -> Result<Vec<PlannedSweepLeg>, SweepPlanError> {
-    let max_gas_fee = gas_limit
-        .checked_mul(gas_price)
-        .ok_or(SweepPlanError::GasFeeOverflow {
-            gas_limit,
-            gas_price,
-        })?;
-
-    // Accounts whose gas-adjusted spendable balance can host a valid leg.
-    let mut eligible: Vec<(&WalletAccountStateEntry, u64)> = account_entries
-        .iter()
-        .filter_map(|entry| {
-            let spendable = entry.balance.saturating_sub(max_gas_fee);
-            (spendable >= min_leg_amount).then_some((entry, spendable))
-        })
-        .collect();
-    eligible.sort_by(|a, b| {
-        b.1.cmp(&a.1)
-            .then_with(|| a.0.hex_address.cmp(&b.0.hex_address))
-    });
-
-    let spendable_total = eligible
-        .iter()
-        .fold(0u64, |sum, (_, spendable)| sum.saturating_add(*spendable));
-    if spendable_total < total_amount {
-        return Err(SweepPlanError::InsufficientSpendable {
-            spendable: spendable_total,
-            max_gas_fee,
-        });
-    }
-
-    // Minimal number of legs: the smallest prefix of the descending-spendable
-    // accounts whose combined capacity covers the requested amount.
-    let mut leg_count = 0usize;
-    let mut capacity = 0u64;
-    for (_, spendable) in &eligible {
-        leg_count += 1;
-        capacity = capacity.saturating_add(*spendable);
-        if capacity >= total_amount {
-            break;
-        }
-    }
-
-    // Every leg must carry at least min_leg_amount, so the amount must cover
-    // that floor for each leg. No other account subset does better: fewer
-    // accounts lack the capacity (leg_count is minimal over the largest
-    // spendables), and more legs only raise the floor further.
-    let min_required = (leg_count as u64).saturating_mul(min_leg_amount);
-    if total_amount < min_required {
-        return Err(SweepPlanError::Unsplittable {
-            leg_count,
-            min_required,
-        });
-    }
-
-    let mut legs = Vec::with_capacity(leg_count);
-    let mut remaining = total_amount;
-    for (index, (entry, spendable)) in eligible.iter().take(leg_count).enumerate() {
-        // Dust guard: reserve min_leg_amount of the remainder for every leg
-        // after this one, so no later leg falls below the floor.
-        let reserve = ((leg_count - index - 1) as u64).saturating_mul(min_leg_amount);
-        let leg_amount = (*spendable).min(remaining.saturating_sub(reserve));
-        legs.push(PlannedSweepLeg {
-            hex_address: entry.hex_address.clone(),
-            key_type: entry.key_type,
-            key_index: entry.key_index,
-            nonce: entry.nonce,
-            amount: leg_amount,
-        });
-        remaining = remaining.saturating_sub(leg_amount);
-    }
-
-    if remaining != 0 {
-        return Err(SweepPlanError::Unallocated { remaining });
-    }
-
-    Ok(legs)
-}
-
-/// Split a VM → UTXO withdrawal of `total_amount` shards into per-account
-/// CAGE `withdraw` legs. The CAGE contract rejects any leg below
-/// `MIN_WITHDRAWAL` shards, so that is the per-leg floor.
-pub(crate) fn plan_vm_withdrawal_legs(
-    account_entries: &[WalletAccountStateEntry],
-    total_amount: u64,
-    gas_limit: u64,
-    gas_price: u64,
-) -> Result<Vec<PlannedSweepLeg>, String> {
-    if total_amount < MIN_WITHDRAWAL {
-        return Err(format!(
+/// The library's `SweepPlanError` is deliberately neutral about vocabulary;
+/// "withdrawable" belongs to this surface, and every figure in the message
+/// comes from the error rather than being recomputed here.
+pub(crate) fn withdrawal_plan_error_message(error: &SweepPlanError) -> String {
+    match error {
+        SweepPlanError::ZeroAmount => "Withdrawal amount must be greater than zero".to_string(),
+        SweepPlanError::BelowMinimum { minimum, amount } => format!(
             "Withdrawal amount must be at least {} shards, got {}",
-            MIN_WITHDRAWAL, total_amount
-        ));
-    }
-    plan_vm_sweep_legs(
-        account_entries,
-        total_amount,
-        gas_limit,
-        gas_price,
-        MIN_WITHDRAWAL,
-    )
-    .map_err(|error| match error {
-        SweepPlanError::GasFeeOverflow {
-            gas_limit,
-            gas_price,
-        } => format!(
-            "Gas fee overflow: gas limit {} * gas price {} exceeds u64",
-            gas_limit, gas_price
+            minimum, amount
         ),
         SweepPlanError::InsufficientSpendable {
-            spendable,
-            max_gas_fee,
+            requested,
+            movable,
+            max_gas_fee_per_leg,
+            required_with_gas,
         } => format!(
-            "Insufficient balance: have {} shards withdrawable, need {} (amount: {} + max gas per tx: {})",
-            spendable,
-            total_amount.saturating_add(max_gas_fee),
-            total_amount,
-            max_gas_fee
+            "Insufficient balance: have {} shards withdrawable, need {} \
+             (amount: {} + max gas per tx: {})",
+            movable, required_with_gas, requested, max_gas_fee_per_leg
         ),
         SweepPlanError::Unsplittable {
+            amount,
             leg_count,
+            min_leg_amount,
             min_required,
         } => format!(
-            "Cannot split withdrawal: {} shards needs {} accounts, but every withdrawal \
-             leg must be at least {} shards ({} total). Withdraw at least {} shards or \
-             consolidate account balances first.",
-            total_amount, leg_count, MIN_WITHDRAWAL, min_required, min_required
+            "Cannot split withdrawal: {} shards across {} accounts needs at least {} shards \
+             per leg ({} total). Consolidate account balances first.",
+            amount, leg_count, min_leg_amount, min_required
         ),
-        SweepPlanError::Unallocated { remaining } => format!(
-            "Internal withdrawal planner error: {} of {} shards left unallocated",
-            remaining, total_amount
-        ),
-    })
+        other => format!("Withdrawal could not be planned: {}", other),
+    }
 }
 
-/// Split a plain VM transfer of `total_amount` shards into per-account
-/// `AccountTransferTransaction` legs.
-///
-/// Unlike CAGE withdrawals there is no contract-imposed minimum, so any
-/// account with at least one spendable shard after the per-leg gas
-/// reservation can host a leg.
-pub(crate) fn plan_vm_transfer_legs(
-    account_entries: &[WalletAccountStateEntry],
-    total_amount: u64,
-    gas_limit: u64,
-    gas_price: u64,
-) -> Result<Vec<PlannedSweepLeg>, String> {
-    if total_amount == 0 {
-        return Err("Transfer amount must be greater than zero".to_string());
+/// User-facing wording for a sweep planning failure, in transfer terms.
+pub(crate) fn transfer_plan_error_message(error: &SweepPlanError) -> String {
+    match error {
+        SweepPlanError::ZeroAmount => "Transfer amount must be greater than zero".to_string(),
+        SweepPlanError::InsufficientSpendable {
+            requested,
+            movable,
+            max_gas_fee_per_leg,
+            ..
+        } => format!(
+            "Insufficient VM balance: have {} shards sendable across wallet accounts \
+             (after reserving {} shards gas per account), need {}",
+            movable, max_gas_fee_per_leg, requested
+        ),
+        SweepPlanError::Unsplittable {
+            amount,
+            leg_count,
+            min_leg_amount,
+            min_required,
+        } => format!(
+            "Cannot split transfer: {} shards needs {} accounts with at least {} shard \
+             per leg ({} total)",
+            amount, leg_count, min_leg_amount, min_required
+        ),
+        other => format!("Transfer could not be planned: {}", other),
     }
-    plan_vm_sweep_legs(account_entries, total_amount, gas_limit, gas_price, 1).map_err(|error| {
-        match error {
-            SweepPlanError::GasFeeOverflow {
-                gas_limit,
-                gas_price,
-            } => format!(
-                "Gas fee overflow: gas limit {} * gas price {} exceeds u64",
-                gas_limit, gas_price
-            ),
-            SweepPlanError::InsufficientSpendable {
-                spendable,
-                max_gas_fee,
-            } => format!(
-                "Insufficient VM balance: have {} shards sendable across wallet accounts \
-                 (after reserving {} shards gas per account), need {}",
-                spendable, max_gas_fee, total_amount
-            ),
-            // Unreachable with a 1-shard floor: every eligible account
-            // contributes at least one spendable shard, so the minimal leg
-            // count never exceeds the amount. Mapped for exhaustiveness.
-            SweepPlanError::Unsplittable {
+}
+
+/// Render a sweep submission failure for the frontend.
+///
+/// Owns the `submitted_txids:` marker format, which the withdraw and VM-send
+/// modals parse with a regex. The library reports partial submission as typed
+/// data; turning it into that marker is this surface's job, and this is the
+/// only place the format is constructed.
+pub(crate) fn format_sweep_failure(operation: &str, error: &VmSweepError) -> SweepFailure {
+    match error {
+        VmSweepError::NotSubmitted(inner) => SweepFailure::Total(format!(
+            "{} failed: {}. No transactions were submitted.",
+            operation, inner
+        )),
+        VmSweepError::PartiallySubmitted {
+            submitted,
+            unsent_legs,
+            failed_leg_index,
+            leg_count,
+            source,
+            ..
+        } => {
+            let unsent = unsent_legs
+                .iter()
+                .map(|leg| format!("{} shards from {}", leg.amount, leg.hex_address))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let submitted_txids = submitted
+                .iter()
+                .map(hex::encode)
+                .collect::<Vec<_>>()
+                .join(",");
+
+            // Keep this format exactly: the frontend parses the trailing
+            // `submitted_txids: <a>,<b>` marker.
+            SweepFailure::Partial(format!(
+                "{} partially submitted: {} of {} transactions broadcast before leg {} \
+                 failed ({}). Unsent legs: [{}]. Broadcast legs cannot be rolled back. \
+                 submitted_txids: {}",
+                operation,
+                submitted.len(),
                 leg_count,
-                min_required,
-            } => format!(
-                "Cannot split transfer: {} shards needs {} accounts with at least 1 shard \
-                 per leg ({} total)",
-                total_amount, leg_count, min_required
-            ),
-            SweepPlanError::Unallocated { remaining } => format!(
-                "Internal transfer planner error: {} of {} shards left unallocated",
-                remaining, total_amount
-            ),
+                failed_leg_index + 1,
+                source,
+                unsent,
+                submitted_txids
+            ))
         }
-    })
+    }
 }
 
 /// One planned sweep leg (read-only preview)
@@ -956,8 +845,24 @@ pub(crate) fn plan_vm_transfer_legs(
 pub struct PlannedLegView {
     /// Caller account address ("0x" + 40 hex chars)
     pub from_address: String,
-    /// Leg amount in shards (string to avoid JS precision loss)
-    pub amount: String,
+    /// Leg amount in shards
+    pub amount: Shards,
+    /// Upfront gas reservation for this leg, in shards
+    pub max_gas_fee: Shards,
+    /// The leg costs at least what it moves. Quoted by the library so the
+    /// frontend never compares an amount against a fee itself.
+    pub is_uneconomical: bool,
+}
+
+impl From<&SweepLegQuote> for PlannedLegView {
+    fn from(leg: &SweepLegQuote) -> Self {
+        Self {
+            from_address: leg.from_address.clone(),
+            amount: Shards::from(leg.amount),
+            max_gas_fee: Shards::from(leg.max_gas_fee),
+            is_uneconomical: leg.is_uneconomical,
+        }
+    }
 }
 
 /// One submitted sweep leg
@@ -968,10 +873,21 @@ pub struct SubmittedSweepLeg {
     pub txid: String,
     /// Caller account address ("0x" + 40 hex chars)
     pub from_address: String,
-    /// Leg amount in shards (string)
-    pub amount: String,
-    /// Upfront gas reservation for this leg, in shards (string)
-    pub max_gas_fee: String,
+    /// Leg amount in shards
+    pub amount: Shards,
+    /// Upfront gas reservation for this leg, in shards
+    pub max_gas_fee: Shards,
+}
+
+impl From<&LibSubmittedSweepLeg> for SubmittedSweepLeg {
+    fn from(leg: &LibSubmittedSweepLeg) -> Self {
+        Self {
+            txid: hex::encode(leg.txid),
+            from_address: leg.from_address.clone(),
+            amount: Shards::from(leg.amount),
+            max_gas_fee: Shards::from(leg.max_gas_fee),
+        }
+    }
 }
 
 /// Sweep submission failure, distinguishing whether any leg already
@@ -1026,80 +942,6 @@ pub(crate) fn shorten_txid_like_tokens(message: &str) -> String {
     }
     flush_hex_run(&mut shortened, &hex_run);
     shortened
-}
-
-/// Submit pre-built sweep legs sequentially, enforcing the shared
-/// total/partial failure contract.
-///
-/// `operation` prefixes the user-facing messages ("Withdrawal", "Transfer").
-/// `record_submitted` runs after each successful broadcast to persist the
-/// wallet-DB record for that leg; the leg is already in the mempool at that
-/// point, so record failures must only be logged there, never returned.
-pub(crate) fn submit_sweep_legs<F>(
-    mempool: &Mempool,
-    operation: &str,
-    prepared: &[(&PlannedSweepLeg, Transaction, [u8; 32])],
-    max_gas_fee: u64,
-    mut record_submitted: F,
-) -> Result<Vec<SubmittedSweepLeg>, SweepFailure>
-where
-    F: FnMut(&PlannedSweepLeg, &Transaction, &[u8; 32]),
-{
-    let mut submitted: Vec<SubmittedSweepLeg> = Vec::with_capacity(prepared.len());
-    for (index, (leg, tx, tx_hash)) in prepared.iter().enumerate() {
-        if let Err(e) = mempool.add_transaction(tx.clone(), TransactionSource::Local) {
-            let unsent = prepared[index..]
-                .iter()
-                .map(|(leg, _, _)| format!("{} shards from {}", leg.amount, leg.hex_address))
-                .collect::<Vec<_>>()
-                .join(", ");
-
-            // Nothing broadcast yet: plain total failure, no marker.
-            if submitted.is_empty() {
-                return Err(format!(
-                    "{} failed: broadcast failed at leg 1 of {} ({}). \
-                     No transactions were submitted. Unsent legs: [{}].",
-                    operation,
-                    prepared.len(),
-                    e,
-                    unsent
-                )
-                .into());
-            }
-
-            // Partial failure: earlier legs are irrevocably in the mempool.
-            // The trailing `submitted_txids: <a>,<b>` marker is parsed by
-            // the frontend — keep its format exactly.
-            let submitted_txids = submitted
-                .iter()
-                .map(|sent| sent.txid.clone())
-                .collect::<Vec<_>>()
-                .join(",");
-            return Err(SweepFailure::Partial(format!(
-                "{} partially submitted: {} of {} transactions broadcast before leg {} \
-                 failed ({}). Unsent legs: [{}]. Broadcast legs cannot be rolled back. \
-                 submitted_txids: {}",
-                operation,
-                submitted.len(),
-                prepared.len(),
-                index + 1,
-                e,
-                unsent,
-                submitted_txids
-            )));
-        }
-
-        record_submitted(leg, tx, tx_hash);
-
-        submitted.push(SubmittedSweepLeg {
-            txid: hex::encode(tx_hash),
-            from_address: leg.hex_address.clone(),
-            amount: leg.amount.to_string(),
-            max_gas_fee: max_gas_fee.to_string(),
-        });
-    }
-
-    Ok(submitted)
 }
 
 impl From<xtal::transaction::receipt::TransactionReceipt> for TransactionReceiptDetail {
@@ -1197,7 +1039,7 @@ pub struct UTXODetail {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum UTXOBridgeDetail {
     VmWithdrawal {
-        withdrawal_value: u64,
+        withdrawal_value: Shards,
         created_output: Option<TransactionOutput>,
     },
 }
@@ -2683,27 +2525,12 @@ pub async fn get_transaction_history(
                 for ptx in pending {
                     let in_mempool = mempool.get_transaction_by_hash(&ptx.txid).is_some();
 
-                    if in_mempool {
-                        // Still pending - include with 0 confirmations
-                        seen_txids.insert(ptx.txid);
-                        transactions.push(TransactionSummary {
-                            txid: hex::encode(ptx.txid),
-                            amount: (-(ptx.amount as i64)).into(),
-                            fee: ptx.fee.unwrap_or(0).into(),
-                            confirmations: 0,
-                            timestamp: ptx.created_at as u64,
-                            tx_type: ptx.tx_type.as_str().to_string(),
-                            execution_status: lookup_any_receipt(blockchain.as_ref(), &ptx.txid)
-                                .map(|receipt| execution_status_label(&receipt.status))
-                                .or_else(|| {
-                                    ptx.execution_status
-                                        .map(|status| status.as_str().to_string())
-                                }),
-                            maturity_status: None,
-                        });
+                    // An in-memory mempool starts empty after a process restart, so its absence
+                    // cannot prove that a persisted transaction was dropped. Only look for
+                    // finalized-chain evidence here; without it the durable row stays pending.
+                    let confirmed_leaf_height = if in_mempool {
+                        None
                     } else {
-                        // Not in mempool — check if confirmed via UTXO set
-                        // (same approach as coinbase maturity: use creation_height from UTXOs)
                         let mut confirmed_leaf_height: Option<u64> = None;
 
                         if let Ok(tx) = Transaction::decode(&mut ptx.raw_tx.as_slice()) {
@@ -2733,7 +2560,39 @@ pub async fn get_transaction_history(
                             }
                         }
 
-                        if let Some(leaf_height) = confirmed_leaf_height {
+                        confirmed_leaf_height
+                    };
+
+                    match resolve_pending_outgoing(confirmed_leaf_height) {
+                        PendingOutgoingResolution::Pending => {
+                            seen_txids.insert(ptx.txid);
+                            transactions.push(TransactionSummary {
+                                txid: hex::encode(ptx.txid),
+                                amount: (-(ptx.amount as i64)).into(),
+                                fee: ptx.fee.unwrap_or(0).into(),
+                                confirmations: 0,
+                                timestamp: ptx.created_at as u64,
+                                tx_type: ptx.tx_type.as_str().to_string(),
+                                execution_status: lookup_any_receipt(
+                                    blockchain.as_ref(),
+                                    &ptx.txid,
+                                )
+                                .map(|receipt| execution_status_label(&receipt.status))
+                                .or_else(|| {
+                                    ptx.execution_status
+                                        .map(|status| status.as_str().to_string())
+                                }),
+                                maturity_status: None,
+                            });
+
+                            if !in_mempool {
+                                log::debug!(
+                                    "Retaining pending tx {} (not currently in local mempool)",
+                                    hex::encode(ptx.txid)
+                                );
+                            }
+                        }
+                        PendingOutgoingResolution::Confirmed { leaf_height } => {
                             let fallback_ts = std::time::SystemTime::now()
                                 .duration_since(std::time::UNIX_EPOCH)
                                 .map(|d| d.as_secs())
@@ -2769,13 +2628,6 @@ pub async fn get_transaction_history(
                                 "Updated tx {} to confirmed at leaf height {}",
                                 hex::encode(ptx.txid),
                                 leaf_height
-                            );
-                        } else {
-                            // Not in mempool and not confirmed — dropped
-                            let _ = queries.remove_transaction(&ptx.txid);
-                            log::info!(
-                                "Cleaned up dropped tx {} (no longer in mempool or blockchain)",
-                                hex::encode(ptx.txid)
                             );
                         }
                     }
@@ -3630,7 +3482,7 @@ fn build_utxo_detail(
 ) -> UTXODetail {
     let bridge = match tx {
         Transaction::VmWithdrawal(withdrawal_tx) => Some(UTXOBridgeDetail::VmWithdrawal {
-            withdrawal_value: withdrawal_tx.output.amount,
+            withdrawal_value: Shards::from(withdrawal_tx.output.amount),
             created_output: outputs.first().cloned(),
         }),
         _ => None,
@@ -5230,49 +5082,16 @@ pub async fn get_vm_addresses(state: State<'_, AppState>) -> Result<Vec<VmAddres
 }
 
 /// A prepared VM transfer sweep: validated inputs plus the per-account legs.
-struct VmTransferPlan {
-    /// Recipient account address bytes
-    recipient: [u8; 20],
-    /// Normalized "0x…" recipient for DB records and logs
-    recipient_display: String,
-    /// Total transfer amount in shards
-    total_amount: u64,
-    /// Gas limit per leg transaction
-    gas_limit: u64,
-    /// Gas price per leg transaction
-    gas_price: u64,
-    /// Upfront gas reservation per leg (`gas_limit * gas_price`)
-    max_gas_fee: u64,
-    /// One leg per funded wallet account, in submission order
-    legs: Vec<PlannedSweepLeg>,
-}
-
-/// Validate inputs and split a VM transfer into per-account legs against
-/// fresh account state. Read-only — nothing is signed or submitted.
-fn prepare_vm_transfer_plan(
-    state: &State<'_, AppState>,
+/// Build a transfer request from raw command inputs.
+///
+/// Gas bounds and the sweep split are the library's to enforce; this only
+/// parses the wire representation.
+fn vm_transfer_request(
     to_address: &str,
     amount: &str,
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
-) -> Result<VmTransferPlan, String> {
-    // Resolve gas defaults and validate
-    let gas_limit = gas_limit.unwrap_or(TX_BASE_GAS);
-    let gas_price = gas_price.unwrap_or(MIN_GAS_PRICE);
-
-    if gas_limit < TX_BASE_GAS {
-        return Err(format!("Gas limit must be at least {}", TX_BASE_GAS));
-    }
-    if gas_limit > MAX_GAS_LIMIT {
-        return Err(format!("Gas limit cannot exceed {}", MAX_GAS_LIMIT));
-    }
-    if gas_price < MIN_GAS_PRICE {
-        return Err(format!(
-            "Gas price must be at least {} shard/gas",
-            MIN_GAS_PRICE
-        ));
-    }
-
+) -> Result<VmTransferRequest, String> {
     // Amount arrives as a shard string to avoid JS precision loss — parse it
     // as an integer, never through floats.
     let total_amount: u64 = amount
@@ -5280,72 +5099,69 @@ fn prepare_vm_transfer_plan(
         .parse()
         .map_err(|_| "Invalid amount: must be a whole number of shards".to_string())?;
 
-    // Parse recipient address (supports 0x-prefixed hex or raw hex)
-    let to_hex = to_address.strip_prefix("0x").unwrap_or(to_address);
-    let recipient_bytes = hex::decode(to_hex)
-        .map_err(|_| "Invalid address format: must be hex encoded".to_string())?;
+    let request =
+        VmTransferRequest::from_address(to_address, total_amount).map_err(|e| e.to_string())?;
 
-    if recipient_bytes.len() != 20 {
-        return Err("Invalid address: must be 20 bytes (40 hex characters)".to_string());
-    }
+    Ok(request.with_gas(SweepGas {
+        gas_limit: gas_limit.unwrap_or(TX_BASE_GAS),
+        gas_price: gas_price.unwrap_or(MIN_GAS_PRICE),
+    }))
+}
 
-    let mut recipient = [0u8; 20];
-    recipient.copy_from_slice(&recipient_bytes);
-
+pub(crate) fn loaded_wallet<'a>(
+    state: &'a State<'_, AppState>,
+) -> Result<&'a Arc<WalletManager>, String> {
     let wallet = state
         .services
         .wallet
         .as_ref()
         .ok_or("Wallet manager not available")?;
-
     if !wallet.is_loaded() {
         return Err("No wallet loaded".to_string());
     }
-
-    let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
-    let db = wallet.database().ok_or("Wallet database not available")?;
-    let queries = WalletQueries::new(db.connection());
-
-    let mpt = if let Some((stem_state, _state_root)) = state.services.blockchain().stem_state() {
-        stem_state
-    } else {
-        state
-            .services
-            .blockchain()
-            .get_current_state_mpt()
-            .map_err(|e| format!("Failed to load current state: {}", e))?
-    };
-
-    let owned_pkhs = wallet_owned_pkhs_from_queries(&queries, &wallet_id)?;
-    let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
-    let legs = plan_vm_transfer_legs(&account_entries, total_amount, gas_limit, gas_price)?;
-
-    Ok(VmTransferPlan {
-        recipient,
-        recipient_display: format_contract_address(&recipient),
-        total_amount,
-        gas_limit,
-        gas_price,
-        max_gas_fee: gas_limit.saturating_mul(gas_price),
-        legs,
-    })
+    Ok(wallet)
 }
 
-/// Result of planning a VM transfer across wallet accounts
+/// Result of planning a VM transfer across wallet accounts.
+///
+/// Every figure here is quoted by the library — the frontend renders these
+/// and derives nothing.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PlanVmTransferResponse {
     pub legs: Vec<PlannedLegView>,
-    /// Upfront gas reservation per leg transaction, in shards (string)
-    pub max_gas_fee_per_leg: String,
     pub leg_count: usize,
+    /// Total reaching the recipient across all legs
+    pub total_amount: Shards,
+    /// Upfront gas reservation per leg transaction
+    pub max_gas_fee_per_leg: Shards,
+    /// Gas reservation across every leg
+    pub total_max_gas_fee: Shards,
+    /// Worst-case debit: total_amount + total_max_gas_fee
+    pub total_deducted: Shards,
+    /// Amount-independent maximum this gas policy can send
+    pub max_sendable: Shards,
+}
+
+impl From<VmTransferQuote> for PlanVmTransferResponse {
+    fn from(quote: VmTransferQuote) -> Self {
+        Self {
+            legs: quote.legs.iter().map(PlannedLegView::from).collect(),
+            leg_count: quote.leg_count,
+            total_amount: Shards::from(quote.total_amount),
+            max_gas_fee_per_leg: Shards::from(quote.max_gas_fee_per_leg),
+            total_max_gas_fee: Shards::from(quote.total_max_gas_fee),
+            total_deducted: Shards::from(quote.total_deducted),
+            max_sendable: Shards::from(quote.max_sendable),
+        }
+    }
 }
 
 /// Plan a VM transfer without submitting anything.
 ///
-/// Read-only: splits `amount` into one account-transfer leg per funded
-/// wallet account (a single transfer transaction can only draw from its one
-/// sender account) and reports the resulting legs.
+/// Read-only: the library splits `amount` into one account-transfer leg per
+/// funded wallet account (a single transfer transaction can only draw from
+/// its one sender account) and quotes what the sweep costs.
 #[tauri::command]
 pub async fn plan_vm_transfer(
     state: State<'_, AppState>,
@@ -5354,20 +5170,67 @@ pub async fn plan_vm_transfer(
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
 ) -> Result<PlanVmTransferResponse, String> {
-    let plan = prepare_vm_transfer_plan(&state, &to_address, &amount, gas_limit, gas_price)?;
+    let wallet = loaded_wallet(&state)?;
+    let request = vm_transfer_request(&to_address, &amount, gas_limit, gas_price)?;
 
-    Ok(PlanVmTransferResponse {
-        leg_count: plan.legs.len(),
-        max_gas_fee_per_leg: plan.max_gas_fee.to_string(),
-        legs: plan
-            .legs
-            .iter()
-            .map(|leg| PlannedLegView {
-                from_address: leg.hex_address.clone(),
-                amount: leg.amount.to_string(),
-            })
-            .collect(),
-    })
+    wallet
+        .quote_vm_transfer(
+            &request,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map(PlanVmTransferResponse::from)
+        .map_err(vm_sweep_wallet_error_message)
+}
+
+/// The maximum a VM transfer sweep can send under this gas policy.
+///
+/// Backs the "max" affordance, so the frontend never subtracts a gas
+/// reservation from a balance itself.
+#[tauri::command]
+pub async fn max_vm_sendable(
+    state: State<'_, AppState>,
+    gas_limit: Option<u64>,
+    gas_price: Option<u64>,
+) -> Result<Shards, String> {
+    let wallet = loaded_wallet(&state)?;
+    let gas = SweepGas {
+        gas_limit: gas_limit.unwrap_or(TX_BASE_GAS),
+        gas_price: gas_price.unwrap_or(MIN_GAS_PRICE),
+    };
+
+    wallet
+        .max_vm_sendable(
+            gas,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map(Shards::from)
+        .map_err(vm_sweep_wallet_error_message)
+}
+
+/// The upfront gas reservation for one leg under this gas policy.
+///
+/// Backs the gas-settings "max fee" display, replacing a frontend multiply
+/// that overflowed IEEE-754 at high gas prices.
+#[tauri::command]
+pub async fn quote_max_gas_fee(gas_limit: u64, gas_price: u64) -> Result<Shards, String> {
+    SweepGas {
+        gas_limit,
+        gas_price,
+    }
+    .max_fee_per_leg()
+    .map(Shards::from)
+    .map_err(|e| e.to_string())
+}
+
+/// Render a wallet-level sweep error, preferring the transfer vocabulary for
+/// planning failures.
+fn vm_sweep_wallet_error_message(error: WalletError) -> String {
+    match error {
+        WalletError::VmSweepPlan(inner) => transfer_plan_error_message(&inner),
+        other => other.to_string(),
+    }
 }
 
 /// Result of a multi-leg VM transfer
@@ -5375,6 +5238,8 @@ pub async fn plan_vm_transfer(
 #[serde(rename_all = "camelCase")]
 pub struct VmTransferSweepResponse {
     pub legs: Vec<SubmittedSweepLeg>,
+    pub total_amount: Shards,
+    pub total_max_gas_fee: Shards,
 }
 
 /// Send XTAL from VM accounts to another address (account-to-account
@@ -5423,87 +5288,36 @@ fn send_vm_transfer_inner(
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
 ) -> Result<VmTransferSweepResponse, SweepFailure> {
-    let wallet = state
-        .services
-        .wallet
-        .as_ref()
-        .ok_or("Wallet manager not available")?;
-
-    if !wallet.is_loaded() {
-        return Err("No wallet loaded".into());
-    }
+    let wallet = loaded_wallet(state)?;
+    let request = vm_transfer_request(to_address, amount, gas_limit, gas_price)?;
+    let recipient_display = format_contract_address(&request.recipient);
 
     // Unlock wallet temporarily for signing
     wallet
         .unlock_wallet(password, Some(Duration::from_secs(30)))
         .map_err(|e| format!("Invalid password: {}", e))?;
 
-    // Re-plan at execution time against fresh account state.
-    let plan = prepare_vm_transfer_plan(state, to_address, amount, gas_limit, gas_price)?;
-
-    let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
-    let db = wallet.database().ok_or("Wallet database not available")?;
-    let queries = WalletQueries::new(db.connection());
-
-    // Build and sign every leg before submitting any, so per-leg key or
-    // build problems surface before anything reaches the mempool.
-    let mut prepared = Vec::with_capacity(plan.legs.len());
-    for leg in &plan.legs {
-        let signing_key = wallet
-            .with_wallet(|w| w.get_signing_key_by_type(leg.key_type, leg.key_index))
-            .map_err(|e| format!("Failed to get signing key for {}: {}", leg.hex_address, e))?;
-
-        let tx = TransferBuilder::new()
-            .with_sender(signing_key)
-            .with_recipient(ContractAddress::from_bytes(plan.recipient))
-            .with_amount(leg.amount)
-            .with_currency(CurrencyType::XTAL)
-            .with_gas_limit(plan.gas_limit)
-            .with_gas_price(plan.gas_price)
-            .with_nonce(leg.nonce)
-            .build()
-            .map_err(|e| format!("Build failed for {}: {}", leg.hex_address, e))?;
-        let tx_hash = tx
-            .id()
-            .map_err(|e| format!("Hash failed for {}: {}", leg.hex_address, e))?;
-        prepared.push((leg, tx, tx_hash));
-    }
-
-    let submitted = submit_sweep_legs(
-        state.services.mempool(),
-        "Transfer",
-        &prepared,
-        plan.max_gas_fee,
-        |leg, tx, tx_hash| {
-            let record = TransactionRecord {
-                txid: *tx_hash,
-                raw_tx: tx.encode(),
-                tx_type: TransactionType::AccountTransfer,
-                amount: leg.amount,
-                fee: Some(plan.max_gas_fee),
-                to_address: Some(plan.recipient_display.clone()),
-                memo: None,
-                created_at: current_unix_timestamp() as i64,
-                confirmation: None,
-                expires_at: None,
-                priority: Some(0),
-                input_details: None,
-                execution_status: Some(TransactionExecutionStatus::Unknown),
-            };
-            if let Err(e) = queries.insert_transaction(&wallet_id, &record) {
-                log::warn!("Failed to store pending VM transfer leg: {}", e);
-            }
-        },
-    )?;
+    let outcome = wallet
+        .send_vm_transfer(
+            &request,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+            |_, _, _| {},
+        )
+        .map_err(|error| format_sweep_failure("Transfer", &error))?;
 
     log::info!(
         "VM transfer submitted: {} shards to {} across {} leg(s)",
-        plan.total_amount,
-        plan.recipient_display,
-        submitted.len()
+        outcome.total_amount,
+        recipient_display,
+        outcome.legs.len()
     );
 
-    Ok(VmTransferSweepResponse { legs: submitted })
+    Ok(VmTransferSweepResponse {
+        legs: outcome.legs.iter().map(SubmittedSweepLeg::from).collect(),
+        total_amount: Shards::from(outcome.total_amount),
+        total_max_gas_fee: Shards::from(outcome.total_max_gas_fee),
+    })
 }
 
 #[cfg(test)]
@@ -5522,6 +5336,7 @@ mod tests {
     };
     use xtal::vm::abi::AbiValue;
     use xtal::vm::{ContractEvent, PendingWithdrawal};
+    use xtal::wallet::vm_sweep::PlannedSweepLeg;
 
     fn balance_utxo(outpoint_tag: u8, amount: u64, script: Script) -> UtxoData {
         UtxoData {
@@ -6260,17 +6075,30 @@ mod tests {
         assert_eq!(shorten_txid_like_tokens(message), message);
     }
 
+    /// A wallet-owned VM account with `balance` shards, for the
+    /// single-sender selection tests.
+    fn wallet_account(tag: u8, balance: u64) -> WalletAccountStateEntry {
+        WalletAccountStateEntry {
+            pkh: [tag; 20],
+            hex_address: format_contract_address(&[tag; 20]),
+            balance,
+            nonce: tag as u64,
+            key_type: KeyType::VmAccount,
+            key_index: tag as u32,
+        }
+    }
+
     #[test]
     fn select_vm_sender_entry_returns_none_when_no_single_account_affords() {
         // Aggregate 130 covers 100 + 10 gas, but no single account does.
-        let entries = vec![withdrawal_account(1, 70), withdrawal_account(2, 60)];
+        let entries = vec![wallet_account(1, 70), wallet_account(2, 60)];
 
         assert!(select_vm_sender_entry(&entries, 100, 10, 1).is_none());
     }
 
     #[test]
     fn no_single_sender_message_reports_largest_account_not_aggregate() {
-        let entries = vec![withdrawal_account(1, 70), withdrawal_account(2, 60)];
+        let entries = vec![wallet_account(1, 70), wallet_account(2, 60)];
 
         assert_eq!(
             no_single_sender_message(&entries, 100, 10, 1),
@@ -6289,307 +6117,104 @@ mod tests {
         assert!(no_single_sender_message(&[], 5, 10, 1).contains("largest account has 0"));
     }
 
-    fn withdrawal_account(tag: u8, balance: u64) -> WalletAccountStateEntry {
-        WalletAccountStateEntry {
-            pkh: [tag; 20],
-            hex_address: format_contract_address(&[tag; 20]),
-            balance,
-            nonce: tag as u64,
-            key_type: KeyType::VmAccount,
-            key_index: tag as u32,
-        }
-    }
-
     #[test]
-    fn plan_vm_withdrawal_legs_single_account_happy_path() {
-        let entries = vec![withdrawal_account(1, 1_000_000)];
-
-        let legs = plan_vm_withdrawal_legs(&entries, 500_000, 50_000, 1).expect("plan");
-
+    fn withdrawal_plan_error_message_uses_withdrawal_vocabulary() {
+        // The library reports neutral, typed failures; this surface owns the
+        // wording. These strings are what the withdraw modal shows.
         assert_eq!(
-            legs,
-            vec![PlannedSweepLeg {
-                hex_address: format_contract_address(&[1u8; 20]),
-                key_type: KeyType::VmAccount,
-                key_index: 1,
-                nonce: 1,
-                amount: 500_000,
-            }]
-        );
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_exact_balance_fails_without_gas_headroom() {
-        // The full gas fee is reserved upfront from the caller account, so a
-        // balance exactly equal to the requested amount cannot host it.
-        let entries = vec![withdrawal_account(1, 10_000)];
-
-        let err = plan_vm_withdrawal_legs(&entries, 10_000, 100, 1).expect_err("must fail");
-
-        assert_eq!(
-            err,
-            "Insufficient balance: have 9900 shards withdrawable, need 10100 \
-             (amount: 10000 + max gas per tx: 100)"
-        );
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_splits_across_two_accounts() {
-        // Real-world failure shape: ~100 XTAL + ~50 XTAL accounts, withdraw
-        // 100 XTAL. No single account can host amount + gas.
-        let entries = vec![
-            withdrawal_account(1, 100_000_000_000),
-            withdrawal_account(2, 50_000_000_000),
-        ];
-
-        let legs = plan_vm_withdrawal_legs(&entries, 100_000_000_000, 50_000, 1).expect("plan");
-
-        assert_eq!(legs.len(), 2);
-        assert_eq!(legs[0].hex_address, format_contract_address(&[1u8; 20]));
-        assert_eq!(legs[0].amount, 99_999_950_000);
-        assert_eq!(legs[1].hex_address, format_contract_address(&[2u8; 20]));
-        assert_eq!(legs[1].amount, 50_000);
-        assert_eq!(
-            legs.iter().map(|leg| leg.amount).sum::<u64>(),
-            100_000_000_000
-        );
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_rebalances_dust_remainder() {
-        // Naive greedy would take 5000 then leave a 500-shard second leg,
-        // which the contract rejects. The first leg must shrink so the final
-        // leg is exactly MIN_WITHDRAWAL.
-        let entries = vec![withdrawal_account(1, 5_100), withdrawal_account(2, 3_100)];
-
-        let legs = plan_vm_withdrawal_legs(&entries, 5_500, 100, 1).expect("plan");
-
-        assert_eq!(legs.len(), 2);
-        assert_eq!(legs[0].amount, 4_500);
-        assert_eq!(legs[1].amount, 1_000);
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_reserves_minimums_across_multiple_legs() {
-        // Spendables [1500, 1200, 1000, 1000] for 4500: taking 1200 in full
-        // on the second leg would strand a sub-minimum remainder later, so
-        // the reservation trims it to 1000 up front.
-        let entries = vec![
-            withdrawal_account(1, 1_600),
-            withdrawal_account(2, 1_300),
-            withdrawal_account(3, 1_100),
-            withdrawal_account(4, 1_100),
-        ];
-
-        let legs = plan_vm_withdrawal_legs(&entries, 4_500, 100, 1).expect("plan");
-
-        assert_eq!(
-            legs.iter().map(|leg| leg.amount).collect::<Vec<_>>(),
-            vec![1_500, 1_000, 1_000, 1_000]
-        );
-        assert!(legs.iter().all(|leg| leg.amount >= MIN_WITHDRAWAL));
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_insufficient_total() {
-        let entries = vec![withdrawal_account(1, 2_100), withdrawal_account(2, 2_100)];
-
-        let err = plan_vm_withdrawal_legs(&entries, 5_000, 100, 1).expect_err("must fail");
-
-        assert_eq!(
-            err,
+            withdrawal_plan_error_message(&SweepPlanError::InsufficientSpendable {
+                requested: 5_000,
+                movable: 4_000,
+                max_gas_fee_per_leg: 100,
+                required_with_gas: 5_100,
+            }),
             "Insufficient balance: have 4000 shards withdrawable, need 5100 \
              (amount: 5000 + max gas per tx: 100)"
         );
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_skips_accounts_below_min_withdrawal() {
-        // Spendable 999 (< MIN_WITHDRAWAL) cannot host any valid leg, so it
-        // contributes nothing even though its raw balance looks usable.
-        let entries = vec![withdrawal_account(1, 5_100), withdrawal_account(2, 1_099)];
-
-        let err = plan_vm_withdrawal_legs(&entries, 5_500, 100, 1).expect_err("must fail");
-        assert!(err.starts_with("Insufficient balance: have 5000 shards withdrawable"));
-
-        let legs = plan_vm_withdrawal_legs(&entries, 5_000, 100, 1).expect("plan");
-        assert_eq!(legs.len(), 1);
-        assert_eq!(legs[0].amount, 5_000);
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_errors_when_all_accounts_below_min() {
-        let entries = vec![withdrawal_account(1, 1_099), withdrawal_account(2, 500)];
-
-        let err = plan_vm_withdrawal_legs(&entries, 2_000, 100, 1).expect_err("must fail");
-
-        assert!(err.starts_with("Insufficient balance: have 0 shards withdrawable"));
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_rejects_gas_fee_overflow() {
-        let entries = vec![withdrawal_account(1, 1_000_000)];
-
-        let err = plan_vm_withdrawal_legs(&entries, 10_000, u64::MAX, 2).expect_err("must fail");
-
-        assert!(err.starts_with("Gas fee overflow"));
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_rejects_zero_and_sub_minimum_amounts() {
-        let entries = vec![withdrawal_account(1, 1_000_000)];
-
-        for amount in [0, 999] {
-            let err = plan_vm_withdrawal_legs(&entries, amount, 100, 1).expect_err("must fail");
-            assert!(err.contains("must be at least 1000 shards"));
-        }
-    }
-
-    #[test]
-    fn plan_vm_withdrawal_legs_rejects_unsplittable_amounts() {
-        // Spendables [1500, 1000]: 1900 needs two legs but two legs need at
-        // least 2000 shards, while 2000 itself splits cleanly as 1000+1000.
-        let entries = vec![withdrawal_account(1, 1_600), withdrawal_account(2, 1_100)];
-
-        let err = plan_vm_withdrawal_legs(&entries, 1_900, 100, 1).expect_err("must fail");
-        assert!(err.starts_with("Cannot split withdrawal"));
-
-        let legs = plan_vm_withdrawal_legs(&entries, 2_000, 100, 1).expect("plan");
         assert_eq!(
-            legs.iter().map(|leg| leg.amount).collect::<Vec<_>>(),
-            vec![1_000, 1_000]
+            withdrawal_plan_error_message(&SweepPlanError::BelowMinimum {
+                minimum: 1_000,
+                amount: 999,
+            }),
+            "Withdrawal amount must be at least 1000 shards, got 999"
+        );
+        assert!(
+            withdrawal_plan_error_message(&SweepPlanError::Unsplittable {
+                amount: 1_900,
+                leg_count: 2,
+                min_leg_amount: 1_000,
+                min_required: 2_000,
+            })
+            .starts_with("Cannot split withdrawal")
         );
     }
 
     #[test]
-    fn plan_vm_withdrawal_legs_orders_deterministically() {
-        // Equal spendables tie-break on ascending address regardless of the
-        // order account entries are supplied in.
-        let forward = vec![withdrawal_account(1, 6_000), withdrawal_account(2, 6_000)];
-        let reversed = vec![withdrawal_account(2, 6_000), withdrawal_account(1, 6_000)];
-
-        let plan_forward = plan_vm_withdrawal_legs(&forward, 6_000, 1_000, 1).expect("plan");
-        let plan_reversed = plan_vm_withdrawal_legs(&reversed, 6_000, 1_000, 1).expect("plan");
-
-        assert_eq!(plan_forward, plan_reversed);
-        assert_eq!(plan_forward.len(), 2);
+    fn transfer_plan_error_message_uses_transfer_vocabulary() {
         assert_eq!(
-            plan_forward[0].hex_address,
-            format_contract_address(&[1u8; 20])
-        );
-        assert_eq!(plan_forward[0].amount, 5_000);
-        assert_eq!(
-            plan_forward[1].hex_address,
-            format_contract_address(&[2u8; 20])
-        );
-        assert_eq!(plan_forward[1].amount, 1_000);
-    }
-
-    #[test]
-    fn plan_vm_transfer_legs_single_account_degenerates_to_one_leg() {
-        let entries = vec![withdrawal_account(1, 1_000_000)];
-
-        let legs = plan_vm_transfer_legs(&entries, 500_000, 50_000, 1).expect("plan");
-
-        assert_eq!(
-            legs,
-            vec![PlannedSweepLeg {
-                hex_address: format_contract_address(&[1u8; 20]),
-                key_type: KeyType::VmAccount,
-                key_index: 1,
-                nonce: 1,
-                amount: 500_000,
-            }]
-        );
-    }
-
-    #[test]
-    fn plan_vm_transfer_legs_splits_across_accounts_with_no_minimum() {
-        // The incident shape: ~129 XTAL split across two accounts, sending
-        // 128 XTAL. The aggregate covers amount + per-leg gas but no single
-        // account does, so the transfer must sweep both.
-        let entries = vec![
-            withdrawal_account(1, 100_000_000_000),
-            withdrawal_account(2, 28_999_210_674),
-        ];
-
-        let legs = plan_vm_transfer_legs(&entries, 128_000_000_000, 21_000, 1).expect("plan");
-
-        assert_eq!(legs.len(), 2);
-        assert_eq!(legs[0].hex_address, format_contract_address(&[1u8; 20]));
-        assert_eq!(legs[0].amount, 99_999_979_000);
-        assert_eq!(legs[1].hex_address, format_contract_address(&[2u8; 20]));
-        assert_eq!(legs[1].amount, 28_000_021_000);
-        assert_eq!(
-            legs.iter().map(|leg| leg.amount).sum::<u64>(),
-            128_000_000_000
-        );
-    }
-
-    #[test]
-    fn plan_vm_transfer_legs_allows_one_shard_final_leg() {
-        // Transfers have no contract-imposed minimum, so a 1-shard final leg
-        // is valid where a withdrawal would have to rebalance.
-        let entries = vec![withdrawal_account(1, 110), withdrawal_account(2, 60)];
-
-        let legs = plan_vm_transfer_legs(&entries, 101, 10, 1).expect("plan");
-
-        assert_eq!(
-            legs.iter().map(|leg| leg.amount).collect::<Vec<_>>(),
-            vec![100, 1]
-        );
-    }
-
-    #[test]
-    fn plan_vm_transfer_legs_insufficient_aggregate_error_text() {
-        // Spendables [100, 50, 0]: the 5-shard account cannot even cover its
-        // own gas reservation, so it contributes nothing.
-        let entries = vec![
-            withdrawal_account(1, 110),
-            withdrawal_account(2, 60),
-            withdrawal_account(3, 5),
-        ];
-
-        let err = plan_vm_transfer_legs(&entries, 151, 10, 1).expect_err("must fail");
-
-        assert_eq!(
-            err,
+            transfer_plan_error_message(&SweepPlanError::InsufficientSpendable {
+                requested: 151,
+                movable: 150,
+                max_gas_fee_per_leg: 10,
+                required_with_gas: 161,
+            }),
             "Insufficient VM balance: have 150 shards sendable across wallet accounts \
              (after reserving 10 shards gas per account), need 151"
         );
+        assert_eq!(
+            transfer_plan_error_message(&SweepPlanError::ZeroAmount),
+            "Transfer amount must be greater than zero"
+        );
     }
 
     #[test]
-    fn plan_vm_transfer_legs_rejects_zero_amount() {
-        let entries = vec![withdrawal_account(1, 1_000_000)];
-
-        let err = plan_vm_transfer_legs(&entries, 0, 100, 1).expect_err("must fail");
-
-        assert_eq!(err, "Transfer amount must be greater than zero");
-    }
-
-    #[test]
-    fn plan_vm_transfer_legs_orders_deterministically() {
-        // Equal spendables tie-break on ascending address regardless of the
-        // order account entries are supplied in.
-        let forward = vec![withdrawal_account(1, 6_000), withdrawal_account(2, 6_000)];
-        let reversed = vec![withdrawal_account(2, 6_000), withdrawal_account(1, 6_000)];
-
-        let plan_forward = plan_vm_transfer_legs(&forward, 6_000, 1_000, 1).expect("plan");
-        let plan_reversed = plan_vm_transfer_legs(&reversed, 6_000, 1_000, 1).expect("plan");
-
-        assert_eq!(plan_forward, plan_reversed);
-        assert_eq!(plan_forward.len(), 2);
-        assert_eq!(
-            plan_forward[0].hex_address,
-            format_contract_address(&[1u8; 20])
+    fn format_sweep_failure_emits_the_submitted_txids_marker_only_when_partial() {
+        // The marker is the frontend's signal that legs are already in flight
+        // and a retry would double-send. A total failure must never carry it.
+        let total = format_sweep_failure(
+            "Transfer",
+            &VmSweepError::NotSubmitted(WalletError::MempoolRejected("pool full".to_string())),
         );
-        assert_eq!(plan_forward[0].amount, 5_000);
-        assert_eq!(
-            plan_forward[1].hex_address,
-            format_contract_address(&[2u8; 20])
+        match total {
+            SweepFailure::Total(message) => {
+                assert!(!message.contains("submitted_txids"));
+                assert!(message.contains("No transactions were submitted"));
+            }
+            SweepFailure::Partial(_) => panic!("expected a total failure"),
+        }
+
+        let leg = PlannedSweepLeg {
+            hex_address: format_contract_address(&[2u8; 20]),
+            key_type: KeyType::VmAccount,
+            key_index: 2,
+            nonce: 0,
+            amount: 5_000,
+        };
+        let partial = format_sweep_failure(
+            "Withdrawal",
+            &VmSweepError::PartiallySubmitted {
+                submitted: vec![[0xabu8; 32], [0xcdu8; 32]],
+                submitted_legs: vec![],
+                unsent_legs: vec![leg],
+                failed_leg_index: 2,
+                leg_count: 3,
+                source: WalletError::MempoolRejected("nonce conflict".to_string()),
+            },
         );
-        assert_eq!(plan_forward[1].amount, 1_000);
+        match partial {
+            SweepFailure::Partial(message) => {
+                let expected_marker =
+                    format!("submitted_txids: {},{}", "ab".repeat(32), "cd".repeat(32));
+                assert!(
+                    message.ends_with(&expected_marker),
+                    "marker must be message-final and exactly formatted, got: {}",
+                    message
+                );
+                assert!(message.contains("2 of 3 transactions broadcast"));
+                assert!(message.contains("before leg 3 failed"));
+            }
+            SweepFailure::Total(_) => panic!("expected a partial failure"),
+        }
     }
 
     #[test]
@@ -6683,6 +6308,19 @@ mod tests {
         assert!(transaction_matches_history_filter(&tx("vm_deposit", -25), "vm_deposits").unwrap());
         assert!(
             transaction_matches_history_filter(&tx("vm_withdrawal", 25), "vm_withdrawals").unwrap()
+        );
+    }
+
+    #[test]
+    fn pending_outgoing_missing_from_fresh_mempool_stays_pending() {
+        assert_eq!(
+            resolve_pending_outgoing(None),
+            PendingOutgoingResolution::Pending,
+            "local mempool absence must not delete or hide a persisted pending transaction"
+        );
+        assert_eq!(
+            resolve_pending_outgoing(Some(42)),
+            PendingOutgoingResolution::Confirmed { leaf_height: 42 }
         );
     }
 }
