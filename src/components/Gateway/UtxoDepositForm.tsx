@@ -28,7 +28,7 @@ type Step = "loading" | "select" | "confirm" | "sending" | "success" | "error";
 
 export function UtxoDepositForm({ method, contractAddress: _contractAddress }: UtxoDepositFormProps) {
   const { addToast } = useUiStore();
-  const { isLoaded: walletLoaded } = useWalletStore();
+  const { isLoaded: walletLoaded, triggerRefresh } = useWalletStore();
   const { latestStemHash } = useBlockchainStore();
 
   const [step, setStep] = useState<Step>("loading");
@@ -80,6 +80,7 @@ export function UtxoDepositForm({ method, contractAddress: _contractAddress }: U
         message: `${formatXtal(res.amount)} XTAL deposited — ${res.txid.slice(0, 12)}...`,
         duration: 5000,
       });
+      triggerRefresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStep("error");

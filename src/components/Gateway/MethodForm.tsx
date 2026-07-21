@@ -36,7 +36,7 @@ interface SendResult {
 export function MethodForm({ method, contractAddress }: MethodFormProps) {
   const { addToast } = useUiStore();
   const { queryResult, setQueryResult } = useGatewayStore();
-  const { isLoaded: walletLoaded } = useWalletStore();
+  const { isLoaded: walletLoaded, triggerRefresh } = useWalletStore();
 
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [valueAmount, setValueAmount] = useState("");
@@ -189,6 +189,7 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
         message: `${method.name} — ${result.txid.slice(0, 12)}...`,
         duration: 5000,
       });
+      triggerRefresh();
     } catch (err) {
       setCallError(err instanceof Error ? err.message : String(err));
       setCallStep("error");

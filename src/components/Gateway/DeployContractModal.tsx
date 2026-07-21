@@ -20,7 +20,7 @@ import { ModalShell } from "@/components/ui/modal-shell";
 import { GasSettings, type GasConfig } from "@/components/common/GasSettings";
 import { cn } from "@/lib/utils";
 import { tauriCommand } from "@/hooks/useTauriCommand";
-import { useUiStore, useGatewayStore } from "@/stores";
+import { useUiStore, useGatewayStore, useWalletStore } from "@/stores";
 import type { DeployResult } from "@/types/contract";
 import { getFruitColor } from "@/lib/fruitColors";
 
@@ -45,6 +45,7 @@ const DEPLOY_GAS_BUFFER = 300_000;
 export function DeployContractModal({ isOpen, onClose }: DeployContractModalProps) {
   const { addToast } = useUiStore();
   const { loadLibrary } = useGatewayStore();
+  const triggerRefresh = useWalletStore((state) => state.triggerRefresh);
 
   const [step, setStep] = useState<DeployStep>("upload");
   const [wasmHex, setWasmHex] = useState("");
@@ -153,6 +154,7 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
         duration: 6000,
       });
 
+      triggerRefresh();
       loadLibrary();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
