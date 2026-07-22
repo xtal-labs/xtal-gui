@@ -68,6 +68,7 @@ export default function Mining() {
   } = useMiningStore();
   const { addToast, setActiveTab } = useUiStore();
   const { isLoaded: walletLoaded, walletName, availableWallets, setLoaded } = useWalletStore();
+  const canStartMining = walletLoaded && Boolean(walletName);
 
   const [isStarting, setIsStarting] = useState(false);
   const [timeWindow, setTimeWindow] = useState<TimeWindow>("5m");
@@ -135,6 +136,16 @@ export default function Mining() {
   }, [walletLoaded, setMinedBlocks]);
 
   const handleToggleMining = async () => {
+    if (!isActive && !canStartMining) {
+      addToast({
+        type: "warning",
+        title: "Wallet required",
+        message: "Select or load a wallet before starting mining.",
+        duration: 5000,
+      });
+      return;
+    }
+
     setIsStarting(true);
     // Optimistically flip the button to the requested state and arm the guard so the
     // lagging live `stats.isRunning` can't flicker it back before the backend confirms.
@@ -324,6 +335,8 @@ export default function Mining() {
               className="w-full"
               onClick={handleToggleMining}
               isLoading={isStarting}
+              disabled={!isActive && !canStartMining}
+              aria-describedby={!isActive && !canStartMining ? "mining-wallet-required" : undefined}
             >
               {isActive ? (
                 <>
@@ -337,6 +350,11 @@ export default function Mining() {
                 </>
               )}
             </Button>
+            {!isActive && !canStartMining && (
+              <p id="mining-wallet-required" className="text-xs text-warning">
+                Select or load a wallet before starting mining.
+              </p>
+            )}
 
             {/* Thread Selection */}
             <div className="space-y-3">

@@ -10,6 +10,19 @@ use xtal::MiningStatsDisplay;
 use crate::platform;
 use crate::state::AppState;
 
+const MINING_WALLET_REQUIRED: &str = "Select or load a wallet before starting mining";
+
+fn require_loaded_mining_wallet(
+    is_loaded: bool,
+    wallet_id: Option<&str>,
+) -> Result<(), &'static str> {
+    if is_loaded && wallet_id.is_some() {
+        Ok(())
+    } else {
+        Err(MINING_WALLET_REQUIRED)
+    }
+}
+
 /// Mining status response
 #[derive(Debug, Clone, Serialize)]
 pub struct MiningStatus {
@@ -23,6 +36,14 @@ pub struct MiningStatus {
 /// Start mining with specified thread count
 #[tauri::command]
 pub async fn start_mining(state: State<'_, AppState>, threads: usize) -> Result<(), String> {
+    let wallet = state
+        .services
+        .wallet
+        .as_ref()
+        .ok_or(MINING_WALLET_REQUIRED)?;
+    let wallet_id = wallet.current_wallet_id();
+    require_loaded_mining_wallet(wallet.is_loaded(), wallet_id.as_deref())?;
+
     let mining = state
         .services
         .mining
@@ -166,4 +187,17 @@ pub async fn set_mining_threads(state: State<'_, AppState>, threads: usize) -> R
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::require_loaded_mining_wallet;
+
+    #[test]
+    fn mining_start_requires_a_loaded_wallet() {
+        assert!(require_loaded_mining_wallet(false, None).is_err());
+        assert!(require_loaded_mining_wallet(false, Some("wallet-id")).is_err());
+        assert!(require_loaded_mining_wallet(true, None).is_err());
+        assert!(require_loaded_mining_wallet(true, Some("wallet-id")).is_ok());
+    }
 }
