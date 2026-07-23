@@ -10353,7 +10353,7 @@ dependencies = [
 
 [[package]]
 name = "xtal"
-version = "0.8.2"
+version = "0.8.5"
 dependencies = [
  "aes-gcm",
  "anyhow",
