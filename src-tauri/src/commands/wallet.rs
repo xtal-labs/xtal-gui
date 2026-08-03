@@ -22,7 +22,7 @@ use xtal::address::encode_sh;
 use xtal::address_format::{format_contract_address, format_utxo_address};
 use xtal::consensus::validation::COINBASE_MATURITY;
 use xtal::crypto::hash_public_key;
-use xtal::gas::{can_afford_transaction, TX_BASE_GAS};
+use xtal::gas::TX_BASE_GAS;
 use xtal::interfaces::ChainDataProvider;
 use xtal::interfaces::UtxoData;
 use xtal::script::{
@@ -676,9 +676,11 @@ pub(crate) fn select_vm_sender_entry<'a>(
     gas_limit: u64,
     gas_price: u64,
 ) -> Option<&'a WalletAccountStateEntry> {
+    let required_balance = gas_limit.checked_mul(gas_price)?.checked_add(amount)?;
+
     account_entries
         .iter()
-        .filter(|entry| can_afford_transaction(entry.balance, gas_limit, gas_price, amount))
+        .filter(|entry| entry.balance >= required_balance)
         .max_by(|a, b| {
             a.balance
                 .cmp(&b.balance)
@@ -3844,7 +3846,11 @@ fn cage_deposit_receipt_view(
     wallet_pkhs: &std::collections::HashSet<[u8; 20]>,
 ) -> Option<CageDepositReceiptView> {
     let receipt = raw_receipt?;
-    if !receipt.status.as_bool() {
+    if !matches!(
+        receipt.status,
+        xtal::transaction::receipt::TxStatus::Success
+            | xtal::transaction::receipt::TxStatus::Pending
+    ) {
         return None;
     }
 
@@ -5814,6 +5820,15 @@ mod tests {
         .unwrap();
         assert_eq!(utxo_view.tx_type, WalletHistoryTxType::VmDeposit);
         assert_eq!(utxo_view.summary_amount, -(consumed_amount as i64));
+
+        receipt.status = TxStatus::Pending;
+        let pending_view = cage_deposit_receipt_view(Some(&receipt), &wallet_pkhs)
+            .expect("pending is a successful cross-shard execution");
+        assert_eq!(pending_view.consumed_amount, consumed_amount);
+        assert_eq!(pending_view.owner_credit, Some(owner_credit));
+
+        receipt.status = TxStatus::Failed;
+        assert!(cage_deposit_receipt_view(Some(&receipt), &wallet_pkhs).is_none());
     }
 
     #[test]
@@ -6094,6 +6109,14 @@ mod tests {
         let entries = vec![wallet_account(1, 70), wallet_account(2, 60)];
 
         assert!(select_vm_sender_entry(&entries, 100, 10, 1).is_none());
+    }
+
+    #[test]
+    fn select_vm_sender_entry_rejects_overflowing_required_balance() {
+        let entries = vec![wallet_account(1, u64::MAX)];
+
+        assert!(select_vm_sender_entry(&entries, 0, u64::MAX, 2).is_none());
+        assert!(select_vm_sender_entry(&entries, u64::MAX, 1, 1).is_none());
     }
 
     #[test]
