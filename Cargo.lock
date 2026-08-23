@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "crystal-gui"
-version = "0.8.2"
+version = "0.9.0"
 dependencies = [
  "anyhow",
  "data-encoding",
@@ -10353,7 +10353,7 @@ dependencies = [
 
 [[package]]
 name = "xtal"
-version = "0.8.5"
+version = "0.9.0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -10382,6 +10382,7 @@ dependencies = [
  "futures-timer",
  "hex",
  "hmac",
+ "libc",
  "libp2p",
  "libp2p-stream",
  "log",

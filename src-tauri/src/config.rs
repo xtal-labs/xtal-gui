@@ -323,12 +323,13 @@ mod tests {
         let mut config = NodeConfig::for_network(NetworkType::Mainnet);
         assert_eq!(config.sync_mode, SyncMode::Full);
         config.pruning.stem_epochs_to_keep += 10;
+        let expected_retention = config.pruning.stem_epochs_to_keep;
         apply_node_storage_preferences(&mut config, false, true);
 
         assert!(config.storage.enable_tx_index);
         assert!(config.storage.archival);
         assert!(config.pruning.enable_pruning);
-        assert_eq!(config.pruning.stem_epochs_to_keep, 12);
+        assert_eq!(config.pruning.stem_epochs_to_keep, expected_retention);
     }
 
     #[test]
