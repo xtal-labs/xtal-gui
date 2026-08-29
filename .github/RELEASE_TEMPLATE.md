@@ -6,7 +6,37 @@ _Released {{DATE}}_
 
 ## ✨ What's Changed
 
-- 
+### In the app
+
+- **The sync badge no longer says "Synced" when it isn't.** The node's `Idle`
+  phase means a sync run has not started — it is not evidence that your chain is
+  up to date — but the sidebar, dashboard header and sync widget were all
+  reading it as synced. Every sync badge in the app now derives its state from
+  one shared rule, so the four of them can no longer disagree about the same
+  node, and `Idle` shows as its own state with the local leaf height instead of
+  claiming the chain is current.
+- The sync panel stops animating an active progress track for a run that is not
+  happening, and explains that it is waiting for peers.
+
+### From the bundled node (xtal 0.9.1)
+
+- **Peer heights are live.** They used to be frozen at the moment you handshook
+  each peer, so the peers view showed stale heights that never moved. The node
+  now derives them from validated relay evidence and reports the handshake value
+  separately, along with when the live value last changed.
+- **Routine cooldowns are no longer counted as bans**, so the network view stops
+  inflating the banned-peer figure with peers that are simply on a short
+  reconnect timer.
+- **Better first dials after startup.** The node had been recording inbound
+  peers' ephemeral ports as working addresses, which crowded out real ones. It
+  now trusts only outbound connections as proof an address is dialable. Your
+  `peers.dat` is reset once on upgrade and peers are re-learned on the next run.
+- **Transactions no longer strand when a stem loses a fork race.** Fruits
+  anchored to a stem the chain left are released at the next leaf and the
+  transactions they carried go back to the mempool.
+- A contract deployment that ran out of gas could make the rest of that stem's
+  contract calls fail at full gas; deployments now roll back cleanly.
+- Mempool bookkeeping is significantly cheaper on busy nodes.
 
 ---
 
