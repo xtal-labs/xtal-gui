@@ -249,7 +249,7 @@ export default function BlockExplorer() {
     : stemHeight === 0
     ? "offline"
     : syncProgress.phase === "Idle"
-    ? "synced"
+    ? "idle"
     : "syncing";
 
   const gridClass =

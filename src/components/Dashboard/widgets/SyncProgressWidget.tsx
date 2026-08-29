@@ -3,7 +3,8 @@ import { Activity } from "lucide-react";
 import { WidgetIcon, WidgetShell } from "@/components/Dashboard/WidgetShell";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { useBlockchainStore } from "@/stores";
+import { deriveSyncStatus } from "@/lib/syncStatus";
+import { useBlockchainStore, useNetworkStore } from "@/stores";
 import type { SyncProgress } from "@/types";
 import type { WidgetProps } from "./registry";
 
@@ -30,9 +31,10 @@ export default function SyncProgressWidget({ shellProps }: WidgetProps) {
   const isSynced = useBlockchainStore((s) => s.isSynced);
   const syncProgress = useBlockchainStore((s) => s.syncProgress);
   const leafHeight = useBlockchainStore((s) => s.leafHeight);
+  const peerCount = useNetworkStore((s) => s.peerCount);
 
-  const syncing =
-    !isSynced && syncProgress.phase !== "Idle" && syncProgress.phase !== "Synced";
+  const status = deriveSyncStatus(isSynced, peerCount, syncProgress.phase);
+  const syncing = status === "syncing";
   const syncPercent = syncProgress.progressPercent ?? (isSynced ? 100 : 0);
 
   return (
@@ -40,13 +42,21 @@ export default function SyncProgressWidget({ shellProps }: WidgetProps) {
       title="SYNC PROGRESS"
       icon={<WidgetIcon icon={Activity} />}
       headerRight={
-        syncing ? (
+        status === "synced" ? (
+          <Badge variant="success" diamond>
+            SYNCED
+          </Badge>
+        ) : status === "syncing" ? (
           <Badge variant="syncing" diamond pulse>
             {syncProgress.phase}
           </Badge>
+        ) : status === "no_peers" ? (
+          <Badge variant="no_peers" diamond>
+            NO PEERS
+          </Badge>
         ) : (
-          <Badge variant="success" diamond>
-            SYNCED
+          <Badge variant="secondary" diamond>
+            IDLE
           </Badge>
         )
       }
@@ -64,9 +74,16 @@ export default function SyncProgressWidget({ shellProps }: WidgetProps) {
             </span>
           </div>
         </div>
-      ) : (
+      ) : status === "synced" ? (
         <p className="text-sm text-foreground-muted font-mono">
           Chain is up to date at leaf height {leafHeight.toLocaleString()}
+        </p>
+      ) : (
+        <p className="text-sm text-foreground-muted font-mono">
+          {status === "no_peers"
+            ? "Waiting for peers to sync from"
+            : "Sync has not started"}{" "}
+          — local leaf height {leafHeight.toLocaleString()}
         </p>
       )}
     </WidgetShell>

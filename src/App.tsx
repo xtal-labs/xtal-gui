@@ -22,7 +22,8 @@ import {
 import { ThemeProvider, LoadingScreen, NodeStartupError, BootstrapScreen } from "@/components/common";
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent, ToastContainer } from "@/components/ui";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { deriveSyncStatus, type SyncStatus } from "@/lib/syncStatus";
 import { cn, formatXtalFull } from "@/lib/utils";
 
 import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore, useDashboardStore, type Tab, type NodeConnectionState } from "@/stores";
@@ -214,6 +215,20 @@ interface SidebarNavProps {
   isMining: boolean;
 }
 
+const SYNC_BADGE_VARIANT: Record<SyncStatus, BadgeProps["variant"]> = {
+  synced: "synced",
+  syncing: "syncing",
+  no_peers: "no_peers",
+  idle: "secondary",
+};
+
+const SYNC_BADGE_LABEL: Record<SyncStatus, string> = {
+  synced: "Synced",
+  syncing: "Syncing",
+  no_peers: "No Peers",
+  idle: "Idle",
+};
+
 // Shared sidebar contents, rendered either in the docked rail or the compact
 // overlay drawer. In overlay mode the rail is always expanded (collapse is a
 // docked-only affordance).
@@ -232,6 +247,7 @@ function SidebarNav({
 }: SidebarNavProps) {
   const isOverlay = variant === "overlay";
   const effCollapsed = isOverlay ? false : collapsed;
+  const syncStatus = deriveSyncStatus(isSynced, peerCount, syncProgress.phase);
 
   return (
     <>
@@ -380,24 +396,11 @@ function SidebarNav({
             <span className="text-xs font-heading text-foreground-muted tracking-wide">STATUS</span>
           )}
           <Badge
-            variant={
-              isSynced ? "synced"
-              : peerCount === 0 ? "no_peers"
-              : syncProgress.phase === "Idle" ? "synced"
-              : "syncing"
-            }
+            variant={SYNC_BADGE_VARIANT[syncStatus]}
             diamond
-            pulse={!isSynced && peerCount > 0 && syncProgress.phase !== "Idle"}
+            pulse={syncStatus === "syncing"}
           >
-            {effCollapsed
-              ? null
-              : isSynced
-              ? "Synced"
-              : peerCount === 0
-              ? "No Peers"
-              : syncProgress.phase === "Idle"
-              ? "Synced"
-              : "Syncing"}
+            {effCollapsed ? null : SYNC_BADGE_LABEL[syncStatus]}
           </Badge>
         </div>
 

@@ -342,9 +342,11 @@ export function SyncProgressPanel({ progress }: SyncProgressPanelProps) {
     progress.downloadedChunks !== undefined;
 
   const phases = isStateSyncPath ? STATE_SYNC_PHASES : FULL_SYNC_PHASES;
-  const isSynced = progress.phase === "Synced" || progress.phase === "Idle";
+  // `Idle` means sync has not started; it is not evidence the chain is current.
+  const isSynced = progress.phase === "Synced";
+  const isIdle = progress.phase === "Idle";
   const isFailed = progress.phase === "Failed";
-  const isActive = !isSynced && !isFailed;
+  const isActive = !isSynced && !isIdle && !isFailed;
 
   const currentPhaseProgress = getPhaseProgress(progress.phase, progress);
 
@@ -361,12 +363,14 @@ export function SyncProgressPanel({ progress }: SyncProgressPanelProps) {
                 ? "synced"
                 : isFailed
                 ? "destructive"
+                : isIdle
+                ? "secondary"
                 : "syncing"
             }
             diamond
             pulse={isActive}
           >
-            {isSynced ? "SYNCED" : isFailed ? "FAILED" : "SYNCING"}
+            {isSynced ? "SYNCED" : isFailed ? "FAILED" : isIdle ? "IDLE" : "SYNCING"}
           </Badge>
         </div>
       </CardHeader>
@@ -445,6 +449,15 @@ export function SyncProgressPanel({ progress }: SyncProgressPanelProps) {
             <Check className="h-4 w-4 text-success mr-2" />
             <span className="text-sm font-heading text-success">
               Blockchain fully synchronized
+            </span>
+          </div>
+        )}
+
+        {/* Idle state — sync has not begun */}
+        {isIdle && (
+          <div className="mt-2 p-3 chamfered-sm bg-muted flex items-center justify-center">
+            <span className="text-sm font-heading text-foreground-secondary">
+              Waiting for peers to begin synchronization
             </span>
           </div>
         )}

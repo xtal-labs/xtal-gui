@@ -3,6 +3,7 @@ import { Check, Plus, RotateCcw, SlidersHorizontal } from "lucide-react";
 
 import { StatusBadge } from "@/components/common";
 import { Button } from "@/components/ui/button";
+import { deriveSyncStatus } from "@/lib/syncStatus";
 import { useBlockchainStore, useDashboardStore, useNetworkStore } from "@/stores";
 
 import AddWidgetDialog from "./AddWidgetDialog";
@@ -80,12 +81,7 @@ export default function Dashboard() {
                 <SlidersHorizontal className="h-3.5 w-3.5 mr-1" />
                 Customize
               </Button>
-              <StatusBadge status={
-                isSynced ? "synced"
-                : peerCount === 0 ? "no_peers"
-                : syncProgress.phase === "Idle" ? "synced"
-                : "syncing"
-              } />
+              <StatusBadge status={deriveSyncStatus(isSynced, peerCount, syncProgress.phase)} />
             </>
           )}
         </div>
