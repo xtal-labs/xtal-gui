@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
+import { useBlockchainStore } from "@/stores";
 import type { SyncProgress, SyncPhase, SyncPhaseInfo } from "@/types";
 
 interface SyncProgressPanelProps {
@@ -342,9 +343,11 @@ export function SyncProgressPanel({ progress }: SyncProgressPanelProps) {
     progress.downloadedChunks !== undefined;
 
   const phases = isStateSyncPath ? STATE_SYNC_PHASES : FULL_SYNC_PHASES;
-  // `Idle` means sync has not started; it is not evidence the chain is current.
-  const isSynced = progress.phase === "Synced";
-  const isIdle = progress.phase === "Idle";
+  // The store's flag folds the node's chain-health verdict into the phase: a
+  // caught-up node that restarts with nothing to fetch never leaves `Idle`,
+  // and reads synced here only once that verdict says it is keeping up.
+  const isSynced = useBlockchainStore((s) => s.isSynced);
+  const isIdle = progress.phase === "Idle" && !isSynced;
   const isFailed = progress.phase === "Failed";
   const isActive = !isSynced && !isIdle && !isFailed;
 
@@ -448,7 +451,9 @@ export function SyncProgressPanel({ progress }: SyncProgressPanelProps) {
           <div className="mt-2 p-3 chamfered-sm bg-success/10 flex items-center justify-center">
             <Check className="h-4 w-4 text-success mr-2" />
             <span className="text-sm font-heading text-success">
-              Blockchain fully synchronized
+              {progress.phase === "Synced"
+                ? "Blockchain fully synchronized"
+                : "Chain is current with connected peers"}
             </span>
           </div>
         )}

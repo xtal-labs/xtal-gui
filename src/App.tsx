@@ -33,6 +33,7 @@ import { useDiagnosticMonitor, useRenderTracker } from "@/hooks/useDiagnosticMon
 import type {
   BlockSummary,
   BootstrapPhase,
+  ChainHealth,
   GuiEvent,
   MinedBlock,
   StartupErrorInfo,
@@ -145,6 +146,13 @@ const navItems: NavItem[] = [
 ];
 
 const SYNC_PROGRESS_UPDATE_INTERVAL_MS = 250;
+/**
+ * How often to re-ask the node whether it is keeping up. The verdict also
+ * rides on every WebSocket `blockchain_info`, so this poll only has to catch
+ * the transitions no block announces: the chain going stale, or peers leaving.
+ * Well inside the node's 300s tip-freshness window.
+ */
+const CHAIN_HEALTH_POLL_INTERVAL_MS = 30_000;
 const BLOCK_REFRESH_INTERVAL_MS = 1_000;
 const EXPENSIVE_REFRESH_INTERVAL_MS = 2_000;
 
@@ -309,7 +317,7 @@ function SidebarNav({
               className={cn(
                 "sidebar-nav-item relative w-full flex items-center gap-3 px-3 py-2.5 chamfered-sm",
                 "transition-all duration-200",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                 isActive
                   ? "bg-primary/15 text-primary shadow-inner-glow"
                   : "text-foreground-secondary hover:text-foreground hover:bg-muted/50"
@@ -448,10 +456,12 @@ function AppContent() {
   const nodeConnectionState = useUiStore((state) => state.nodeConnectionState);
   const setNodeConnectionState = useUiStore((state) => state.setNodeConnectionState);
   const hydrateToastsEnabled = useUiStore((state) => state.hydrateToastsEnabled);
+  const hydrateAdvancedMode = useUiStore((state) => state.hydrateAdvancedMode);
 
   const syncProgress = useBlockchainStore((state) => state.syncProgress);
   const isSynced = useBlockchainStore((state) => state.isSynced);
   const setSyncProgress = useBlockchainStore((state) => state.setSyncProgress);
+  const setKeepingUp = useBlockchainStore((state) => state.setKeepingUp);
   const handleWsBlockchainInfo = useBlockchainStore((state) => state.handleWsBlockchainInfo);
   const handleWsStemProviderInfo = useBlockchainStore((state) => state.handleWsStemProviderInfo);
   const triggerBlockchainRefresh = useBlockchainStore((state) => state.triggerRefresh);
@@ -856,6 +866,7 @@ function AppContent() {
       try {
         const guiConfig = await tauriCommand<GuiConfig>("get_gui_config");
         hydrateToastsEnabled(guiConfig.toastsEnabled);
+        hydrateAdvancedMode(guiConfig.advancedMode);
         useDashboardStore.getState().hydrateLayout(guiConfig.dashboard ?? null);
       } catch (guiConfigErr) {
         console.error("Failed to initialize GUI preferences:", guiConfigErr);
@@ -973,7 +984,33 @@ function AppContent() {
         clearTimeout(pollTimer);
       }
     };
-  }, [hydrateToastsEnabled, setNeedsSetup, setIsInitializing]);
+  }, [hydrateToastsEnabled, hydrateAdvancedMode, setNeedsSetup, setIsInitializing]);
+
+  // Poll the chain-health verdict once the node is up. A caught-up node that
+  // restarts with nothing to fetch rests at the Idle sync phase forever, and
+  // this verdict is what lets the badge read synced in that state.
+  useEffect(() => {
+    if (apiPort === null) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const health = await tauriCommand<ChainHealth>("get_chain_health");
+        if (!cancelled) {
+          setKeepingUp(health.keepingUp);
+        }
+      } catch (err) {
+        console.warn("[App] get_chain_health failed:", err);
+      }
+    };
+
+    poll();
+    const timer = setInterval(poll, CHAIN_HEALTH_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [apiPort, setKeepingUp]);
 
   // NOTE: Live updates now handled via WebSocket in handleWebSocketMessage above
   // Tauri events are no longer used for: SyncProgress, NewBlock, MiningStats, PeerCountChanged
@@ -1091,7 +1128,7 @@ function AppContent() {
   // Show init failure card if initialization failed or timed out
   if (initError) {
     return (
-      <div className="min-h-dvh min-w-[var(--app-min-width)] bg-background hex-grid-bg flex items-center justify-center overflow-auto p-4">
+      <div className="min-h-dvh min-w-(--app-min-width) bg-background hex-grid-bg flex items-center justify-center overflow-auto p-4">
         <div className="max-w-md w-full">
           <div
             className="chamfered-lg p-[2px]"
@@ -1100,7 +1137,7 @@ function AppContent() {
             }}
           >
             <div
-              className="chamfered-lg p-[1px]"
+              className="chamfered-lg p-px"
               style={{
                 background: "linear-gradient(135deg, hsl(var(--accent) / 0.5), hsl(var(--primary) / 0.6))",
               }}
@@ -1157,14 +1194,14 @@ function AppContent() {
   }
 
   return (
-    <div className="flex h-dvh min-h-[var(--app-min-height)] min-w-[var(--app-min-width)] bg-background overflow-hidden">
+    <div className="flex h-dvh min-h-(--app-min-height) min-w-(--app-min-width) bg-background overflow-hidden">
       {/* Docked sidebar (desktop ≥ md) */}
       {!isCompact && (
         <aside
           className={cn(
             "flex h-full shrink-0 flex-col border-r border-border bg-background-secondary",
             "min-h-0 overflow-hidden transition-all duration-300 ease-in-out",
-            sidebarCollapsed ? "w-[var(--sidebar-collapsed)]" : "w-[var(--sidebar-width)]"
+            sidebarCollapsed ? "w-(--sidebar-collapsed)" : "w-(--sidebar-width)"
           )}
         >
           <SidebarNav
@@ -1188,7 +1225,7 @@ function AppContent() {
         <>
           <div
             className={cn(
-              "fixed inset-0 z-40 bg-black/50 backdrop-blur-sm transition-opacity duration-300",
+              "fixed inset-0 z-40 bg-black/50 backdrop-blur-xs transition-opacity duration-300",
               mobileNavOpen ? "opacity-100" : "pointer-events-none opacity-0"
             )}
             aria-hidden={!mobileNavOpen}
@@ -1196,7 +1233,7 @@ function AppContent() {
           />
           <aside
             className={cn(
-              "fixed inset-y-0 left-0 z-50 flex w-[var(--sidebar-width)] max-w-[80vw] flex-col",
+              "fixed inset-y-0 left-0 z-50 flex w-(--sidebar-width) max-w-[80vw] flex-col",
               "border-r border-border bg-background-secondary text-foreground shadow-crystalline-lg",
               "transition-transform duration-300 ease-in-out",
               mobileNavOpen ? "translate-x-0" : "-translate-x-full"
@@ -1224,7 +1261,7 @@ function AppContent() {
       <main className="flex h-full min-w-0 flex-1 flex-col overflow-hidden hex-grid-bg text-foreground">
         {/* Compact top bar with drawer toggle */}
         {isCompact && (
-          <div className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background-secondary/90 px-4 backdrop-blur">
+          <div className="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-3 border-b border-border bg-background-secondary/90 px-4 backdrop-blur-sm">
             <Button
               variant="ghost"
               size="icon-sm"

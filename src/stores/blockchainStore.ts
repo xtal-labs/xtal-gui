@@ -6,6 +6,7 @@ import type {
   WsBlockchainInfo,
   WsStemProviderInfo,
 } from "@/types";
+import { isChainCurrent } from "@/lib/syncStatus";
 
 interface BlockchainState {
   // Chain state
@@ -14,7 +15,10 @@ interface BlockchainState {
   stemsSinceLastLeaf: number;
   bestBlockHash: string;
   latestStemHash: string | null;
+  /** `isChainCurrent(syncProgress.phase, keepingUp)` — the only synced signal. */
   isSynced: boolean;
+  /** Node's chain-health verdict: level with ready peers and still receiving blocks. */
+  keepingUp: boolean;
 
   // Sync state
   syncProgress: SyncProgress;
@@ -27,6 +31,7 @@ interface BlockchainState {
   handleWsBlockchainInfo: (data: WsBlockchainInfo) => void;
   handleWsStemProviderInfo: (data: WsStemProviderInfo) => void;
   setSyncProgress: (progress: SyncProgress) => void;
+  setKeepingUp: (keepingUp: boolean) => void;
   triggerRefresh: () => void;
   reset: () => void;
 }
@@ -38,6 +43,7 @@ const initialState = {
   bestBlockHash: "",
   latestStemHash: null as string | null,
   isSynced: false,
+  keepingUp: false,
   syncProgress: {
     phase: "Idle" as SyncPhase,
     progressPercent: 0,
@@ -90,12 +96,14 @@ export const useBlockchainStore = create<BlockchainState>((set) => ({
       const stemsSinceLastLeaf =
         data.stem_work_info?.stems_since_last_leaf ?? state.stemsSinceLastLeaf;
       const bestBlockHash = data.latest_leaf?.hash ?? state.bestBlockHash;
+      const keepingUp = data.keeping_up ?? state.keepingUp;
 
       if (
         state.leafHeight === data.leaf_height &&
         state.stemHeight === data.height &&
         state.stemsSinceLastLeaf === stemsSinceLastLeaf &&
-        state.bestBlockHash === bestBlockHash
+        state.bestBlockHash === bestBlockHash &&
+        state.keepingUp === keepingUp
       ) {
         return state;
       }
@@ -105,6 +113,8 @@ export const useBlockchainStore = create<BlockchainState>((set) => ({
         stemHeight: data.height,
         stemsSinceLastLeaf,
         bestBlockHash,
+        keepingUp,
+        isSynced: isChainCurrent(state.syncProgress.phase, keepingUp),
       };
     }),
 
@@ -129,7 +139,7 @@ export const useBlockchainStore = create<BlockchainState>((set) => ({
 
   setSyncProgress: (progress) =>
     set((state) => {
-      const isSynced = progress.phase === "Synced";
+      const isSynced = isChainCurrent(progress.phase, state.keepingUp);
 
       if (state.isSynced === isSynced && isSameSyncProgress(state.syncProgress, progress)) {
         return state;
@@ -139,6 +149,15 @@ export const useBlockchainStore = create<BlockchainState>((set) => ({
         syncProgress: progress,
         isSynced,
       };
+    }),
+
+  setKeepingUp: (keepingUp) =>
+    set((state) => {
+      const isSynced = isChainCurrent(state.syncProgress.phase, keepingUp);
+      if (state.keepingUp === keepingUp && state.isSynced === isSynced) {
+        return state;
+      }
+      return { keepingUp, isSynced };
     }),
 
   triggerRefresh: () =>

@@ -32,6 +32,8 @@ export interface WsBlockchainInfo {
   stem_work_info?: {
     stems_since_last_leaf: number;
   };
+  /** Chain-health verdict, refreshed with every block. */
+  keeping_up?: boolean;
 }
 
 /** `stem_provider_info` payload (snake_case from the Rust API). */

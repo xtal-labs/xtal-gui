@@ -366,6 +366,7 @@ fn run_setup_mode(context: tauri::Context) {
             commands::complete_setup,
             commands::get_gui_config,
             commands::set_gui_toasts_enabled,
+            commands::set_gui_advanced_mode,
         ])
         .run(context)
         .expect("Failed to run Crystal GUI setup");
@@ -760,6 +761,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_config_path,
             commands::get_gui_config,
             commands::set_gui_toasts_enabled,
+            commands::set_gui_advanced_mode,
             commands::set_gui_dashboard_layout,
             commands::get_node_config,
             commands::set_node_storage_flags,
@@ -768,6 +770,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::get_blockchain_info,
             commands::get_best_leaf_info,
             commands::get_sync_state,
+            commands::get_chain_health,
             commands::get_recent_blocks,
             commands::get_block_by_height,
             commands::get_block,

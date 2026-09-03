@@ -30,7 +30,22 @@ export interface BlockchainInfo {
   stemsSinceLastLeaf: number;
   bestBlockHash: string;
   isSynced: boolean;
+  keepingUp: boolean;
   peerCount: number;
+}
+
+/**
+ * Chain-health verdict from `get_chain_health`: whether the node is keeping
+ * up with the chain, and the observations behind that answer. Independent of
+ * the sync phase — see `isChainCurrent` in `lib/syncStatus.ts`.
+ */
+export interface ChainHealth {
+  keepingUp: boolean;
+  leafHeight: number;
+  maxPeerLeafHeight: number | null;
+  readyPeers: number;
+  /** `Number.MAX_SAFE_INTEGER`-scale sentinel when the tip could not be read. */
+  tipAgeSeconds: number;
 }
 
 export interface BestLeafInfo {

@@ -16,6 +16,7 @@ use xtal::crypto::hash_public_key;
 use xtal::fruit::core::FruitTx;
 use xtal::fruit::FruitHeaderWithSig;
 use xtal::interfaces::ChainDataProvider;
+use xtal::node::health::ChainHealth;
 use xtal::node::sync::SyncState;
 use xtal::storage::block_io::calculate_block_size;
 use xtal::transaction::receipt::TransactionReceipt;
@@ -52,8 +53,29 @@ pub struct BlockchainInfo {
     pub stem_height: u64,
     pub stems_since_last_leaf: u64,
     pub best_block_hash: String,
+    /// Whether the chain is current — see [`chain_is_current`].
     pub is_synced: bool,
+    /// The raw health verdict behind `is_synced`, for callers that also see
+    /// the sync phase and combine the two themselves.
+    pub keeping_up: bool,
     pub peer_count: usize,
+}
+
+/// Whether the chain can be presented as current.
+///
+/// The sync machine's `Synced` is only reached at the end of a peer-driven
+/// run, so a caught-up node that restarts with no peer ahead of it rests at
+/// `Idle` forever. In that resting state the chain-health verdict — level
+/// with every ready peer and still receiving blocks — is what says the node
+/// is current. The verdict is deliberately not consulted mid-run or after a
+/// failure: an active run is "syncing" even if it is only one leaf short, and
+/// a failed run must stay visible until the machine clears it.
+pub fn chain_is_current(sync_state: &SyncState, keeping_up: bool) -> bool {
+    match sync_state {
+        SyncState::Synced => true,
+        SyncState::Idle => keeping_up,
+        _ => false,
+    }
 }
 
 /// Block summary for display
@@ -317,7 +339,7 @@ pub async fn get_blockchain_info(state: State<'_, AppState>) -> Result<Blockchai
     let (tip_hash, leaf_height) = blockchain.get_chain_tip_hash_and_height();
 
     let best_hash = tip_hash
-        .map(|h| hex::encode(h))
+        .map(hex::encode)
         .unwrap_or_else(|| "unknown".to_string());
 
     // Get stem height (total block height including stems)
@@ -326,8 +348,8 @@ pub async fn get_blockchain_info(state: State<'_, AppState>) -> Result<Blockchai
     // Get count of stems since last leaf
     let stems_since_last_leaf = blockchain.get_stems_since_last_leaf().len() as u64;
 
-    let sync_state = state.sync_state();
-    let is_synced = matches!(sync_state, SyncState::Synced);
+    let keeping_up = state.services.chain_health().keeping_up;
+    let is_synced = chain_is_current(&state.sync_state(), keeping_up);
 
     let peer_count = state.services.peer_manager.peer_count();
 
@@ -337,8 +359,21 @@ pub async fn get_blockchain_info(state: State<'_, AppState>) -> Result<Blockchai
         stems_since_last_leaf,
         best_block_hash: best_hash,
         is_synced,
+        keeping_up,
         peer_count,
     })
+}
+
+/// Chain-health verdict: whether this node is keeping up with the chain, and
+/// the observations behind that answer.
+///
+/// Independent of the sync state machine, which rests at `Idle` after a
+/// restart that found nothing to fetch. The frontend polls this so the sync
+/// badge can flip to synced on a quiet restart, and back off it if the chain
+/// stops reaching us between blocks.
+#[tauri::command]
+pub async fn get_chain_health(state: State<'_, AppState>) -> Result<ChainHealth, String> {
+    Ok(state.services.chain_health())
 }
 
 /// Get best leaf info for the explorer hero card
@@ -378,6 +413,49 @@ pub async fn get_best_leaf_info(
 #[tauri::command]
 pub async fn get_sync_state(state: State<'_, AppState>) -> Result<SyncState, String> {
     Ok(state.sync_state())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The case this exists for: a caught-up node restarting with nothing to
+    /// fetch never leaves Idle, and must read synced from the health verdict.
+    #[test]
+    fn idle_and_keeping_up_is_current() {
+        assert!(chain_is_current(&SyncState::Idle, true));
+    }
+
+    #[test]
+    fn idle_and_not_keeping_up_is_not_current() {
+        assert!(!chain_is_current(&SyncState::Idle, false));
+    }
+
+    /// A finished run is synced on its own account; the verdict only matters
+    /// where the machine has nothing to say.
+    #[test]
+    fn synced_is_current_regardless_of_verdict() {
+        assert!(chain_is_current(&SyncState::Synced, false));
+    }
+
+    /// One leaf short during an active run is within the health tolerance,
+    /// but the run is still in progress and must be shown as such.
+    #[test]
+    fn active_run_is_not_current_even_when_keeping_up() {
+        let running = SyncState::SyncingHeaders {
+            headers_received: 10,
+            target_headers: 11,
+        };
+        assert!(!chain_is_current(&running, true));
+    }
+
+    #[test]
+    fn failed_run_is_not_current_even_when_keeping_up() {
+        let failed = SyncState::Failed {
+            reason: "peer lost".to_string(),
+        };
+        assert!(!chain_is_current(&failed, true));
+    }
 }
 
 /// Get recent blocks (newest first)
