@@ -273,7 +273,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
 
   return (
     <ModalShell
-      className="bg-black/60 backdrop-blur-sm"
+      className="bg-black/60 backdrop-blur-xs"
       cardClassName="max-w-lg relative"
       onClose={onClose}
       title="Send"
@@ -281,11 +281,11 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
         {/* Decorative crystal facet overlay */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
-            className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-primary/50 to-transparent"
+            className="absolute top-0 right-0 w-32 h-32 bg-linear-to-bl from-primary/50 to-transparent"
             style={{ clipPath: "polygon(100% 0, 0 0, 100% 100%)" }}
           />
           <div
-            className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-accent/50 to-transparent"
+            className="absolute bottom-0 left-0 w-24 h-24 bg-linear-to-tr from-accent/50 to-transparent"
             style={{ clipPath: "polygon(0 100%, 100% 100%, 0 0)" }}
           />
         </div>
@@ -556,7 +556,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
               {/* Insufficient funds warning */}
               {hasInsufficientFunds && amountShards > 0n && (
                 <div className="flex items-center gap-2 text-destructive text-sm p-3 chamfered-sm bg-destructive/10">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>Insufficient funds (including network fee)</span>
                 </div>
               )}
@@ -649,7 +649,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
               )}
 
               <div className="flex items-start gap-2 p-3 chamfered-sm bg-warning/10 text-warning">
-                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                 <p className="text-xs">
                   Please verify the recipient address. Transactions cannot be reversed.
                 </p>

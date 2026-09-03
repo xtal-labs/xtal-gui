@@ -157,7 +157,7 @@ export function ReceiveModal({
 
   return (
     <ModalShell
-      className="bg-black/60 backdrop-blur-sm"
+      className="bg-black/60 backdrop-blur-xs"
       cardClassName="max-w-lg relative"
       onClose={onClose}
       title="Receive"
@@ -165,7 +165,7 @@ export function ReceiveModal({
         {/* Decorative elements */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
-            className="absolute top-0 left-0 w-40 h-40 bg-gradient-to-br from-accent/50 to-transparent"
+            className="absolute top-0 left-0 w-40 h-40 bg-linear-to-br from-accent/50 to-transparent"
             style={{ clipPath: "polygon(0 0, 100% 0, 0 100%)" }}
           />
         </div>

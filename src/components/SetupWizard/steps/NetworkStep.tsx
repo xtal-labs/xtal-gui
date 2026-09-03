@@ -65,7 +65,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
   }
 
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out]">
+    <div className="animate-fade-in-up">
       {/* Header */}
       <div className="text-center mb-5 sm:mb-8 max-h-[560px]:mb-3">
         <h2 className="text-2xl font-light mb-2">Choose Your Network</h2>
@@ -103,7 +103,7 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
               {/* Background gradient on hover/select */}
               <div
                 className={`
-                  absolute inset-0 bg-gradient-to-r ${config.color} opacity-0 transition-opacity duration-300
+                  absolute inset-0 bg-linear-to-r ${config.color} opacity-0 transition-opacity duration-300
                   ${isSelected ? 'opacity-5' : 'group-hover:opacity-[0.02]'}
                 `}
               />
@@ -111,8 +111,8 @@ export function NetworkStep({ onSelect, isProcessing }: NetworkStepProps) {
               <div className="relative flex items-center gap-3 sm:gap-4">
                 {/* Icon */}
                 <div className={`
-                  icon-hex w-12 h-12 sm:w-14 sm:h-14 max-h-[560px]:h-10 max-h-[560px]:w-10 flex-shrink-0 flex items-center justify-center
-                  bg-gradient-to-br ${config.color}
+                  icon-hex w-12 h-12 sm:w-14 sm:h-14 max-h-[560px]:h-10 max-h-[560px]:w-10 shrink-0 flex items-center justify-center
+                  bg-linear-to-br ${config.color}
                 `}>
                   <div className="icon-hex w-10 h-10 sm:w-12 sm:h-12 max-h-[560px]:h-8 max-h-[560px]:w-8 bg-background flex items-center justify-center">
                     {isProcessingThis ? (

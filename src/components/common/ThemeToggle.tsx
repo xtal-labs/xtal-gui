@@ -62,7 +62,7 @@ export function ThemeToggle({
         "bg-transparent hover:bg-muted",
         "text-foreground-secondary hover:text-foreground",
         "transition-all duration-200",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
         className
       )}
       aria-label={`Current theme: ${theme}. Click to change.`}
@@ -109,9 +109,9 @@ function ThemeButton({ active, onClick, label, children }: ThemeButtonProps) {
       className={cn(
         "inline-flex h-7 w-7 items-center justify-center rounded-md",
         "transition-all duration-200",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
         active
-          ? "bg-background text-foreground shadow-sm"
+          ? "bg-background text-foreground shadow-xs"
           : "text-foreground-muted hover:text-foreground-secondary"
       )}
       aria-label={label}

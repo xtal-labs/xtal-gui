@@ -174,7 +174,7 @@ The app supports two themes: **amethyst** (dark) and **celestite** (light). All 
 
 The app has **one minimum-width contract: 640px**, defined in a single place and mirrored across the stack. Never reintroduce competing minimums (an earlier `min-w-[800px]` vs a 480px window caused horizontal-scroll/layout-clamp bugs).
 
-- `--app-min-width: 640px` / `--app-min-height: 480px` in `src/styles/globals.css` — the single source of truth. Full-screen shells use `min-w-[var(--app-min-width)]` / `min-h-[var(--app-min-height)]`, never hardcoded literals (`min-w-[800px]`, `min-h-[480px]`).
+- `--app-min-width: 640px` / `--app-min-height: 480px` in `src/styles/globals.css` — the single source of truth. Full-screen shells use `min-w-(--app-min-width)` / `min-h-(--app-min-height)`, never hardcoded literals (`min-w-[800px]`, `min-h-[480px]`).
 - `tauri.conf.json` window `minWidth: 640` / `minHeight: 480`; `src-tauri/src/main.rs` `MIN_USABLE_WINDOW_WIDTH = 640` / `MIN_USABLE_WINDOW_HEIGHT = 480` (and maximizes on displays smaller than that in either dimension, e.g. a Raspberry Pi panel). Keep all four numbers in lockstep.
 
 Because the viewport never drops below 640, the meaningful breakpoints are stock Tailwind `md` (768) and `lg` (1024):

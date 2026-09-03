@@ -105,7 +105,7 @@ export function MnemonicInput({
                 key={index}
                 className="flex items-center gap-1.5"
               >
-                <span className="text-xs text-foreground-muted w-5 text-right font-mono flex-shrink-0">
+                <span className="text-xs text-foreground-muted w-5 text-right font-mono shrink-0">
                   {index + 1}.
                 </span>
                 <input
@@ -123,7 +123,7 @@ export function MnemonicInput({
                   disabled={isProcessing}
                   className={`
                     w-full chamfered-sm px-2 py-2 max-h-[560px]:py-1.5 bg-background border font-mono text-sm
-                    transition-all focus:outline-none focus:ring-1 focus:ring-accent/50
+                    transition-all focus:outline-hidden focus:ring-1 focus:ring-accent/50
                     ${word.trim()
                       ? 'border-accent/30 text-foreground'
                       : 'border-border/50 text-foreground'
@@ -159,7 +159,7 @@ export function MnemonicInput({
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
-          className="w-full chamfered-sm px-4 py-3 max-h-[560px]:py-2 bg-card border border-border transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+          className="w-full chamfered-sm px-4 py-3 max-h-[560px]:py-2 bg-card border border-border transition-all focus:outline-hidden focus:ring-2 focus:ring-accent/50 focus:border-accent"
           placeholder="default"
         />
       </div>
@@ -172,7 +172,7 @@ export function MnemonicInput({
           w-full chamfered py-3 sm:py-4 max-h-[560px]:py-2.5 font-medium text-base sm:text-lg transition-all duration-300
           flex items-center justify-center gap-3
           ${canSubmit
-            ? 'bg-gradient-to-r from-accent to-primary text-primary-foreground hover:shadow-glow hover:scale-[1.01]'
+            ? 'bg-linear-to-r from-accent to-primary text-primary-foreground hover:shadow-glow hover:scale-[1.01]'
             : 'bg-muted/20 text-foreground-muted cursor-not-allowed'
           }
         `}

@@ -138,7 +138,7 @@ npm run build
 
 ### Frontend
 
-The frontend lives under `src/` and is a React 18 application bundled with Vite. It renders the application shell, panels, forms, and feedback states, and it manages client-side state with Zustand.
+The frontend lives under `src/` and is a React 19 application bundled with Vite. It renders the application shell, panels, forms, and feedback states, and it manages client-side state with Zustand.
 
 Frontend responsibilities include:
 

@@ -24,7 +24,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
               "flex h-10 w-full chamfered-sm border bg-input",
               "text-sm placeholder:text-foreground-muted",
               "transition-all duration-200",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               "focus-visible:shadow-glow-sm",
               "disabled:cursor-not-allowed disabled:opacity-50",
               iconPosition === "left" ? "pl-10 pr-4" : "pl-4 pr-10",
@@ -56,7 +56,7 @@ const Input = React.forwardRef<HTMLInputElement, InputProps>(
           "flex h-10 w-full chamfered-sm border bg-input px-4 py-2",
           "text-sm placeholder:text-foreground-muted",
           "transition-all duration-200",
-          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+          "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
           "focus-visible:shadow-glow-sm",
           "disabled:cursor-not-allowed disabled:opacity-50",
           error

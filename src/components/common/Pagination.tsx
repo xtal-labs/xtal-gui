@@ -117,7 +117,7 @@ export function Pagination({
   const pageButtonActive = cn(
     pageButton,
     "bg-primary text-primary-foreground",
-    "shadow-[0_0_10px_hsl(var(--glow-color))]"
+    "shadow-glow-sm"
   );
 
   // Inactive page styles

@@ -63,10 +63,10 @@ export function RecoveryPhraseDisplay({
   const canContinue = showConfirmCheckbox ? confirmed && !isProcessing : !isProcessing;
 
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out]">
+    <div className="animate-fade-in-up">
       {/* Warning banner */}
       <div className="chamfered-sm p-3 max-h-[560px]:p-2 mb-3 bg-warning/10 border border-warning/30 flex items-start gap-3">
-        <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
+        <AlertTriangle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
         <div className="text-sm">
           <p className="text-warning font-medium mb-1">Important Security Warning</p>
           <ul className="text-warning/80 space-y-1 max-h-[560px]:space-y-0.5 list-disc list-inside">
@@ -120,8 +120,8 @@ export function RecoveryPhraseDisplay({
       {/* Master Public Key */}
       <div className="chamfered-sm p-3 max-h-[560px]:p-2 mb-3 bg-card/50 border border-border/50 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          <Key className="w-4 h-4 text-accent flex-shrink-0" />
-          <span className="text-xs font-heading text-foreground-muted uppercase tracking-wider flex-shrink-0">
+          <Key className="w-4 h-4 text-accent shrink-0" />
+          <span className="text-xs font-heading text-foreground-muted uppercase tracking-wider shrink-0">
             Master Public Key
           </span>
           <span className="font-mono text-xs text-foreground truncate">
@@ -130,7 +130,7 @@ export function RecoveryPhraseDisplay({
         </div>
         <button
           onClick={handleCopyKey}
-          className="flex-shrink-0 p-1.5 chamfered-sm hover:bg-accent/10 transition-colors"
+          className="shrink-0 p-1.5 chamfered-sm hover:bg-accent/10 transition-colors"
           title="Copy public key"
         >
           {keyCopied ? (
@@ -150,7 +150,7 @@ export function RecoveryPhraseDisplay({
               className="w-full chamfered-sm p-3 max-h-[560px]:p-2 border border-destructive/30 bg-destructive/5 flex items-center justify-between gap-3 hover:border-destructive/50 hover:bg-destructive/10 transition-all"
             >
               <div className="flex items-center gap-2">
-                <Shield className="w-4 h-4 text-destructive flex-shrink-0" />
+                <Shield className="w-4 h-4 text-destructive shrink-0" />
                 <span className="text-xs font-heading text-destructive uppercase tracking-wider">
                   Master Seed
                 </span>
@@ -158,13 +158,13 @@ export function RecoveryPhraseDisplay({
                   (click to reveal)
                 </span>
               </div>
-              <EyeOff className="w-4 h-4 text-destructive/50 flex-shrink-0" />
+              <EyeOff className="w-4 h-4 text-destructive/50 shrink-0" />
             </button>
           ) : (
             <div className="chamfered-sm border border-destructive/40 bg-destructive/5 overflow-hidden">
               {/* Danger warning */}
               <div className="px-3 py-2 bg-destructive/10 border-b border-destructive/20 flex items-center gap-2">
-                <AlertTriangle className="w-3.5 h-3.5 text-destructive flex-shrink-0" />
+                <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0" />
                 <span className="text-xs text-destructive font-medium">
                   This seed can derive ALL private keys. Never share it.
                 </span>
@@ -265,7 +265,7 @@ export function RecoveryPhraseDisplay({
            w-full chamfered py-3 max-h-[560px]:py-2.5 font-medium text-base sm:text-lg transition-all duration-300
            flex items-center justify-center gap-3
            ${canContinue
-              ? 'bg-gradient-to-r from-accent to-primary text-foreground hover:shadow-glow hover:scale-[1.01]'
+              ? 'bg-linear-to-r from-accent to-primary text-foreground hover:shadow-glow hover:scale-[1.01]'
              : 'bg-muted/20 text-foreground-muted cursor-not-allowed'
            }
          `}

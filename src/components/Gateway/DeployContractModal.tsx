@@ -172,14 +172,14 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
 
   return (
     <ModalShell
-      className="bg-black/60 backdrop-blur-sm"
+      className="bg-black/60 backdrop-blur-xs"
       cardClassName="max-w-lg relative"
       onClose={onClose}
       title="Deploy contract"
     >
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
-            className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-accent/50 to-transparent"
+            className="absolute top-0 right-0 w-32 h-32 bg-linear-to-bl from-accent/50 to-transparent"
             style={{ clipPath: "polygon(100% 0, 0 0, 100% 100%)" }}
           />
         </div>
@@ -290,7 +290,7 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
                         onClick={() => setFruitType(ft)}
                         className={cn(
                           "px-3 py-1.5 chamfered-sm text-xs font-heading tracking-wide transition-all duration-300",
-                          "bg-gradient-to-br border",
+                          "bg-linear-to-br border",
                           colors.bg,
                           colors.border,
                           isSelected

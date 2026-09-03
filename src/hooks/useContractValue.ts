@@ -45,7 +45,7 @@ export function useContractValue(
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshTrigger = useBlockchainStore((s) => s.refreshTrigger);
   const cancelledRef = useRef(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Resolve the ABI method (disk-cached backend-side, cheap).
   useEffect(() => {

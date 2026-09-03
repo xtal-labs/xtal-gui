@@ -179,8 +179,8 @@ export function ParamInput({ param, value, onChange, disabled }: ParamInputProps
           className={cn(
             "flex w-full chamfered-sm border bg-input px-4 py-2",
             "text-sm font-mono placeholder:text-foreground-muted",
-            "transition-all duration-200 min-h-[5rem] resize-y",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "transition-all duration-200 min-h-20 resize-y",
+            "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
             "focus-visible:ring-offset-2 focus-visible:ring-offset-background",
             "disabled:cursor-not-allowed disabled:opacity-50",
             error

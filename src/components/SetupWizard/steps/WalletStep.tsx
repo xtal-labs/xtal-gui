@@ -38,7 +38,7 @@ const WALLET_OPTIONS: {
 
 export function WalletStep({ onSelect, networkName }: WalletStepProps) {
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out]">
+    <div className="animate-fade-in-up">
       {/* Header */}
       <div className="text-center mb-5 sm:mb-8 max-h-[560px]:mb-3">
         <h2 className="text-2xl font-light mb-2">Set Up Your Wallet</h2>
@@ -73,11 +73,11 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
               <div className="flex items-center gap-3 sm:gap-4">
                 {/* Icon container */}
                 <div className={`
-                  w-10 h-10 sm:w-12 sm:h-12 chamfered-sm flex items-center justify-center flex-shrink-0
+                  w-10 h-10 sm:w-12 sm:h-12 chamfered-sm flex items-center justify-center shrink-0
                   ${option.disabled
                     ? 'bg-muted/10'
                     : option.recommended
-                      ? 'bg-gradient-to-br from-accent/20 to-primary/20'
+                      ? 'bg-linear-to-br from-accent/20 to-primary/20'
                       : 'bg-accent/10'
                   }
                 `}>
@@ -111,8 +111,8 @@ export function WalletStep({ onSelect, networkName }: WalletStepProps) {
               {/* Recommended highlight */}
               {option.recommended && !option.disabled && (
                 <div className="absolute top-0 right-0 w-16 h-16 overflow-hidden">
-                  <div className="absolute top-0 right-0 w-1 h-16 bg-gradient-to-b from-accent to-transparent opacity-50" />
-                  <div className="absolute top-0 right-0 w-16 h-1 bg-gradient-to-l from-accent to-transparent opacity-50" />
+                  <div className="absolute top-0 right-0 w-1 h-16 bg-linear-to-b from-accent to-transparent opacity-50" />
+                  <div className="absolute top-0 right-0 w-16 h-1 bg-linear-to-l from-accent to-transparent opacity-50" />
                 </div>
               )}
             </button>

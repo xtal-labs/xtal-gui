@@ -76,7 +76,7 @@ export function LoadingSpinner({ size = "md", className, variant = "crystal" }: 
         <div
           className={cn(
             sizeClasses[size].inner,
-            "bg-gradient-to-br from-primary via-accent to-primary",
+            "bg-linear-to-br from-primary via-accent to-primary",
             "diamond opacity-60"
           )}
         />
@@ -88,7 +88,7 @@ export function LoadingSpinner({ size = "md", className, variant = "crystal" }: 
 // Full page loading state with geometric design
 export function LoadingScreen({ message = "Loading..." }: { message?: string }) {
   return (
-    <div className="flex min-h-dvh min-w-[var(--app-min-width)] items-center justify-center overflow-auto bg-background hex-grid-bg p-4">
+    <div className="flex min-h-dvh min-w-(--app-min-width) items-center justify-center overflow-auto bg-background hex-grid-bg p-4">
       <div className="relative flex flex-col items-center gap-6">
         {/* Crystal logo with loading animation */}
         <div className="relative">

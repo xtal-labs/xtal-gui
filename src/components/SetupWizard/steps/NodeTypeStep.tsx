@@ -54,7 +54,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
   };
 
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out] pb-6 max-h-[560px]:pb-3">
+    <div className="animate-fade-in-up pb-6 max-h-[560px]:pb-3">
       {/* Header */}
       <div className="text-center mb-4 sm:mb-6 max-h-[560px]:mb-3">
         <h2 className="text-xl sm:text-2xl font-light mb-2">Choose Your Fruit Shards</h2>
@@ -125,7 +125,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
                 group relative chamfered-sm p-2 sm:p-3 max-h-[560px]:p-1.5 transition-all duration-200
                 border text-center
                 ${isSelected
-                  ? `bg-gradient-to-br ${colors.bg} ${colors.border} shadow-md ${colors.glow}`
+                  ? `bg-linear-to-br ${colors.bg} ${colors.border} shadow-md ${colors.glow}`
                   : 'bg-card/30 border-border opacity-40 hover:opacity-60'
                 }
                 ${isApple ? 'cursor-default' : ''}
@@ -164,7 +164,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
       {allSelected ? (
         <div className="chamfered-sm p-3 max-h-[560px]:p-2 bg-amber-500/5 border border-amber-500/20 mb-4 max-h-[560px]:mb-3">
           <p className="text-xs text-amber-400 flex items-center gap-1.5">
-            <Pickaxe className="w-3.5 h-3.5 flex-shrink-0" />
+            <Pickaxe className="w-3.5 h-3.5 shrink-0" />
             All shards selected — this node is eligible for PoW mining
           </p>
         </div>
@@ -180,7 +180,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
         {/* Transaction Index toggle */}
         <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3 min-w-0">
-            <Search className={`w-5 h-5 flex-shrink-0 ${txIndex ? 'text-accent' : 'text-muted-foreground'}`} />
+            <Search className={`w-5 h-5 shrink-0 ${txIndex ? 'text-accent' : 'text-muted-foreground'}`} />
             <div className="min-w-0">
               <p className="text-sm font-medium">Transaction Index</p>
               <p className="text-xs text-muted-foreground">
@@ -270,7 +270,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
           {syncMode === 'full' && (
             <div className="chamfered-sm p-3 max-h-[560px]:p-2 bg-amber-500/5 border border-amber-500/20 mb-3 animate-[fade-in-up_0.2s_ease-out]">
               <p className="text-xs text-amber-300/90 flex items-start gap-1.5">
-                <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
                 <span>
                   Full sync re-executes every block from genesis and retains all historical data.
                   This requires significantly more disk space and initial sync time, but provides
@@ -284,7 +284,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
           <div className="chamfered-sm bg-card/50 border border-border">
             <div className="p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
-                <HardDrive className={`w-5 h-5 flex-shrink-0 ${archival ? 'text-accent' : 'text-muted-foreground'}`} />
+                <HardDrive className={`w-5 h-5 shrink-0 ${archival ? 'text-accent' : 'text-muted-foreground'}`} />
                 <div className="min-w-0">
                   <p className="text-sm font-medium flex items-center gap-1.5">
                     Archival Mode
@@ -318,7 +318,7 @@ export function NodeTypeStep({ onSelect, isProcessing }: NodeTypeStepProps) {
           flex items-center justify-center gap-2
           ${isProcessing
             ? 'bg-muted/20 text-muted-foreground cursor-wait'
-            : 'bg-gradient-to-r from-accent to-primary text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
+            : 'bg-linear-to-r from-accent to-primary text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
           }
         `}
       >

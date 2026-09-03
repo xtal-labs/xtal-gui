@@ -230,7 +230,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
   };
 
   return (
-    <div className="relative min-h-viewport min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
+    <div className="relative min-h-viewport min-w-(--app-min-width) bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients with slow pulse */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"
@@ -287,7 +287,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
         >
         {/* Inner border — purple to blue (primary) gradient */}
         <div
-          className="chamfered-lg p-[1px] max-h-full flex flex-col"
+          className="chamfered-lg p-px max-h-full flex flex-col"
           style={{
             background: "linear-gradient(135deg, hsl(var(--accent) / 0.5), hsl(var(--primary) / 0.6))",
           }}
@@ -297,7 +297,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
           className="relative chamfered-lg crystalline p-5 flex flex-col gap-3.5 shadow-2xl overflow-hidden max-h-full"
         >
           {/* Inner glow behind card content */}
-          <div className="absolute inset-0 bg-destructive/[0.03] blur-xl -z-10 pointer-events-none" />
+          <div className="absolute inset-0 bg-destructive/3 blur-xl -z-10 pointer-events-none" />
 
           {/* Crystal icon with gradient — dramatic centerpiece */}
           <div
@@ -306,9 +306,9 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
           >
             <div className="relative">
               {/* Outer glow ring */}
-              <div className="absolute inset-[-20px] bg-primary/[0.15] blur-2xl rounded-full animate-pulse [animation-duration:4s] [animation-delay:1s]" />
+              <div className="absolute inset-[-20px] bg-primary/15 blur-2xl rounded-full animate-pulse [animation-duration:4s] [animation-delay:1s]" />
               {/* Inner glow */}
-              <div className="absolute inset-0 bg-destructive/[0.35] blur-3xl -z-10 animate-pulse [animation-duration:3s]" />
+              <div className="absolute inset-0 bg-destructive/35 blur-3xl -z-10 animate-pulse [animation-duration:3s]" />
               <svg
                 className="h-20 w-20 relative"
                 viewBox="0 0 80 80"
@@ -488,7 +488,7 @@ export function NodeStartupError({ error }: { error: StartupErrorInfo }) {
             <div className="flex items-center gap-2 text-xs text-foreground-muted">
               <span className="font-heading font-medium text-foreground-secondary shrink-0 w-12">Network</span>
               <select
-                className="font-mono text-xs bg-background border border-border rounded px-1.5 py-0.5 text-foreground-secondary cursor-pointer focus:outline-none focus:ring-1 focus:ring-primary/50"
+                className="font-mono text-xs bg-background border border-border rounded px-1.5 py-0.5 text-foreground-secondary cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-primary/50"
                 value={selectedNetwork}
                 onChange={(e) => handleNetworkChange(e.target.value)}
               >

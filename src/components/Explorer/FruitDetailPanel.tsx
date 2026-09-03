@@ -207,14 +207,14 @@ export function FruitDetailPanel({
         <div
           className={cn(
             "absolute top-0 left-0 right-0 h-32 pointer-events-none",
-            "bg-gradient-to-b",
+            "bg-linear-to-b",
             color.bg
           )}
         />
 
         <div className="relative flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className={cn("icon-hex bg-gradient-to-br", color.bg)}>
+            <div className={cn("icon-hex bg-linear-to-br", color.bg)}>
               <Cherry className={cn("h-5 w-5", color.icon)} />
             </div>
             <div>

@@ -170,14 +170,14 @@ export function MultisigModal({ isOpen, onClose, onAddressCreated }: MultisigMod
 
   return (
     <ModalShell
-      className="bg-black/60 backdrop-blur-sm"
+      className="bg-black/60 backdrop-blur-xs"
       cardClassName="max-w-xl relative"
       onClose={isCreating ? undefined : onClose}
       title="Create multisig address"
     >
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
-            className="absolute top-0 left-0 w-44 h-44 bg-gradient-to-br from-primary/50 to-transparent"
+            className="absolute top-0 left-0 w-44 h-44 bg-linear-to-br from-primary/50 to-transparent"
             style={{ clipPath: "polygon(0 0, 100% 0, 0 100%)" }}
           />
         </div>

@@ -106,14 +106,14 @@ export function ImportAbiModal({ isOpen, onClose, prefillAddress }: ImportAbiMod
 
   return (
     <ModalShell
-      className="bg-black/60 backdrop-blur-sm"
+      className="bg-black/60 backdrop-blur-xs"
       cardClassName="max-w-lg relative"
       onClose={onClose}
       title="Import ABI"
     >
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
-            className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-accent/50 to-transparent"
+            className="absolute top-0 right-0 w-32 h-32 bg-linear-to-bl from-accent/50 to-transparent"
             style={{ clipPath: "polygon(100% 0, 0 0, 100% 100%)" }}
           />
         </div>
@@ -205,8 +205,8 @@ export function ImportAbiModal({ isOpen, onClose, prefillAddress }: ImportAbiMod
                   className={cn(
                     "flex w-full chamfered-sm border bg-input px-4 py-2",
                     "text-sm font-mono placeholder:text-foreground-muted",
-                    "transition-all duration-200 min-h-[6rem] resize-y",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "transition-all duration-200 min-h-24 resize-y",
+                    "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                     "focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                     "border-border hover:border-border-hover"
                   )}
@@ -230,7 +230,7 @@ export function ImportAbiModal({ isOpen, onClose, prefillAddress }: ImportAbiMod
                         onClick={() => setFruitType(ft)}
                         className={cn(
                           "px-3 py-1.5 chamfered-sm text-xs font-heading tracking-wide transition-all duration-300",
-                          "bg-gradient-to-br border",
+                          "bg-linear-to-br border",
                           colors.bg,
                           colors.border,
                           isSelected

@@ -136,7 +136,7 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
 
   return (
     <ModalShell
-      className="bg-black/60 backdrop-blur-sm"
+      className="bg-black/60 backdrop-blur-xs"
       cardClassName="max-w-lg relative"
       onClose={onClose}
       title="Deposit"
@@ -144,11 +144,11 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
         {/* Decorative crystal facet overlay — primary (UTXO source) to accent (VM destination) */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
-            className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-primary/50 to-transparent"
+            className="absolute top-0 right-0 w-32 h-32 bg-linear-to-bl from-primary/50 to-transparent"
             style={{ clipPath: "polygon(100% 0, 0 0, 100% 100%)" }}
           />
           <div
-            className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-accent/50 to-transparent"
+            className="absolute bottom-0 left-0 w-24 h-24 bg-linear-to-tr from-accent/50 to-transparent"
             style={{ clipPath: "polygon(0 100%, 100% 100%, 0 0)" }}
           />
         </div>
@@ -331,7 +331,7 @@ export function DepositModal({ isOpen, onClose }: DepositModalProps) {
 
               {/* Sponsored info banner */}
               <div className="flex items-start gap-2 p-3 chamfered-sm bg-info/10 text-info">
-                <CheckCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
                 <p className="text-xs">
                   CAGE deposits are gas-sponsored. No fee will be charged.
                 </p>

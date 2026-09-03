@@ -394,7 +394,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
 
   return (
     <ModalShell
-      className="bg-black/60 backdrop-blur-sm"
+      className="bg-black/60 backdrop-blur-xs"
       cardClassName="max-w-lg relative"
       onClose={onClose}
       title="Withdraw"
@@ -402,11 +402,11 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
         {/* Decorative crystal facet overlay — accent (VM source) to primary (UTXO destination) */}
         <div className="absolute inset-0 opacity-5 pointer-events-none">
           <div
-            className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-accent/50 to-transparent"
+            className="absolute top-0 right-0 w-32 h-32 bg-linear-to-bl from-accent/50 to-transparent"
             style={{ clipPath: "polygon(100% 0, 0 0, 100% 100%)" }}
           />
           <div
-            className="absolute bottom-0 left-0 w-24 h-24 bg-gradient-to-tr from-primary/50 to-transparent"
+            className="absolute bottom-0 left-0 w-24 h-24 bg-linear-to-tr from-primary/50 to-transparent"
             style={{ clipPath: "polygon(0 100%, 100% 100%, 0 0)" }}
           />
         </div>
@@ -574,7 +574,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
               {/* Insufficient funds warning */}
               {hasInsufficientFunds && (
                 <div className="flex items-center gap-2 text-destructive text-sm p-3 chamfered-sm bg-destructive/10">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0" />
+                  <AlertCircle className="h-4 w-4 shrink-0" />
                   <span>
                     Amount exceeds withdrawable VM balance
                     {maxGasFee > 0 &&
@@ -680,7 +680,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
               {/* Uneconomical leg warning — non-blocking, user's choice */}
               {uneconomicalLeg && (
                 <div className="flex items-start gap-2 p-3 chamfered-sm bg-warning/10 text-warning">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                   <p className="text-xs">
                     One of the {plan.legCount} transactions moves less value than its maximum gas
                     cost ({toShards(uneconomicalLeg.amount).toLocaleString()} vs{" "}
@@ -737,7 +737,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
 
               {cageConfigLoaded && (
                 <div className="flex items-start gap-2 p-3 chamfered-sm bg-warning/10 text-warning">
-                  <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                   <p className="text-xs">
                     CAGE charges a {(feeRateBps! / 100).toFixed(1)}% bridging fee. The net amount will arrive as a spendable UTXO after maturation.
                   </p>
@@ -862,7 +862,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
                 )}
               </div>
               <div className="flex items-start gap-2 p-3 chamfered-sm bg-warning/10 text-warning text-left">
-                <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
                 <p className="text-xs">
                   Some transactions were already submitted. Wait for them to confirm, check your
                   transaction history, then start a new withdrawal for the remainder.

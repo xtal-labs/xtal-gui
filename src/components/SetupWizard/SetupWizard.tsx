@@ -101,8 +101,8 @@ function ErrorToast({ message, onClose }: { message: string; onClose: () => void
         className="chamfered-border-wrap shadow-xl"
         style={{ '--_cb-color': 'rgb(239 68 68 / 0.3)' } as React.CSSProperties}
       >
-      <div className="chamfered bg-red-500/10 px-4 py-3 flex items-center gap-3 backdrop-blur-sm">
-        <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0" />
+      <div className="chamfered bg-red-500/10 px-4 py-3 flex items-center gap-3 backdrop-blur-xs">
+        <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
         <span className="text-red-200 text-sm max-w-md">{message}</span>
         <button
           onClick={onClose}
@@ -126,9 +126,9 @@ export function SetupWizard() {
   // 'node-type' removed from flow temporarily
   const wideStep = state.step === 'complete';
   const contentWidthClass = wideStep
-    ? 'max-w-[42rem]'
+    ? 'max-w-2xl'
     : state.step === 'mnemonic' || state.step === 'wallet-import-mnemonic'
-      ? 'max-w-[40rem]'
+      ? 'max-w-160'
       : 'max-w-lg';
 
   useSetupWindowSizing({
@@ -261,7 +261,7 @@ export function SetupWizard() {
   };
 
   return (
-    <div className="setup-wizard relative h-dvh min-h-[var(--app-min-height)] min-w-[var(--app-min-width)] overflow-hidden bg-background">
+    <div className="setup-wizard relative h-dvh min-h-(--app-min-height) min-w-(--app-min-width) overflow-hidden bg-background">
       {/* Crystalline background effect */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
         {/* Radial gradient backdrop */}

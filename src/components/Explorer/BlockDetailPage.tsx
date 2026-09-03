@@ -246,7 +246,7 @@ export function BlockDetailPage({
       <div
         className={cn(
           "absolute top-0 left-0 right-0 h-40 pointer-events-none",
-          "bg-gradient-to-b",
+          "bg-linear-to-b",
           style.gradient
         )}
       />

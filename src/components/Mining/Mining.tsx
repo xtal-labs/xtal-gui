@@ -422,7 +422,7 @@ export default function Mining() {
                       <ChevronDown className="h-4 w-4 opacity-50" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-[--radix-dropdown-menu-trigger-width]">
+                  <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width)">
                     {availableWallets.filter((w) => w !== walletName).length > 0 ? (
                       availableWallets
                         .filter((w) => w !== walletName)
@@ -452,7 +452,7 @@ export default function Mining() {
                       <ChevronDown className="h-4 w-4 opacity-50" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-[--radix-dropdown-menu-trigger-width]">
+                  <DropdownMenuContent align="start" className="w-(--radix-dropdown-menu-trigger-width)">
                     {availableWallets.map((name) => (
                       <DropdownMenuItem key={name} onClick={() => handleSwitchWallet(name)}>
                         <Wallet className="h-4 w-4 mr-2" />

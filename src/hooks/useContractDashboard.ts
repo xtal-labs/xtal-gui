@@ -46,7 +46,7 @@ export function useContractDashboard(
   const [isRefreshing, setIsRefreshing] = useState(false);
   const refreshTrigger = useBlockchainStore((s) => s.refreshTrigger);
   const cancelledRef = useRef(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   // Find zero-param read methods with returns
   const dashboardMethods = abi?.methods.filter(isDashboardMethod) ?? [];

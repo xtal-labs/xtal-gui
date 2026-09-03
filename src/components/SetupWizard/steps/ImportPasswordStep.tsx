@@ -45,7 +45,7 @@ export function ImportPasswordStep({
   );
 
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out]">
+    <div className="animate-fade-in-up">
       {/* Header */}
       <div className="text-center mb-8">
         <div className="inline-flex items-center justify-center w-16 h-16 mb-4 chamfered bg-success/10">
@@ -112,7 +112,7 @@ export function ImportPasswordStep({
                     autoCorrect="off"
                     autoCapitalize="off"
                     spellCheck={false}
-                    className="w-full chamfered-sm px-4 py-3 pr-12 bg-background border border-border transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                    className="w-full chamfered-sm px-4 py-3 pr-12 bg-background border border-border transition-all focus:outline-hidden focus:ring-2 focus:ring-accent/50 focus:border-accent"
                     placeholder="Minimum 8 characters"
                     autoFocus
                   />
@@ -143,7 +143,7 @@ export function ImportPasswordStep({
                   autoCorrect="off"
                   autoCapitalize="off"
                   spellCheck={false}
-                  className="w-full chamfered-sm px-4 py-3 bg-background border border-border transition-all focus:outline-none focus:ring-2 focus:ring-accent/50 focus:border-accent"
+                  className="w-full chamfered-sm px-4 py-3 bg-background border border-border transition-all focus:outline-hidden focus:ring-2 focus:ring-accent/50 focus:border-accent"
                   placeholder="Re-enter password"
                 />
                 {confirmPassword.length > 0 && !confirmValid && (
@@ -159,7 +159,7 @@ export function ImportPasswordStep({
                   w-full chamfered py-4 font-medium text-lg transition-all duration-300
                   flex items-center justify-center gap-3
                   ${canSetPassword
-                    ? 'bg-gradient-to-r from-accent to-primary text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
+                    ? 'bg-linear-to-r from-accent to-primary text-white hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
                     : 'bg-muted/20 text-muted-foreground cursor-not-allowed'
                   }
                 `}
@@ -198,7 +198,7 @@ export function ImportPasswordStep({
           className={`
             w-full chamfered py-4 font-medium text-lg transition-all duration-300
             flex items-center justify-center gap-3
-            bg-gradient-to-r from-accent to-primary text-white
+            bg-linear-to-r from-accent to-primary text-white
             hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]
           `}
         >

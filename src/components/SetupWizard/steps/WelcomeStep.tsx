@@ -13,7 +13,7 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
         <div className="absolute inset-0 bg-accent blur-3xl opacity-20 animate-pulse" />
 
         {/* Hexagonal container */}
-        <div className="relative icon-hex w-20 h-20 bg-gradient-to-br from-accent to-primary flex items-center justify-center sm:w-24 sm:h-24 max-h-[560px]:h-16 max-h-[560px]:w-16">
+        <div className="relative icon-hex w-20 h-20 bg-linear-to-br from-accent to-primary flex items-center justify-center sm:w-24 sm:h-24 max-h-[560px]:h-16 max-h-[560px]:w-16">
           <div className="absolute inset-1 icon-hex bg-background flex items-center justify-center">
             {/* Crystal icon - using geometric shape */}
             <svg
@@ -72,7 +72,7 @@ export function WelcomeStep({ onNext }: WelcomeStepProps) {
        {/* Get Started button */}
        <button
          onClick={onNext}
-          className="group chamfered inline-flex items-center gap-3 px-6 py-3 sm:px-8 sm:py-4 bg-gradient-to-r from-accent to-primary text-foreground font-medium text-base sm:text-lg transition-all duration-300 hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.02]"
+          className="group chamfered inline-flex items-center gap-3 px-6 py-3 sm:px-8 sm:py-4 bg-linear-to-r from-accent to-primary text-foreground font-medium text-base sm:text-lg transition-all duration-300 hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.02]"
        >
          <span>Get Started</span>
         <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />

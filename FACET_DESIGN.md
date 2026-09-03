@@ -490,7 +490,7 @@ A subtle SVG hex grid is used as a full-bleed page texture:
 | File | Contents |
 |------|---------|
 | `src/styles/globals.css` | All CSS variables, chamfered/crystalline/hex-gem classes, animations |
-| `tailwind.config.js` | Extended Tailwind config — all theme colors, shadows, fonts, transitions |
+| `src/styles/globals.css` → `@theme` | Tailwind v4 keeps its config in CSS — all theme colors, shadows, fonts, transitions |
 | `src/components/ui/button.tsx` | Button variants with chamfered geometry |
 | `src/components/ui/card.tsx` | Card variants including crystalline |
 | `src/components/ui/badge.tsx` | Badge shapes + hex-gem gem color mapping |

@@ -32,7 +32,7 @@ export class ErrorBoundary extends React.Component<
   render() {
     if (this.state.hasError) {
       return (
-        <div className="min-h-dvh min-w-[var(--app-min-width)] bg-background flex items-center justify-center overflow-auto p-4">
+        <div className="min-h-dvh min-w-(--app-min-width) bg-background flex items-center justify-center overflow-auto p-4">
           <div className="max-w-md w-full">
             {/* Outer border */}
             <div
@@ -44,7 +44,7 @@ export class ErrorBoundary extends React.Component<
             >
               {/* Inner border */}
               <div
-                className="chamfered-lg p-[1px]"
+                className="chamfered-lg p-px"
                 style={{
                   background:
                     "linear-gradient(135deg, hsl(var(--accent) / 0.5), hsl(var(--primary) / 0.6))",

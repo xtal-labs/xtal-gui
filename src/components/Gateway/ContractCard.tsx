@@ -30,7 +30,7 @@ export function ContractCard({ contract, onOpen }: ContractCardProps) {
   return (
     <div className="chamfered crystalline overflow-hidden group transition-all duration-200 hover:shadow-crystalline">
       {/* Decorative top edge */}
-      <div className="h-0.5 bg-gradient-to-r from-primary/40 via-accent/60 to-primary/40" />
+      <div className="h-0.5 bg-linear-to-r from-primary/40 via-accent/60 to-primary/40" />
 
       <div className="p-5 space-y-4">
         {/* Header */}
@@ -77,7 +77,7 @@ export function ContractCard({ contract, onOpen }: ContractCardProps) {
               <Badge
                 shape="chamfered"
                 className={cn(
-                  "bg-gradient-to-br",
+                  "bg-linear-to-br",
                   colors.bg,
                   colors.border
                 )}

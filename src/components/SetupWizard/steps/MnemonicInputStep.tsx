@@ -8,7 +8,7 @@ interface MnemonicInputStepProps {
 
 export function MnemonicInputStep({ onSubmit, isProcessing }: MnemonicInputStepProps) {
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out]">
+    <div className="animate-fade-in-up">
       {/* Header */}
       <div className="text-center mb-6">
         <div className="inline-flex items-center justify-center w-16 h-16 mb-4 chamfered bg-accent/10">

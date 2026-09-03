@@ -40,7 +40,7 @@ const badgeVariants = cva(
       },
       size: {
         default: "",
-        "block-type": "w-[4.5rem] justify-center",
+        "block-type": "w-18 justify-center",
       },
     },
     defaultVariants: {

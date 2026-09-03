@@ -903,7 +903,7 @@ export default function Wallet() {
             <Button
               variant="outline-crystalline"
               size="sm"
-              className="min-w-[9.5rem] justify-between"
+              className="min-w-38 justify-between"
             >
               <span className="flex items-center gap-2">
                 <Filter className="h-4 w-4" />
@@ -933,7 +933,7 @@ export default function Wallet() {
   const renderUtxoContent = () => (
     <>
       {/* Balance Card */}
-      <Card variant="crystalline" className="bg-gradient-to-br from-primary/10 to-accent/10 border-primary/20">
+      <Card variant="crystalline" className="bg-linear-to-br from-primary/10 to-accent/10 border-primary/20">
         <CardContent className="pt-6">
           <div className="text-center">
             <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2">
@@ -1066,7 +1066,7 @@ export default function Wallet() {
   const renderVmContent = () => (
     <>
       {/* VM Balance Card */}
-      <Card variant="crystalline" className="bg-gradient-to-br from-accent/10 to-primary/10 border-accent/20">
+      <Card variant="crystalline" className="bg-linear-to-br from-accent/10 to-primary/10 border-accent/20">
         <CardContent className="pt-6">
           <div className="text-center">
             <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2">
@@ -1334,7 +1334,7 @@ export default function Wallet() {
           className={cn(
             "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 chamfered-sm",
             "font-heading text-sm tracking-wide transition-all duration-200",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
             activeSubTab === "utxo"
               ? "bg-primary/15 text-primary shadow-inner-glow"
               : "text-foreground-secondary hover:text-foreground hover:bg-muted/80"
@@ -1348,7 +1348,7 @@ export default function Wallet() {
           className={cn(
             "flex-1 flex items-center justify-center gap-2 py-2.5 px-4 chamfered-sm",
             "font-heading text-sm tracking-wide transition-all duration-200",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
             activeSubTab === "vm"
               ? "bg-accent/15 text-accent shadow-inner-glow"
               : "text-foreground-secondary hover:text-foreground hover:bg-muted/80"
@@ -1600,7 +1600,7 @@ export default function Wallet() {
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 py-2 px-3 chamfered-sm",
                       "font-heading text-xs tracking-wide transition-all duration-200",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                       importMode === "mnemonic"
                         ? "bg-primary/15 text-primary shadow-inner-glow"
                         : "text-foreground-secondary hover:text-foreground hover:bg-muted/80"
@@ -1614,7 +1614,7 @@ export default function Wallet() {
                     className={cn(
                       "flex-1 flex items-center justify-center gap-2 py-2 px-3 chamfered-sm",
                       "font-heading text-xs tracking-wide transition-all duration-200",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                       importMode === "key"
                         ? "bg-accent/15 text-accent shadow-inner-glow"
                         : "text-foreground-secondary hover:text-foreground hover:bg-muted/80"
@@ -1794,7 +1794,7 @@ export default function Wallet() {
                           className={cn(
                             "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full",
                             "border-2 border-transparent transition-colors duration-200",
-                            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                            "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                             importKeyPasswordEnabled ? "bg-primary" : "bg-muted"
                           )}
                         >

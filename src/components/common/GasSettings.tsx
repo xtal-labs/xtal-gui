@@ -161,7 +161,7 @@ export function GasSettings({
           </div>
 
           <div className="flex items-center gap-2 p-2 chamfered-sm bg-accent/5">
-            <Info className="h-3.5 w-3.5 text-accent flex-shrink-0" />
+            <Info className="h-3.5 w-3.5 text-accent shrink-0" />
             <span className="text-xs text-foreground-secondary">
               Unused gas is refunded. You only pay for gas consumed.
             </span>

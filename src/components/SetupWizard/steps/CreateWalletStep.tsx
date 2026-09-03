@@ -58,7 +58,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
   }, [canSubmit, walletName, password, onSubmit]);
 
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out]">
+    <div className="animate-fade-in-up">
       {/* Header */}
       <div className="text-center mb-8">
         <div className="inline-flex items-center justify-center w-16 h-16 mb-4 chamfered bg-accent/10">
@@ -88,7 +88,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
             spellCheck={false}
             className={`
               w-full chamfered-sm px-4 py-3 bg-card border transition-all
-              focus:outline-none focus:ring-2 focus:ring-accent/50
+              focus:outline-hidden focus:ring-2 focus:ring-accent/50
               ${touched.name && !nameValid
                 ? 'border-red-500/50'
                 : 'border-border focus:border-accent'
@@ -119,7 +119,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
               spellCheck={false}
               className={`
                 w-full chamfered-sm px-4 py-3 pr-12 bg-card border transition-all
-                focus:outline-none focus:ring-2 focus:ring-accent/50
+                focus:outline-hidden focus:ring-2 focus:ring-accent/50
                 ${touched.password && !passwordValid
                   ? 'border-red-500/50'
                   : 'border-border focus:border-accent'
@@ -178,7 +178,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
               spellCheck={false}
               className={`
                 w-full chamfered-sm px-4 py-3 pr-20 bg-card border transition-all
-                focus:outline-none focus:ring-2 focus:ring-accent/50
+                focus:outline-hidden focus:ring-2 focus:ring-accent/50
                 ${touched.confirm && !confirmValid
                   ? 'border-red-500/50'
                   : confirmValid
@@ -216,7 +216,7 @@ export function CreateWalletStep({ onSubmit, isProcessing }: CreateWalletStepPro
             w-full chamfered py-4 font-medium text-lg transition-all duration-300
             flex items-center justify-center gap-3
              ${canSubmit
-               ? 'bg-gradient-to-r from-accent to-primary text-foreground hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
+               ? 'bg-linear-to-r from-accent to-primary text-foreground hover:shadow-[0_0_30px_var(--accent)] hover:scale-[1.01]'
                : 'bg-muted/20 text-muted-foreground cursor-not-allowed'
              }
           `}

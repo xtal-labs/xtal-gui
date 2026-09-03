@@ -40,7 +40,7 @@ export function CompleteStep({
   const nodeTypeLabel = getNodeTypeLabel(selectedFruits.length, archival, syncMode);
 
   return (
-    <div className="animate-[fade-in-up_0.4s_ease-out]">
+    <div className="animate-fade-in-up">
       {/* Success icon */}
       <div className="text-center mb-5 sm:mb-8 max-h-[560px]:mb-3">
         <div className="relative inline-flex">
@@ -48,7 +48,7 @@ export function CompleteStep({
           <div className="absolute inset-0 bg-emerald-500 blur-2xl opacity-20 animate-pulse" />
 
           {/* Checkmark container */}
-          <div className="relative icon-hex w-16 h-16 sm:w-20 sm:h-20 max-h-[560px]:h-12 max-h-[560px]:w-12 bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
+          <div className="relative icon-hex w-16 h-16 sm:w-20 sm:h-20 max-h-[560px]:h-12 max-h-[560px]:w-12 bg-linear-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
             <div className="icon-hex w-12 h-12 sm:w-16 sm:h-16 max-h-[560px]:h-9 max-h-[560px]:w-9 bg-background flex items-center justify-center">
               <Check className="w-6 h-6 sm:w-8 sm:h-8 max-h-[560px]:h-5 max-h-[560px]:w-5 text-emerald-400" strokeWidth={3} />
             </div>
@@ -167,7 +167,7 @@ export function CompleteStep({
           flex items-center justify-center gap-3
           ${isProcessing
             ? 'bg-muted/20 text-muted-foreground cursor-wait'
-            : 'bg-gradient-to-r from-accent to-primary text-white hover:shadow-[0_0_40px_var(--accent)] hover:scale-[1.02]'
+            : 'bg-linear-to-r from-accent to-primary text-white hover:shadow-[0_0_40px_var(--accent)] hover:scale-[1.02]'
           }
         `}
       >

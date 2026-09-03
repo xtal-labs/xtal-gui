@@ -347,7 +347,7 @@ export default function BlockExplorer() {
       </Card>
 
       <Card variant="crystalline" className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-crystal-leaf/8 via-transparent to-transparent pointer-events-none" />
+        <div className="absolute inset-0 bg-linear-to-br from-crystal-leaf/8 via-transparent to-transparent pointer-events-none" />
         <CardContent className="relative p-5">
           <div className="flex flex-col gap-4">
             <div className="flex items-start justify-between">

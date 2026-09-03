@@ -3,220 +3,1345 @@
    Aesthetic: Geometric Precision
    ============================================ */
 
-/* Local font faces - Chakra Petch */
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 300;
-  font-style: normal;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-Light.ttf') format('truetype');
+/* Tailwind v4: config lives in CSS. Theme tokens are in the @theme block
+   below; the responsive conventions (stock breakpoints, 640px min-width
+   contract) are documented in CLAUDE.md. Local font faces (Chakra Petch) are
+   declared in the @layer base block further down. */
+@import 'tailwindcss';
+
+@plugin 'tailwindcss-animate';
+
+@custom-variant dark (&:is([data-theme="amethyst"] *));
+
+@theme {
+  --font-sans: Chakra Petch, system-ui, sans-serif;
+  --font-heading: Chakra Petch, system-ui, sans-serif;
+  --font-mono: Chakra Petch, system-ui, sans-serif;
+
+  --color-background: hsl(var(--background));
+  --color-background-secondary: hsl(var(--background-secondary));
+  --color-foreground: hsl(var(--foreground));
+  --color-foreground-secondary: hsl(var(--foreground-secondary));
+  --color-foreground-muted: hsl(var(--foreground-muted));
+  --color-heading: hsl(var(--heading));
+
+  --color-card: hsl(var(--card));
+  --color-card-elevated: hsl(var(--card-elevated));
+  --color-card-foreground: hsl(var(--foreground));
+
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-primary-glow: hsl(var(--primary-glow));
+  --color-primary-hover: hsl(var(--primary-hover));
+
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
+
+  --color-border: hsl(var(--border));
+  --color-border-hover: hsl(var(--border-hover));
+
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+
+  --color-chart-1: hsl(var(--chart-1));
+  --color-chart-2: hsl(var(--chart-2));
+  --color-chart-3: hsl(var(--chart-3));
+  --color-chart-4: hsl(var(--chart-4));
+  --color-chart-5: hsl(var(--chart-5));
+
+  --color-crystal-stem: hsl(var(--crystal-stem));
+  --color-crystal-leaf: hsl(var(--crystal-leaf));
+  --color-crystal-fruit: hsl(var(--crystal-fruit));
+  --color-crystal-facet-light: hsl(var(--crystal-facet-light));
+  --color-crystal-facet-dark: hsl(var(--crystal-facet-dark));
+  --color-crystal-edge: hsl(var(--crystal-edge));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+
+  --shadow-glow-sm: 0 0 10px hsl(var(--glow-color));
+  --shadow-glow:
+    0 0 20px hsl(var(--glow-color)), 0 0 40px hsl(var(--glow-color));
+  --shadow-inner-glow:
+    inset 0 1px 0 0 hsl(var(--primary) / 0.1),
+    inset 0 0 20px hsl(var(--primary) / 0.05);
+  --shadow-crystalline:
+    0 4px 20px -2px hsl(var(--primary) / 0.15),
+    0 2px 8px -2px hsl(var(--primary) / 0.1);
+  --shadow-crystalline-lg:
+    0 8px 30px -4px hsl(var(--primary) / 0.2),
+    0 4px 12px -4px hsl(var(--primary) / 0.15);
+
+  --animate-pulse-live: pulse-live 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-shimmer: shimmer 1.5s infinite;
+  --animate-data-flash: data-flash 0.5s ease-out;
+  --animate-block-enter: block-enter var(--block-anim-duration, 400ms) ease-out
+    forwards;
+  --animate-slide-in-right: slide-in-right 0.3s ease-out;
+  --animate-fade-in-up: fade-in-up 0.4s ease-out;
+  --animate-accordion-down: accordion-down 0.2s ease-out;
+  --animate-accordion-up: accordion-up 0.2s ease-out;
+
+  --transition-duration-fast: 150ms;
+  --transition-duration-base: 200ms;
+  --transition-duration-slow: 300ms;
+
+  --spacing-sidebar-width: var(--sidebar-width);
+  --spacing-sidebar-collapsed: var(--sidebar-collapsed);
+
+  @keyframes pulse-live {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+  @keyframes shimmer {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
+  }
+  @keyframes data-flash {
+    0% {
+      background-color: hsl(var(--primary) / 0.2);
+    }
+    100% {
+      background-color: transparent;
+    }
+  }
+  @keyframes block-enter {
+    from {
+      max-height: 0;
+      opacity: 0;
+      transform: translateY(-8px);
+    }
+    to {
+      max-height: 60px;
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes slide-in-right {
+    from {
+      opacity: 0;
+      transform: translateX(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+  @keyframes fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes accordion-down {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-accordion-content-height);
+    }
+  }
+  @keyframes accordion-up {
+    from {
+      height: var(--radix-accordion-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-Regular.ttf') format('truetype');
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-Medium.ttf') format('truetype');
+@utility min-h-viewport {
+  /* Full-viewport min-height with a static fallback.
+     `dvh` is unsupported on WebKit < 15.4 (older macOS WKWebView); the `vh`
+     base keeps these containers full-height there, and the @supports override
+     upgrades to `dvh` where available. The override must live in @supports
+     rather than a second declaration in the same rule — esbuild's minifier
+     dedupes within-rule declarations and would drop the `vh` fallback.
+     Required for screens whose children are all absolutely positioned (no
+     in-flow content to give the container height) — otherwise they collapse
+     to 0px. */
+  min-height: 100vh;
+
+  @supports (height: 100dvh) {
+    min-height: 100dvh;
+  }
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-SemiBold.ttf') format('truetype');
+@utility anim-entrance {
+  /* Staggered entrance animation as a pure enhancement.
+     Duration/delay are set per-element via --anim-duration / --anim-delay so
+     usage stays declarative. Content's resting state is fully visible, so a
+     stalled or disabled animation never hides it (see reduced-motion reset). */
+  animation: fade-in-up var(--anim-duration, 0.4s) ease-out
+    var(--anim-delay, 0ms) backwards;
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-Bold.ttf') format('truetype');
+@utility validator-address-row {
+  border: 1px solid hsl(var(--primary) / 0.24);
+
+  [data-theme='celestite'] & {
+    box-shadow:
+      0 0 0.45rem hsl(var(--amethyst-purple) / 0.14),
+      inset 0 0 0.35rem hsl(var(--amethyst-purple) / 0.06);
+  }
+
+  :root:not([data-theme='amethyst']):not(.dark) & {
+    box-shadow:
+      0 0 0.45rem hsl(var(--amethyst-purple) / 0.14),
+      inset 0 0 0.35rem hsl(var(--amethyst-purple) / 0.06);
+  }
+
+  [data-theme='amethyst'] & {
+    box-shadow:
+      0 0 0.45rem hsl(var(--celestite-blue) / 0.14),
+      inset 0 0 0.35rem hsl(var(--celestite-blue) / 0.06);
+  }
+
+  .dark & {
+    box-shadow:
+      0 0 0.45rem hsl(var(--celestite-blue) / 0.14),
+      inset 0 0 0.35rem hsl(var(--celestite-blue) / 0.06);
+  }
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 300;
-  font-style: italic;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-LightItalic.ttf') format('truetype');
+
+@utility sidebar-nav-item {
+  /* Sidebar navigation hover outline glow (celestite ↔ amethyst cycle) */
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    clip-path: inherit;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    --sidebar-nav-outline-angle: 0deg;
+    background: conic-gradient(
+        from var(--sidebar-nav-outline-angle),
+        hsl(var(--celestite-blue) / 0.65),
+        hsl(var(--celestite-blue-soft) / 0.65),
+        hsl(var(--amethyst-purple) / 0.65),
+        hsl(var(--amethyst-purple-soft) / 0.65),
+        hsl(var(--celestite-blue) / 0.65)
+      )
+      border-box;
+    -webkit-mask:
+      linear-gradient(#fff 0 0) content-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+  }
+
+  [data-theme='celestite'] &:hover::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
+      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  [data-theme='celestite'] &:focus-visible::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
+      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  [data-theme='celestite'] &[data-active='true']::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
+      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  :root:not([data-theme='amethyst']):not(.dark) &:hover::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
+      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  :root:not([data-theme='amethyst']):not(.dark) &:focus-visible::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
+      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  :root:not([data-theme='amethyst']):not(.dark) &[data-active='true']::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
+      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  [data-theme='amethyst'] &:hover::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
+      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  [data-theme='amethyst'] &:focus-visible::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
+      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  [data-theme='amethyst'] &[data-active='true']::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
+      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  .dark &:hover::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
+      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  .dark &:focus-visible::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
+      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  .dark &[data-active='true']::after {
+    opacity: 1;
+    filter: blur(0.6px)
+      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
+      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
+    will-change: --sidebar-nav-outline-angle, filter;
+    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-theme='celestite'] &:hover::after {
+      animation: none;
+    }
+
+    [data-theme='celestite'] &:focus-visible::after {
+      animation: none;
+    }
+
+    [data-theme='celestite'] &[data-active='true']::after {
+      animation: none;
+    }
+
+    :root:not([data-theme='amethyst']):not(.dark) &:hover::after {
+      animation: none;
+    }
+
+    :root:not([data-theme='amethyst']):not(.dark) &:focus-visible::after {
+      animation: none;
+    }
+
+    :root:not([data-theme='amethyst']):not(.dark) &[data-active='true']::after {
+      animation: none;
+    }
+
+    [data-theme='amethyst'] &:hover::after {
+      animation: none;
+    }
+
+    [data-theme='amethyst'] &:focus-visible::after {
+      animation: none;
+    }
+
+    [data-theme='amethyst'] &[data-active='true']::after {
+      animation: none;
+    }
+
+    .dark &:hover::after {
+      animation: none;
+    }
+
+    .dark &:focus-visible::after {
+      animation: none;
+    }
+
+    .dark &[data-active='true']::after {
+      animation: none;
+    }
+  }
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-Italic.ttf') format('truetype');
+@utility faceted {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Faceted card effect - subtle angular shadow */
+  background-color: hsl(var(--card));
+  background-image:
+    linear-gradient(
+      135deg,
+      hsl(var(--card)) 0%,
+      hsl(var(--card-elevated)) 18%,
+      hsl(var(--card-elevated) / 0.98) 48%,
+      hsl(var(--card)) 100%
+    ),
+    radial-gradient(
+      140% 120% at 0% 0%,
+      hsl(var(--primary) / 0.045) 0%,
+      transparent 44%
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.05' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.18'/%3E%3C/svg%3E");
+  background-size:
+    auto,
+    auto,
+    160px 160px;
+  background-blend-mode: normal, screen, soft-light;
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 500;
-  font-style: italic;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-MediumItalic.ttf') format('truetype');
+@utility inner-glow {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Inner glow for active states */
+  box-shadow:
+    inset 0 1px 0 0 hsl(var(--primary) / 0.1),
+    inset 0 0 20px hsl(var(--primary) / 0.05);
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 600;
-  font-style: italic;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-SemiBoldItalic.ttf') format('truetype');
+@utility gradient-text {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Gradient text */
+  background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
-@font-face {
-  font-family: 'Chakra Petch';
-  font-weight: 700;
-  font-style: italic;
-  font-display: swap;
-  src: url('/fonts/Chakra_Petch/ChakraPetch-BoldItalic.ttf') format('truetype');
+@utility pulse-live {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Status pulse animation */
+  animation: pulse-live 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@utility shimmer {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Shimmer effect for loading states */
+  background: linear-gradient(
+    90deg,
+    hsl(var(--shimmer-start)) 0%,
+    hsl(var(--shimmer-end)) 50%,
+    hsl(var(--shimmer-start)) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}
+
+@utility data-flash {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Data update flash */
+  animation: data-flash 0.5s ease-out;
+}
+
+@utility block-enter-shell {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Block enter animation - reserve layout smoothly, animate content separately */
+  overflow: hidden;
+  animation: block-enter-shell var(--block-anim-duration, 400ms)
+    cubic-bezier(0.22, 1, 0.36, 1) forwards;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    max-height: none;
+  }
+}
+
+@utility block-enter-content {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  will-change: transform, opacity;
+  transform: translateZ(0);
+  animation: block-enter-content calc(var(--block-anim-duration, 400ms) * 0.9)
+    cubic-bezier(0.16, 1, 0.3, 1) both;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@utility fade-in-up {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Fade in up animation */
+  animation: fade-in-up 0.4s ease-out;
+}
+
+@utility stagger-children {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    & > * {
+      animation: none;
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Stagger children animations */
+  & > * {
+    animation: fade-in-up 0.4s ease-out backwards;
+  }
+
+  & > *:nth-child(1) {
+    animation-delay: 0ms;
+  }
+  & > *:nth-child(2) {
+    animation-delay: 50ms;
+  }
+  & > *:nth-child(3) {
+    animation-delay: 100ms;
+  }
+  & > *:nth-child(4) {
+    animation-delay: 150ms;
+  }
+  & > *:nth-child(5) {
+    animation-delay: 200ms;
+  }
+  & > *:nth-child(6) {
+    animation-delay: 250ms;
+  }
+}
+
+@utility slide-in-right {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Slide in animation */
+  animation: slide-in-right 0.3s ease-out;
+}
+
+@utility trace-draw {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Chain visualizer — the anchor conduit draws itself in on hover */
+  animation: trace-draw 0.45s ease-out forwards;
+}
+
+@utility chamfered {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* ============================================
+     Geometric Shape Utilities
+     ============================================ */
+
+  /* Chamfered corners - 8px cuts */
+  clip-path: polygon(
+    8px 0,
+    calc(100% - 8px) 0,
+    100% 8px,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    8px 100%,
+    0 calc(100% - 8px),
+    0 8px
+  );
+}
+
+@utility chamfered-sm {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Chamfered corners - 4px cuts (smaller elements) */
+  clip-path: polygon(
+    4px 0,
+    calc(100% - 4px) 0,
+    100% 4px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    4px 100%,
+    0 calc(100% - 4px),
+    0 4px
+  );
+}
+
+@utility chamfered-lg {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Chamfered corners - 12px cuts (larger elements) */
+  clip-path: polygon(
+    12px 0,
+    calc(100% - 12px) 0,
+    100% 12px,
+    100% calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    12px 100%,
+    0 calc(100% - 12px),
+    0 12px
+  );
+}
+
+@utility chamfered-border-wrap {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Chamfered border wrappers — wrap a .chamfered child to produce a
+     polygon-following border via the padding-gap technique.
+     Set --_cb-color on the element for a custom border color. */
+  clip-path: polygon(
+    8px 0,
+    calc(100% - 8px) 0,
+    100% 8px,
+    100% calc(100% - 8px),
+    calc(100% - 8px) 100%,
+    8px 100%,
+    0 calc(100% - 8px),
+    0 8px
+  );
+  padding: 1px;
+  background: var(--_cb-color, hsl(var(--border)));
+}
+
+@utility chamfered-sm-border-wrap {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  clip-path: polygon(
+    4px 0,
+    calc(100% - 4px) 0,
+    100% 4px,
+    100% calc(100% - 4px),
+    calc(100% - 4px) 100%,
+    4px 100%,
+    0 calc(100% - 4px),
+    0 4px
+  );
+  padding: 1px;
+  background: var(--_cb-color, hsl(var(--border)));
+}
+
+@utility chamfered-lg-border-wrap {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  clip-path: polygon(
+    12px 0,
+    calc(100% - 12px) 0,
+    100% 12px,
+    100% calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    12px 100%,
+    0 calc(100% - 12px),
+    0 12px
+  );
+  padding: 1px;
+  background: var(--_cb-color, hsl(var(--border)));
+}
+
+@utility diamond {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Diamond shape */
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+@utility hexagon {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Hexagon shape */
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+}
+
+@utility hexagon-sm {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Hexagon - small (for switch thumbs, micro indicators) */
+  clip-path: polygon(25% 5%, 75% 5%, 95% 50%, 75% 95%, 25% 95%, 5% 50%);
+}
+
+@utility diamond-sm {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Diamond - small (for status indicators) */
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+@utility octagon {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Octagon shape */
+  clip-path: polygon(
+    30% 0%,
+    70% 0%,
+    100% 30%,
+    100% 70%,
+    70% 100%,
+    30% 100%,
+    0% 70%,
+    0% 30%
+  );
+}
+
+@utility hex-gem {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* 3D faceted gem effect for hexagonal badges.
+     Set --gem-highlight, --gem-base, --gem-shadow as HSL triplets
+     on the element via inline style.
+     Two crossing linear-gradients with hard stops at 50% create
+     4 triangular facets. Edges run corner-to-corner through the
+     hex vertices at (25%,0%)↔(75%,100%) and (75%,0%)↔(25%,100%).
+     Angles calibrated for ~3:1 aspect ratio (block-type badges). */
+  background:
+      /* Diagonal 1: top-left ↔ bottom-right vertex */
+    linear-gradient(
+      34deg,
+      hsl(var(--gem-shadow) / 0.28) 50%,
+      hsl(var(--gem-highlight) / 0.28) 50%
+    ),
+    /* Diagonal 2: top-right ↔ bottom-left vertex */
+      linear-gradient(
+        146deg,
+        hsl(var(--gem-highlight) / 0.28) 50%,
+        hsl(var(--gem-shadow) / 0.28) 50%
+      ),
+    /* Horizontal: left ↔ right vertex */
+      linear-gradient(
+        180deg,
+        hsl(var(--gem-highlight) / 0.15) 50%,
+        hsl(var(--gem-shadow) / 0.15) 50%
+      ),
+    /* Lateral tilt: very subtle, just breaks symmetry */
+      linear-gradient(
+        90deg,
+        hsl(var(--gem-highlight) / 0.06) 50%,
+        hsl(var(--gem-shadow) / 0.06) 50%
+      );
+  background-color: hsl(var(--gem-base) / 0.1);
+}
+
+@utility crystalline {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Crystalline card styling */
+  position: relative;
+  background-color: hsl(var(--card));
+  background-image:
+    linear-gradient(
+      145deg,
+      hsl(var(--card)) 0%,
+      hsl(var(--card-elevated) / 0.985) 16%,
+      hsl(var(--card-elevated)) 34%,
+      hsl(var(--card-elevated) / 0.94) 52%,
+      hsl(var(--card) / 0.985) 78%,
+      hsl(var(--card)) 100%
+    ),
+    radial-gradient(
+      140% 115% at 0% 0%,
+      hsl(var(--primary) / 0.055) 0%,
+      transparent 40%
+    ),
+    radial-gradient(
+      150% 120% at 100% 100%,
+      hsl(var(--accent) / 0.05) 0%,
+      transparent 42%
+    ),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='192' height='192' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
+  background-size:
+    auto,
+    auto,
+    auto,
+    192px 192px;
+  background-blend-mode: normal, screen, screen, soft-light;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 1px solid transparent;
+    background: linear-gradient(
+        135deg,
+        hsl(var(--crystal-facet-light) / 0.3) 0%,
+        hsl(var(--border)) 25%,
+        hsl(var(--crystal-edge)) 50%,
+        hsl(var(--border)) 75%,
+        hsl(var(--crystal-facet-dark) / 0.2) 100%
+      )
+      border-box;
+    -webkit-mask:
+      linear-gradient(#fff 0 0) padding-box,
+      linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+}
+
+@utility crystal-refraction {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Crystal refraction line effect - optional decorative element */
+  &::after {
+    content: '';
+    position: absolute;
+    top: 15%;
+    left: 8%;
+    right: 55%;
+    height: 1px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      hsl(var(--crystal-facet-light) / 0.15) 30%,
+      hsl(var(--crystal-facet-light) / 0.08) 70%,
+      transparent 100%
+    );
+    transform: rotate(-12deg);
+    pointer-events: none;
+  }
+}
+
+@utility faceted-border {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Faceted border gradient — override --_fb-fill to change the interior color */
+  --_fb-fill: var(--card);
+  border: 1px solid transparent;
+  background:
+    linear-gradient(hsl(var(--_fb-fill)), hsl(var(--_fb-fill))) padding-box,
+    linear-gradient(
+        135deg,
+        hsl(var(--primary) / 0.4) 0%,
+        hsl(var(--border)) 30%,
+        hsl(var(--accent) / 0.3) 60%,
+        hsl(var(--border)) 100%
+      )
+      border-box;
+}
+
+@utility icon-hex {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Geometric icon container */
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  background: hsl(var(--muted));
+  clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
+}
+
+@utility icon-hex-sm {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  width: 2rem;
+  height: 2rem;
+}
+
+@utility divider-angular {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Angular divider */
+  position: relative;
+  height: 1px;
+  background: hsl(var(--border));
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    background: hsl(var(--border));
+    transform: translateY(-50%) rotate(45deg);
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    width: 6px;
+    height: 6px;
+    background: hsl(var(--border));
+    transform: translateY(-50%) rotate(45deg);
+  }
+
+  &::before {
+    left: 0;
+  }
+
+  &::after {
+    right: 0;
+  }
+}
+
+@utility status-diamond {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+
+  /* Status diamond indicator */
+  width: 8px;
+  height: 8px;
+  background: currentColor;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+@utility status-diamond-sm {
+  @property --sidebar-nav-outline-angle {
+    syntax: '<angle>';
+    inherits: false;
+    initial-value: 0deg;
+  }
+  width: 6px;
+  height: 6px;
+}
+
+@layer base {
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 300;
+    font-style: normal;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-Light.ttf') format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-Regular.ttf') format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-Medium.ttf') format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-SemiBold.ttf') format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 700;
+    font-style: normal;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-Bold.ttf') format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 300;
+    font-style: italic;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-LightItalic.ttf')
+      format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 400;
+    font-style: italic;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-Italic.ttf') format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 500;
+    font-style: italic;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-MediumItalic.ttf')
+      format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 600;
+    font-style: italic;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-SemiBoldItalic.ttf')
+      format('truetype');
+  }
+
+  @font-face {
+    font-family: 'Chakra Petch';
+    font-weight: 700;
+    font-style: italic;
+    font-display: swap;
+    src: url('/fonts/Chakra_Petch/ChakraPetch-BoldItalic.ttf')
+      format('truetype');
+  }
 }
 
 /* Tailwind directives - AFTER font imports */
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
-/* ============================================
+@layer utilities {
+  /* ============================================
    CSS Variables - Theme System
    ============================================ */
 
-:root {
-  /* Base sizing */
-  --radius: 0.625rem;
-  --sidebar-width: 240px;
-  --sidebar-collapsed: 64px;
-  /* Single source of truth for the app's minimum usable width/height.
+  :root {
+    /* Base sizing */
+    --radius: 0.625rem;
+    --sidebar-width: 240px;
+    --sidebar-collapsed: 64px;
+    /* Single source of truth for the app's minimum usable width/height.
      Matches the Tauri window minWidth/minHeight and the adaptive startup floor. */
-  --app-min-width: 640px;
-  --app-min-height: 480px;
+    --app-min-width: 640px;
+    --app-min-height: 480px;
 
-  /* Crystal palette anchors (static) */
-  --celestite-blue: 217 91% 60%;
-  --celestite-blue-soft: 217 91% 70%;
-  --amethyst-purple: 276 68% 59%;
-  --amethyst-purple-soft: 280 80% 75%;
+    /* Crystal palette anchors (static) */
+    --celestite-blue: 217 91% 60%;
+    --celestite-blue-soft: 217 91% 70%;
+    --amethyst-purple: 276 68% 59%;
+    --amethyst-purple-soft: 280 80% 75%;
 
-  /* Transitions */
-  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
-  --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    /* Transitions */
+    --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-slow: 300ms cubic-bezier(0.4, 0, 0.2, 1);
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-}
+    /* Shadows */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md:
+      0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg:
+      0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
 
-/* ============================================
+  /* ============================================
    AMETHYST THEME (Dark)
    Deep purple-black with luminous accents
    ============================================ */
 
-[data-theme="amethyst"], .dark {
-  color-scheme: dark;
+  [data-theme='amethyst'],
+  .dark {
+    color-scheme: dark;
 
-  /* Background layers - deep crystalline depths */
-  --background: 260 30% 5%;           /* #0d0d14 - near-black purple */
-  --background-secondary: 260 25% 8%; /* #151520 - elevated surface */
-  --card: 260 20% 12%;                /* #1a1a2e - card surface */
-  --card-elevated: 260 18% 16%;       /* #232338 - modals, dropdowns */
+    /* Background layers - deep crystalline depths */
+    --background: 260 30% 5%; /* #0d0d14 - near-black purple */
+    --background-secondary: 260 25% 8%; /* #151520 - elevated surface */
+    --card: 260 20% 12%; /* #1a1a2e - card surface */
+    --card-elevated: 260 18% 16%; /* #232338 - modals, dropdowns */
 
-  /* Text hierarchy */
-  --foreground: 210 40% 98%;          /* #f8fafc - primary text */
-  --foreground-secondary: 215 20% 65%; /* #94a3b8 - secondary text */
-  --foreground-muted: 215 16% 47%;    /* #64748b - muted text */
-  --heading: 210 40% 98%;             /* Same as foreground for dark mode */
+    /* Text hierarchy */
+    --foreground: 210 40% 98%; /* #f8fafc - primary text */
+    --foreground-secondary: 215 20% 65%; /* #94a3b8 - secondary text */
+    --foreground-muted: 215 16% 47%; /* #64748b - muted text */
+    --heading: 210 40% 98%; /* Same as foreground for dark mode */
 
-  /* Primary - Crystal Purple */
-  --primary: 276 68% 59%;             /* #9d4edd */
-  --primary-foreground: 210 40% 98%;
-  --primary-glow: 276 68% 59% / 0.15;
-  --primary-hover: 276 68% 52%;       /* Slightly darker on hover */
+    /* Primary - Crystal Purple */
+    --primary: 276 68% 59%; /* #9d4edd */
+    --primary-foreground: 210 40% 98%;
+    --primary-glow: 276 68% 59% / 0.15;
+    --primary-hover: 276 68% 52%; /* Slightly darker on hover */
 
-  /* Secondary */
-  --secondary: 276 50% 30%;           /* Muted purple */
-  --secondary-foreground: 210 40% 98%;
+    /* Secondary */
+    --secondary: 276 50% 30%; /* Muted purple */
+    --secondary-foreground: 210 40% 98%;
 
-  /* Accent - Bright Amethyst */
-  --accent: 280 80% 75%;              /* #c77dff */
-  --accent-foreground: 260 30% 10%;
+    /* Accent - Bright Amethyst */
+    --accent: 280 80% 75%; /* #c77dff */
+    --accent-foreground: 260 30% 10%;
 
-  /* Borders & inputs */
-  --border: 260 15% 20%;              /* Subtle purple border */
-  --border-hover: 260 15% 28%;
-  --input: 260 20% 14%;
-  --ring: 276 68% 59%;
+    /* Borders & inputs */
+    --border: 260 15% 20%; /* Subtle purple border */
+    --border-hover: 260 15% 28%;
+    --input: 260 20% 14%;
+    --ring: 276 68% 59%;
 
-  /* Semantic colors */
-  --success: 160 84% 39%;             /* #10b981 emerald */
-  --success-foreground: 160 84% 98%;
-  --warning: 38 92% 50%;              /* #f59e0b amber */
-  --warning-foreground: 38 92% 10%;
-  --destructive: 0 84% 60%;           /* #ef4444 red */
-  --destructive-foreground: 0 0% 98%;
-  --info: 217 91% 60%;                /* #3b82f6 blue */
-  --info-foreground: 217 91% 98%;
+    /* Semantic colors */
+    --success: 160 84% 39%; /* #10b981 emerald */
+    --success-foreground: 160 84% 98%;
+    --warning: 38 92% 50%; /* #f59e0b amber */
+    --warning-foreground: 38 92% 10%;
+    --destructive: 0 84% 60%; /* #ef4444 red */
+    --destructive-foreground: 0 0% 98%;
+    --info: 217 91% 60%; /* #3b82f6 blue */
+    --info-foreground: 217 91% 98%;
 
-  /* Muted surfaces */
-  --muted: 260 15% 18%;
-  --muted-foreground: 215 16% 55%;
+    /* Muted surfaces */
+    --muted: 260 15% 18%;
+    --muted-foreground: 215 16% 55%;
 
-  /* Popover */
-  --popover: 260 20% 10%;
-  --popover-foreground: 210 40% 98%;
+    /* Popover */
+    --popover: 260 20% 10%;
+    --popover-foreground: 210 40% 98%;
 
-  /* Chart colors - crystalline spectrum */
-  --chart-1: 276 68% 59%;             /* Purple */
-  --chart-2: 200 95% 50%;             /* Cyan */
-  --chart-3: 160 84% 45%;             /* Emerald */
-  --chart-4: 280 80% 70%;             /* Light purple */
-  --chart-5: 38 92% 55%;              /* Amber */
+    /* Chart colors - crystalline spectrum */
+    --chart-1: 276 68% 59%; /* Purple */
+    --chart-2: 200 95% 50%; /* Cyan */
+    --chart-3: 160 84% 45%; /* Emerald */
+    --chart-4: 280 80% 70%; /* Light purple */
+    --chart-5: 38 92% 55%; /* Amber */
 
-  /* Crystal-specific semantic */
-  --crystal-stem: 142 71% 45%;        /* Green for stems */
-  --crystal-leaf: 200 95% 50%;        /* Cyan for leaves */
-  --crystal-fruit: 25 95% 55%;        /* Orange for fruits */
+    /* Crystal-specific semantic */
+    --crystal-stem: 142 71% 45%; /* Green for stems */
+    --crystal-leaf: 200 95% 50%; /* Cyan for leaves */
+    --crystal-fruit: 25 95% 55%; /* Orange for fruits */
 
-  /* Stem facet shades */
-  --crystal-stem-highlight: 142 71% 62%;
-  --crystal-stem-shadow: 142 71% 32%;
-  --crystal-stem-specular: 142 71% 80%;
+    /* Stem facet shades */
+    --crystal-stem-highlight: 142 71% 62%;
+    --crystal-stem-shadow: 142 71% 32%;
+    --crystal-stem-specular: 142 71% 80%;
 
-  /* Leaf facet shades */
-  --crystal-leaf-highlight: 200 95% 67%;
-  --crystal-leaf-shadow: 200 95% 37%;
-  --crystal-leaf-specular: 200 95% 82%;
+    /* Leaf facet shades */
+    --crystal-leaf-highlight: 200 95% 67%;
+    --crystal-leaf-shadow: 200 95% 37%;
+    --crystal-leaf-specular: 200 95% 82%;
 
-  /* Fruit facet shades */
-  --crystal-fruit-highlight: 25 95% 72%;
-  --crystal-fruit-shadow: 25 95% 42%;
-  --crystal-fruit-specular: 25 95% 85%;
+    /* Fruit facet shades */
+    --crystal-fruit-highlight: 25 95% 72%;
+    --crystal-fruit-shadow: 25 95% 42%;
+    --crystal-fruit-specular: 25 95% 85%;
 
-  /* Special effects */
-  --glow-color: 276 68% 59% / 0.4;
-  --shimmer-start: 276 68% 59% / 0;
-  --shimmer-end: 276 68% 59% / 0.1;
+    /* Special effects */
+    --glow-color: 276 68% 59% / 0.4;
+    --shimmer-start: 276 68% 59% / 0;
+    --shimmer-end: 276 68% 59% / 0.1;
 
-  /* Crystal facet colors */
-  --crystal-facet-light: 276 68% 68%;
-  --crystal-facet-dark: 280 60% 42%;
-  --crystal-edge: 280 80% 75% / 0.25;
-}
+    /* Crystal facet colors */
+    --crystal-facet-light: 276 68% 68%;
+    --crystal-facet-dark: 280 60% 42%;
+    --crystal-edge: 280 80% 75% / 0.25;
+  }
 
-/* ============================================
+  /* ============================================
    SETUP WIZARD — Amethyst vibrance overrides
    The global dark ramp loses saturation as it
    lifts (30%→15%), so stacked surfaces read as
@@ -225,131 +1350,140 @@
    lightness steps, and turn the near-invisible
    border into a luminous, refractive crystal edge.
    ============================================ */
-[data-theme="amethyst"] .setup-wizard {
-  /* Deeper, richer geode base */
-  --background: 264 44% 6%;
-  --background-secondary: 263 38% 10%;
+  [data-theme='amethyst'] .setup-wizard {
+    /* Deeper, richer geode base */
+    --background: 264 44% 6%;
+    --background-secondary: 263 38% 10%;
 
-  /* Surface ramp: saturation now holds as layers lift,
+    /* Surface ramp: saturation now holds as layers lift,
      and the card→elevated swing widens for visible faceting */
-  --card: 263 33% 15%;
-  --card-elevated: 262 36% 23%;
-  --muted: 261 27% 24%;
-  --input: 262 30% 17%;
+    --card: 263 33% 15%;
+    --card-elevated: 262 36% 23%;
+    --muted: 261 27% 24%;
+    --input: 262 30% 17%;
 
-  /* A genuine luminous edge instead of near-invisible grey */
-  --border: 268 34% 35%;
-  --border-hover: 276 64% 60%;
+    /* A genuine luminous edge instead of near-invisible grey */
+    --border: 268 34% 35%;
+    --border-hover: 276 64% 60%;
 
-  /* Refractive crystal edges catch more light */
-  --crystal-facet-light: 280 84% 75%;
-  --crystal-facet-dark: 282 66% 50%;
-  --crystal-edge: 286 96% 80% / 0.5;
-}
+    /* Refractive crystal edges catch more light */
+    --crystal-facet-light: 280 84% 75%;
+    --crystal-facet-dark: 282 66% 50%;
+    --crystal-edge: 286 96% 80% / 0.5;
+  }
 
-/* ============================================
+  /* ============================================
    CELESTITE THEME (Light)
    Clean blue-white with crystalline clarity
    ============================================ */
 
-[data-theme="celestite"], :root:not([data-theme="amethyst"]):not(.dark) {
-  color-scheme: light;
+  [data-theme='celestite'],
+  :root:not([data-theme='amethyst']):not(.dark) {
+    color-scheme: light;
 
-  /* Background layers - soft blue-tinted ivory */
-  --background: 220 20% 96%;          /* Warm blue-grey base */
-  --background-secondary: 220 18% 93.5%; /* Visible differentiation */
-  --card: 220 25% 98.5%;              /* Off-white with faint blue tint */
-  --card-elevated: 220 30% 99.5%;     /* Subtle lift above card */
+    /* Background layers - soft blue-tinted ivory */
+    --background: 220 20% 96%; /* Warm blue-grey base */
+    --background-secondary: 220 18% 93.5%; /* Visible differentiation */
+    --card: 220 25% 98.5%; /* Off-white with faint blue tint */
+    --card-elevated: 220 30% 99.5%; /* Subtle lift above card */
 
-  /* Text hierarchy */
-  --foreground: 222 47% 11%;          /* #0f172a - near black */
-  --foreground-secondary: 215 16% 35%; /* #475569 */
-  --foreground-muted: 215 16% 57%;    /* #94a3b8 */
-  --heading: 222 47% 18%;             /* Slightly softer for headings */
+    /* Text hierarchy */
+    --foreground: 222 47% 11%; /* #0f172a - near black */
+    --foreground-secondary: 215 16% 35%; /* #475569 */
+    --foreground-muted: 215 16% 57%; /* #94a3b8 */
+    --heading: 222 47% 18%; /* Slightly softer for headings */
 
-  /* Primary - Crystal Blue (toned down) */
-  --primary: 217 75% 58%;
-  --primary-foreground: 0 0% 100%;
-  --primary-glow: 217 75% 58% / 0.12;
-  --primary-hover: 217 78% 50%;
+    /* Primary - Crystal Blue (toned down) */
+    --primary: 217 75% 58%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 217 75% 58% / 0.12;
+    --primary-hover: 217 78% 50%;
 
-  /* Secondary */
-  --secondary: 220 16% 91%;
-  --secondary-foreground: 222 47% 20%;
+    /* Secondary */
+    --secondary: 220 16% 91%;
+    --secondary-foreground: 222 47% 20%;
 
-  /* Accent - Sky Blue (toned down) */
-  --accent: 217 72% 68%;
-  --accent-foreground: 222 47% 11%;
+    /* Accent - Sky Blue (toned down) */
+    --accent: 217 72% 68%;
+    --accent-foreground: 222 47% 11%;
 
-  /* Borders & inputs */
-  --border: 220 20% 88%;
-  --border-hover: 220 20% 80%;
-  --input: 220 18% 94%;
-  --ring: 217 75% 58%;
+    /* Borders & inputs */
+    --border: 220 20% 88%;
+    --border-hover: 220 20% 80%;
+    --input: 220 18% 94%;
+    --ring: 217 75% 58%;
 
-  /* Semantic colors */
-  --success: 160 84% 39%;
-  --success-foreground: 0 0% 100%;
-  --warning: 38 92% 50%;
-  --warning-foreground: 38 92% 10%;
-  --destructive: 0 84% 60%;
-  --destructive-foreground: 0 0% 100%;
-  --info: 217 75% 58%;
-  --info-foreground: 0 0% 100%;
+    /* Semantic colors */
+    --success: 160 84% 39%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 38 92% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --info: 217 75% 58%;
+    --info-foreground: 0 0% 100%;
 
-  /* Muted surfaces */
-  --muted: 220 18% 93.5%;
-  --muted-foreground: 215 16% 45%;
+    /* Muted surfaces */
+    --muted: 220 18% 93.5%;
+    --muted-foreground: 215 16% 45%;
 
-  /* Popover */
-  --popover: 220 25% 98.5%;
-  --popover-foreground: 222 47% 11%;
+    /* Popover */
+    --popover: 220 25% 98.5%;
+    --popover-foreground: 222 47% 11%;
 
-  /* Chart colors (toned down) */
-  --chart-1: 217 75% 58%;
-  --chart-2: 160 70% 38%;
-  --chart-3: 276 68% 59%;
-  --chart-4: 25 80% 53%;
-  --chart-5: 330 68% 58%;
+    /* Chart colors (toned down) */
+    --chart-1: 217 75% 58%;
+    --chart-2: 160 70% 38%;
+    --chart-3: 276 68% 59%;
+    --chart-4: 25 80% 53%;
+    --chart-5: 330 68% 58%;
 
-  /* Crystal-specific semantic */
-  --crystal-stem: 142 71% 40%;
-  --crystal-leaf: 200 95% 45%;
-  --crystal-fruit: 25 95% 50%;
+    /* Crystal-specific semantic */
+    --crystal-stem: 142 71% 40%;
+    --crystal-leaf: 200 95% 45%;
+    --crystal-fruit: 25 95% 50%;
 
-  /* Stem facet shades */
-  --crystal-stem-highlight: 142 71% 55%;
-  --crystal-stem-shadow: 142 71% 28%;
-  --crystal-stem-specular: 142 71% 70%;
+    /* Stem facet shades */
+    --crystal-stem-highlight: 142 71% 55%;
+    --crystal-stem-shadow: 142 71% 28%;
+    --crystal-stem-specular: 142 71% 70%;
 
-  /* Leaf facet shades */
-  --crystal-leaf-highlight: 200 95% 60%;
-  --crystal-leaf-shadow: 200 95% 32%;
-  --crystal-leaf-specular: 200 95% 72%;
+    /* Leaf facet shades */
+    --crystal-leaf-highlight: 200 95% 60%;
+    --crystal-leaf-shadow: 200 95% 32%;
+    --crystal-leaf-specular: 200 95% 72%;
 
-  /* Fruit facet shades */
-  --crystal-fruit-highlight: 25 95% 65%;
-  --crystal-fruit-shadow: 25 95% 37%;
-  --crystal-fruit-specular: 25 95% 78%;
+    /* Fruit facet shades */
+    --crystal-fruit-highlight: 25 95% 65%;
+    --crystal-fruit-shadow: 25 95% 37%;
+    --crystal-fruit-specular: 25 95% 78%;
 
-  /* Special effects (toned down) */
-  --glow-color: 217 75% 58% / 0.22;
-  --shimmer-start: 217 75% 58% / 0;
-  --shimmer-end: 217 75% 58% / 0.07;
+    /* Special effects (toned down) */
+    --glow-color: 217 75% 58% / 0.22;
+    --shimmer-start: 217 75% 58% / 0;
+    --shimmer-end: 217 75% 58% / 0.07;
 
-  /* Crystal facet colors (toned down) */
-  --crystal-facet-light: 217 72% 68%;
-  --crystal-facet-dark: 217 68% 44%;
-  --crystal-edge: 217 72% 68% / 0.18;
-}
+    /* Crystal facet colors (toned down) */
+    --crystal-facet-light: 217 72% 68%;
+    --crystal-facet-dark: 217 68% 44%;
+    --crystal-edge: 217 72% 68% / 0.18;
+  }
 
-/* ============================================
+  /* ============================================
    Base Layer Styles
    ============================================ */
+}
 
 @layer base {
   * {
     @apply border-border;
+  }
+
+  /* Tailwind v4 preflight resets buttons to `cursor: default`; keep the v3
+     pointer affordance the whole UI was designed around. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
   }
 
   html {
@@ -396,184 +1530,16 @@
    ============================================ */
 
 @layer utilities {
-  /* Full-viewport min-height with a static fallback.
-     `dvh` is unsupported on WebKit < 15.4 (older macOS WKWebView); the `vh`
-     base keeps these containers full-height there, and the @supports override
-     upgrades to `dvh` where available. The override must live in @supports
-     rather than a second declaration in the same rule — esbuild's minifier
-     dedupes within-rule declarations and would drop the `vh` fallback.
-     Required for screens whose children are all absolutely positioned (no
-     in-flow content to give the container height) — otherwise they collapse
-     to 0px. */
-  .min-h-viewport {
-    min-height: 100vh;
-  }
-
-  @supports (height: 100dvh) {
-    .min-h-viewport {
-      min-height: 100dvh;
-    }
-  }
-
-  /* Staggered entrance animation as a pure enhancement.
-     Duration/delay are set per-element via --anim-duration / --anim-delay so
-     usage stays declarative. Content's resting state is fully visible, so a
-     stalled or disabled animation never hides it (see reduced-motion reset). */
-  .anim-entrance {
-    animation: fade-in-up var(--anim-duration, 0.4s) ease-out
-      var(--anim-delay, 0ms) backwards;
-  }
-
-  /* Crystalline glow effect */
-  .crystal-glow {
-    box-shadow: 0 0 20px hsl(var(--glow-color)),
-                0 0 40px hsl(var(--glow-color));
-  }
-
-  .crystal-glow-sm {
-    box-shadow: 0 0 10px hsl(var(--glow-color));
-  }
-
-  .validator-address-row {
-    border: 1px solid hsl(var(--primary) / 0.24);
-  }
-
-  [data-theme="celestite"] .validator-address-row,
-  :root:not([data-theme="amethyst"]):not(.dark) .validator-address-row {
-    box-shadow:
-      0 0 0.45rem hsl(var(--amethyst-purple) / 0.14),
-      inset 0 0 0.35rem hsl(var(--amethyst-purple) / 0.06);
-  }
-
-  [data-theme="amethyst"] .validator-address-row,
-  .dark .validator-address-row {
-    box-shadow:
-      0 0 0.45rem hsl(var(--celestite-blue) / 0.14),
-      inset 0 0 0.35rem hsl(var(--celestite-blue) / 0.06);
-  }
-
-  /* Sidebar navigation hover outline glow (celestite ↔ amethyst cycle) */
   @property --sidebar-nav-outline-angle {
     syntax: "<angle>";
     inherits: false;
     initial-value: 0deg;
   }
 
-  .sidebar-nav-item::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    padding: 1px;
-    clip-path: inherit;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 600ms cubic-bezier(0.34, 1.56, 0.64, 1);
-    --sidebar-nav-outline-angle: 0deg;
-    background: conic-gradient(
-        from var(--sidebar-nav-outline-angle),
-        hsl(var(--celestite-blue) / 0.65),
-        hsl(var(--celestite-blue-soft) / 0.65),
-        hsl(var(--amethyst-purple) / 0.65),
-        hsl(var(--amethyst-purple-soft) / 0.65),
-        hsl(var(--celestite-blue) / 0.65)
-      )
-      border-box;
-    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-  }
-
-  [data-theme="celestite"] .sidebar-nav-item:hover::after,
-  [data-theme="celestite"] .sidebar-nav-item:focus-visible::after,
-  [data-theme="celestite"] .sidebar-nav-item[data-active="true"]::after,
-  :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:hover::after,
-  :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:focus-visible::after,
-  :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item[data-active="true"]::after {
-    opacity: 1;
-    filter:
-      blur(0.6px)
-      drop-shadow(0 0 0.4rem hsl(var(--celestite-blue) / 0.25))
-      drop-shadow(0 0 0.9rem hsl(var(--amethyst-purple) / 0.14));
-    will-change: --sidebar-nav-outline-angle, filter;
-    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
-  }
-
-  [data-theme="amethyst"] .sidebar-nav-item:hover::after,
-  [data-theme="amethyst"] .sidebar-nav-item:focus-visible::after,
-  [data-theme="amethyst"] .sidebar-nav-item[data-active="true"]::after,
-  .dark .sidebar-nav-item:hover::after,
-  .dark .sidebar-nav-item:focus-visible::after,
-  .dark .sidebar-nav-item[data-active="true"]::after {
-    opacity: 1;
-    filter:
-      blur(0.6px)
-      drop-shadow(0 0 0.4rem hsl(var(--amethyst-purple) / 0.3))
-      drop-shadow(0 0 0.9rem hsl(var(--celestite-blue) / 0.12));
-    will-change: --sidebar-nav-outline-angle, filter;
-    animation: sidebar-nav-outline-cycle 7.5s linear infinite;
-  }
-
   @keyframes sidebar-nav-outline-cycle {
     to {
       --sidebar-nav-outline-angle: 360deg;
     }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    [data-theme="celestite"] .sidebar-nav-item:hover::after,
-    [data-theme="celestite"] .sidebar-nav-item:focus-visible::after,
-    [data-theme="celestite"] .sidebar-nav-item[data-active="true"]::after,
-    :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:hover::after,
-    :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item:focus-visible::after,
-    :root:not([data-theme="amethyst"]):not(.dark) .sidebar-nav-item[data-active="true"]::after,
-    [data-theme="amethyst"] .sidebar-nav-item:hover::after,
-    [data-theme="amethyst"] .sidebar-nav-item:focus-visible::after,
-    [data-theme="amethyst"] .sidebar-nav-item[data-active="true"]::after,
-    .dark .sidebar-nav-item:hover::after,
-    .dark .sidebar-nav-item:focus-visible::after,
-    .dark .sidebar-nav-item[data-active="true"]::after {
-      animation: none;
-    }
-  }
-
-  /* Faceted card effect - subtle angular shadow */
-  .faceted {
-    background-color: hsl(var(--card));
-    background-image:
-      linear-gradient(
-        135deg,
-        hsl(var(--card)) 0%,
-        hsl(var(--card-elevated)) 18%,
-        hsl(var(--card-elevated) / 0.98) 48%,
-        hsl(var(--card)) 100%
-      ),
-      radial-gradient(
-        140% 120% at 0% 0%,
-        hsl(var(--primary) / 0.045) 0%,
-        transparent 44%
-      ),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 160 160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='1.05' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)' opacity='0.18'/%3E%3C/svg%3E");
-    background-size: auto, auto, 160px 160px;
-    background-blend-mode: normal, screen, soft-light;
-  }
-
-  /* Inner glow for active states */
-  .inner-glow {
-    box-shadow: inset 0 1px 0 0 hsl(var(--primary) / 0.1),
-                inset 0 0 20px hsl(var(--primary) / 0.05);
-  }
-
-  /* Gradient text */
-  .gradient-text {
-    background: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--accent)));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  /* Status pulse animation */
-  .pulse-live {
-    animation: pulse-live 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
   @keyframes pulse-live {
@@ -585,18 +1551,6 @@
     }
   }
 
-  /* Shimmer effect for loading states */
-  .shimmer {
-    background: linear-gradient(
-      90deg,
-      hsl(var(--shimmer-start)) 0%,
-      hsl(var(--shimmer-end)) 50%,
-      hsl(var(--shimmer-start)) 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.5s infinite;
-  }
-
   @keyframes shimmer {
     0% {
       background-position: 200% 0;
@@ -606,11 +1560,6 @@
     }
   }
 
-  /* Data update flash */
-  .data-flash {
-    animation: data-flash 0.5s ease-out;
-  }
-
   @keyframes data-flash {
     0% {
       background-color: hsl(var(--primary) / 0.2);
@@ -618,18 +1567,6 @@
     100% {
       background-color: transparent;
     }
-  }
-
-  /* Block enter animation - reserve layout smoothly, animate content separately */
-  .block-enter-shell {
-    overflow: hidden;
-    animation: block-enter-shell var(--block-anim-duration, 400ms) cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  }
-
-  .block-enter-content {
-    will-change: transform, opacity;
-    transform: translateZ(0);
-    animation: block-enter-content calc(var(--block-anim-duration, 400ms) * 0.9) cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   @keyframes block-enter-shell {
@@ -652,32 +1589,6 @@
     }
   }
 
-  @media (prefers-reduced-motion: reduce) {
-    .block-enter-shell {
-      animation: none;
-      max-height: none;
-    }
-
-    .block-enter-content {
-      animation: none;
-      opacity: 1;
-      transform: none;
-    }
-
-    .anim-entrance,
-    .fade-in-up,
-    .stagger-children > * {
-      animation: none;
-      opacity: 1;
-      transform: none;
-    }
-  }
-
-  /* Slide in animation */
-  .slide-in-right {
-    animation: slide-in-right 0.3s ease-out;
-  }
-
   @keyframes slide-in-right {
     from {
       opacity: 0;
@@ -687,11 +1598,6 @@
       opacity: 1;
       transform: translateX(0);
     }
-  }
-
-  /* Fade in up animation */
-  .fade-in-up {
-    animation: fade-in-up 0.4s ease-out;
   }
 
   @keyframes fade-in-up {
@@ -716,34 +1622,6 @@
     }
   }
 
-  /* Stagger children animations */
-  .stagger-children > * {
-    animation: fade-in-up 0.4s ease-out backwards;
-  }
-
-  .stagger-children > *:nth-child(1) { animation-delay: 0ms; }
-  .stagger-children > *:nth-child(2) { animation-delay: 50ms; }
-  .stagger-children > *:nth-child(3) { animation-delay: 100ms; }
-  .stagger-children > *:nth-child(4) { animation-delay: 150ms; }
-  .stagger-children > *:nth-child(5) { animation-delay: 200ms; }
-  .stagger-children > *:nth-child(6) { animation-delay: 250ms; }
-
-  /* Chain visualizer — animated connector traces */
-  .dash-flow {
-    stroke-dasharray: 4 6;
-    animation: dash-flow 1.2s linear infinite;
-  }
-
-  @keyframes dash-flow {
-    to {
-      stroke-dashoffset: -10;
-    }
-  }
-
-  .trace-draw {
-    animation: trace-draw 0.45s ease-out forwards;
-  }
-
   @keyframes trace-draw {
     from {
       stroke-dashoffset: 1;
@@ -751,278 +1629,6 @@
     to {
       stroke-dashoffset: 0;
     }
-  }
-
-  /* ============================================
-     Geometric Shape Utilities
-     ============================================ */
-
-  /* Chamfered corners - 8px cuts */
-  .chamfered {
-    clip-path: polygon(
-      8px 0, calc(100% - 8px) 0,
-      100% 8px, 100% calc(100% - 8px),
-      calc(100% - 8px) 100%, 8px 100%,
-      0 calc(100% - 8px), 0 8px
-    );
-  }
-
-  /* Chamfered corners - 4px cuts (smaller elements) */
-  .chamfered-sm {
-    clip-path: polygon(
-      4px 0, calc(100% - 4px) 0,
-      100% 4px, 100% calc(100% - 4px),
-      calc(100% - 4px) 100%, 4px 100%,
-      0 calc(100% - 4px), 0 4px
-    );
-  }
-
-  /* Chamfered corners - 12px cuts (larger elements) */
-  .chamfered-lg {
-    clip-path: polygon(
-      12px 0, calc(100% - 12px) 0,
-      100% 12px, 100% calc(100% - 12px),
-      calc(100% - 12px) 100%, 12px 100%,
-      0 calc(100% - 12px), 0 12px
-    );
-  }
-
-  /* Chamfered border wrappers — wrap a .chamfered child to produce a
-     polygon-following border via the padding-gap technique.
-     Set --_cb-color on the element for a custom border color. */
-  .chamfered-border-wrap {
-    clip-path: polygon(
-      8px 0, calc(100% - 8px) 0,
-      100% 8px, 100% calc(100% - 8px),
-      calc(100% - 8px) 100%, 8px 100%,
-      0 calc(100% - 8px), 0 8px
-    );
-    padding: 1px;
-    background: var(--_cb-color, hsl(var(--border)));
-  }
-
-  .chamfered-sm-border-wrap {
-    clip-path: polygon(
-      4px 0, calc(100% - 4px) 0,
-      100% 4px, 100% calc(100% - 4px),
-      calc(100% - 4px) 100%, 4px 100%,
-      0 calc(100% - 4px), 0 4px
-    );
-    padding: 1px;
-    background: var(--_cb-color, hsl(var(--border)));
-  }
-
-  .chamfered-lg-border-wrap {
-    clip-path: polygon(
-      12px 0, calc(100% - 12px) 0,
-      100% 12px, 100% calc(100% - 12px),
-      calc(100% - 12px) 100%, 12px 100%,
-      0 calc(100% - 12px), 0 12px
-    );
-    padding: 1px;
-    background: var(--_cb-color, hsl(var(--border)));
-  }
-
-  /* Diamond shape */
-  .diamond {
-    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-  }
-
-  /* Hexagon shape */
-  .hexagon {
-    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
-  }
-
-  /* Hexagon - small (for switch thumbs, micro indicators) */
-  .hexagon-sm {
-    clip-path: polygon(25% 5%, 75% 5%, 95% 50%, 75% 95%, 25% 95%, 5% 50%);
-  }
-
-  /* Diamond - small (for status indicators) */
-  .diamond-sm {
-    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-  }
-
-  /* Octagon shape */
-  .octagon {
-    clip-path: polygon(
-      30% 0%, 70% 0%, 100% 30%, 100% 70%,
-      70% 100%, 30% 100%, 0% 70%, 0% 30%
-    );
-  }
-
-  /* 3D faceted gem effect for hexagonal badges.
-     Set --gem-highlight, --gem-base, --gem-shadow as HSL triplets
-     on the element via inline style.
-     Two crossing linear-gradients with hard stops at 50% create
-     4 triangular facets. Edges run corner-to-corner through the
-     hex vertices at (25%,0%)↔(75%,100%) and (75%,0%)↔(25%,100%).
-     Angles calibrated for ~3:1 aspect ratio (block-type badges). */
-  .hex-gem {
-    background:
-      /* Diagonal 1: top-left ↔ bottom-right vertex */
-      linear-gradient(
-        34deg,
-        hsl(var(--gem-shadow) / 0.28) 50%,
-        hsl(var(--gem-highlight) / 0.28) 50%
-      ),
-      /* Diagonal 2: top-right ↔ bottom-left vertex */
-      linear-gradient(
-        146deg,
-        hsl(var(--gem-highlight) / 0.28) 50%,
-        hsl(var(--gem-shadow) / 0.28) 50%
-      ),
-      /* Horizontal: left ↔ right vertex */
-      linear-gradient(
-        180deg,
-        hsl(var(--gem-highlight) / 0.15) 50%,
-        hsl(var(--gem-shadow) / 0.15) 50%
-      ),
-      /* Lateral tilt: very subtle, just breaks symmetry */
-      linear-gradient(
-        90deg,
-        hsl(var(--gem-highlight) / 0.06) 50%,
-        hsl(var(--gem-shadow) / 0.06) 50%
-      );
-    background-color: hsl(var(--gem-base) / 0.10);
-  }
-
-  /* Crystalline card styling */
-  .crystalline {
-    position: relative;
-    background-color: hsl(var(--card));
-    background-image:
-      linear-gradient(
-        145deg,
-        hsl(var(--card)) 0%,
-        hsl(var(--card-elevated) / 0.985) 16%,
-        hsl(var(--card-elevated)) 34%,
-        hsl(var(--card-elevated) / 0.94) 52%,
-        hsl(var(--card) / 0.985) 78%,
-        hsl(var(--card)) 100%
-      ),
-      radial-gradient(
-        140% 115% at 0% 0%,
-        hsl(var(--primary) / 0.055) 0%,
-        transparent 40%
-      ),
-      radial-gradient(
-        150% 120% at 100% 100%,
-        hsl(var(--accent) / 0.05) 0%,
-        transparent 42%
-      ),
-      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='192' height='192' filter='url(%23n)' opacity='0.16'/%3E%3C/svg%3E");
-    background-size: auto, auto, auto, 192px 192px;
-    background-blend-mode: normal, screen, screen, soft-light;
-  }
-
-  .crystalline::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    border: 1px solid transparent;
-    background: linear-gradient(
-      135deg,
-      hsl(var(--crystal-facet-light) / 0.3) 0%,
-      hsl(var(--border)) 25%,
-      hsl(var(--crystal-edge)) 50%,
-      hsl(var(--border)) 75%,
-      hsl(var(--crystal-facet-dark) / 0.2) 100%
-    ) border-box;
-    -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask-composite: exclude;
-    pointer-events: none;
-  }
-
-  /* Crystal refraction line effect - optional decorative element */
-  .crystal-refraction::after {
-    content: "";
-    position: absolute;
-    top: 15%;
-    left: 8%;
-    right: 55%;
-    height: 1px;
-    background: linear-gradient(
-      90deg,
-      transparent 0%,
-      hsl(var(--crystal-facet-light) / 0.15) 30%,
-      hsl(var(--crystal-facet-light) / 0.08) 70%,
-      transparent 100%
-    );
-    transform: rotate(-12deg);
-    pointer-events: none;
-  }
-
-  /* Faceted border gradient — override --_fb-fill to change the interior color */
-  .faceted-border {
-    --_fb-fill: var(--card);
-    border: 1px solid transparent;
-    background:
-      linear-gradient(hsl(var(--_fb-fill)), hsl(var(--_fb-fill))) padding-box,
-      linear-gradient(
-        135deg,
-        hsl(var(--primary) / 0.4) 0%,
-        hsl(var(--border)) 30%,
-        hsl(var(--accent) / 0.3) 60%,
-        hsl(var(--border)) 100%
-      ) border-box;
-  }
-
-  /* Geometric icon container */
-  .icon-hex {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 2.5rem;
-    height: 2.5rem;
-    background: hsl(var(--muted));
-    clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);
-  }
-
-  .icon-hex-sm {
-    width: 2rem;
-    height: 2rem;
-  }
-
-  /* Angular divider */
-  .divider-angular {
-    position: relative;
-    height: 1px;
-    background: hsl(var(--border));
-  }
-
-  .divider-angular::before,
-  .divider-angular::after {
-    content: "";
-    position: absolute;
-    top: 50%;
-    width: 6px;
-    height: 6px;
-    background: hsl(var(--border));
-    transform: translateY(-50%) rotate(45deg);
-  }
-
-  .divider-angular::before {
-    left: 0;
-  }
-
-  .divider-angular::after {
-    right: 0;
-  }
-
-  /* Status diamond indicator */
-  .status-diamond {
-    width: 8px;
-    height: 8px;
-    background: currentColor;
-    clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
-  }
-
-  .status-diamond-sm {
-    width: 6px;
-    height: 6px;
   }
 }
 

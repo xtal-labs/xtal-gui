@@ -123,7 +123,7 @@ export function BootstrapScreen({
   const { configs: shardConfigs, visible: shardVisible } = useShardField();
 
   return (
-    <div className="relative min-h-viewport min-w-[var(--app-min-width)] bg-background hex-grid-bg overflow-auto">
+    <div className="relative min-h-viewport min-w-(--app-min-width) bg-background hex-grid-bg overflow-auto">
       {/* Layer 1: Dual radial gradients — primary/accent (healthy anticipation) */}
       <div
         className="absolute inset-0 animate-pulse [animation-duration:4s]"
@@ -180,7 +180,7 @@ export function BootstrapScreen({
           >
           {/* Inner border — accent to primary gradient */}
           <div
-            className="chamfered-lg p-[1px]"
+            className="chamfered-lg p-px"
             style={{
               background: "linear-gradient(135deg, hsl(var(--accent) / 0.4), hsl(var(--primary) / 0.5))",
             }}
@@ -188,7 +188,7 @@ export function BootstrapScreen({
           {/* Card body */}
           <div className="relative chamfered-lg crystalline p-6 flex flex-col gap-5 shadow-2xl overflow-hidden">
             {/* Inner glow */}
-            <div className="absolute inset-0 bg-primary/[0.03] blur-xl -z-10 pointer-events-none" />
+            <div className="absolute inset-0 bg-primary/3 blur-xl -z-10 pointer-events-none" />
 
             {/* ═══ CRYSTAL ICON CENTERPIECE ═══ */}
             <div
@@ -197,9 +197,9 @@ export function BootstrapScreen({
             >
               <div className="relative">
                 {/* Outer glow ring */}
-                <div className="absolute inset-[-20px] bg-primary/[0.12] blur-2xl rounded-full animate-pulse [animation-duration:4s] [animation-delay:1s]" />
+                <div className="absolute inset-[-20px] bg-primary/12 blur-2xl rounded-full animate-pulse [animation-duration:4s] [animation-delay:1s]" />
                 {/* Inner glow */}
-                <div className="absolute inset-0 bg-accent/[0.2] blur-3xl -z-10 animate-pulse [animation-duration:3s]" />
+                <div className="absolute inset-0 bg-accent/20 blur-3xl -z-10 animate-pulse [animation-duration:3s]" />
 
                 {/* Outer rotating hexagon */}
                 <svg

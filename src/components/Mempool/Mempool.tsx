@@ -144,7 +144,7 @@ const TransactionRow = ({
           shape="chamfered"
           diamond
           className={cn(
-            "bg-gradient-to-br",
+            "bg-linear-to-br",
             fruitColors.bg,
             fruitColors.border,
             fruitColors.icon
@@ -259,7 +259,7 @@ const EmptyState = ({ filter }: { filter: FilterType }) => (
     <Card variant="faceted" className="max-w-md w-full">
       <CardContent className="flex flex-col items-center justify-center py-16 text-center">
         {/* Diamond decoration */}
-        <div className="diamond w-16 h-16 bg-gradient-to-br from-primary/20 to-accent/20 mb-6 flex items-center justify-center">
+        <div className="diamond w-16 h-16 bg-linear-to-br from-primary/20 to-accent/20 mb-6 flex items-center justify-center">
           <div className="diamond w-8 h-8 bg-primary/30" />
         </div>
 

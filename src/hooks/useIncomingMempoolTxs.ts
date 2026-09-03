@@ -29,7 +29,7 @@ export function useIncomingMempoolTxs(): IncomingMempoolTx[] | null {
   const walletTrigger = useWalletStore((s) => s.refreshTrigger);
   const blockTrigger = useBlockchainStore((s) => s.refreshTrigger);
   const isLoaded = useWalletStore((s) => s.isLoaded);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const fetchTxs = useCallback(async () => {
     try {

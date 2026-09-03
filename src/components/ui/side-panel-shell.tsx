@@ -31,7 +31,7 @@ const SidePanelShell = React.forwardRef<HTMLDivElement, SidePanelShellProps>(
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay
           className={cn(
-            "fixed inset-0 z-40 bg-black/40 backdrop-blur-sm",
+            "fixed inset-0 z-40 bg-black/40 backdrop-blur-xs",
             "data-[state=open]:animate-in data-[state=open]:fade-in-0",
             "data-[state=closed]:animate-out data-[state=closed]:fade-out-0",
             "duration-300",
