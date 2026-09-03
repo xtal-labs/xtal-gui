@@ -1,31 +1,38 @@
 /**
- * A single fruit node in the constellation — a colour-coded crystal (no glyph;
- * colour = fruit type, from fruitColors). Body-availability is encoded by
- * **size + glow + count** so payload fruits are obvious at a glance:
- *   payload → big, filled, glowing, tx-count badge
- *   missing → medium, dashed outline, ⚠
- *   empty   → small, dim, hollow
- *   orphan  → tiny, faint
+ * A single fruit gem on the backbone — a hexagonal crystal whose colour is its
+ * fruit type. Body availability is encoded by **size + facets + count** so payload
+ * fruits read at a glance:
+ *   payload → largest, faceted, glowing, tx-count badge
+ *   missing → medium, warning ring (the body failed to archive)
+ *   empty   → small, flat, dim
+ *   orphan  → smallest, ghosted (normally filtered out before layout)
  *
- * Layout note: the glow/ring/count-badge live on the OUTER (unclipped) button
- * while the chamfered "gem" is an inner span — `clip-path` clips an element's own
- * box-shadow, so a glow on the chamfered element itself would be invisible.
+ * Layout note: `clip-path` clips an element's own box-shadow, so the glow and the
+ * count badge live on the OUTER (unclipped) button while the hexagon is an inner
+ * span. The same constraint rules out a border on the hexagon itself, so the
+ * `missing` ring is a padded hexagon wrapper — the technique `.chamfered-border-wrap`
+ * uses in globals.css.
  */
-import { AlertTriangle } from "lucide-react";
-
 import { cn } from "@/lib/utils";
-import { getFruitColor } from "@/lib/fruitColors";
+import { getFruitColor, fruitGemVars } from "@/lib/fruitColors";
 import type { FruitBodyState } from "@/types";
 import type { PositionedFruit } from "./chainLayout";
 
+/** Drawn gem width per state; the layout cell it sits in is a fixed GEM_CELL. */
 const SIZE_BY_STATE: Record<FruitBodyState, number> = {
-  payload: 40,
-  missing: 30,
-  empty: 22,
-  orphan: 16,
+  payload: 20,
+  missing: 17,
+  empty: 13,
+  orphan: 10,
 };
 
-function stateLabel(state: FruitBodyState, txCount: number | null): string {
+/** Hexagons read best a touch wider than tall, matching the clip-path's geometry. */
+const ASPECT = 0.86;
+
+export function fruitStateLabel(
+  state: FruitBodyState,
+  txCount: number | null,
+): string {
   switch (state) {
     case "payload":
       return `payload · ${txCount ?? 0} tx`;
@@ -43,6 +50,10 @@ interface FruitNodeProps {
   fruit: PositionedFruit;
   isHovered: boolean;
   isSelected: boolean;
+  /** A type filter is active and this gem is not of that type. */
+  isDimmed: boolean;
+  /** Low zoom: drop the badge and the glow so the overview stays legible. */
+  ambient: boolean;
   onHover: (fruit: PositionedFruit | null) => void;
   onSelect: (fruit: PositionedFruit) => void;
 }
@@ -51,17 +62,23 @@ export function FruitNode({
   fruit,
   isHovered,
   isSelected,
+  isDimmed,
+  ambient,
   onHover,
   onSelect,
 }: FruitNodeProps) {
   const color = getFruitColor(fruit.fruitType);
   const state = fruit.bodyState;
   const hasPayload = state === "payload";
-  const isEmpty = state === "empty";
   const isMissing = state === "missing";
-  const isOrphan = state === "orphan";
   const lifted = isHovered || isSelected;
-  const size = SIZE_BY_STATE[state];
+  const width = SIZE_BY_STATE[state];
+  const height = Math.round(width * ASPECT);
+
+  const gemStyle = {
+    ...fruitGemVars(fruit.fruitType),
+    backgroundColor: `hsl(${color.hsl} / ${hasPayload ? 0.95 : 0.62})`,
+  } as React.CSSProperties;
 
   return (
     <button
@@ -71,49 +88,53 @@ export function FruitNode({
       onFocus={() => onHover(fruit)}
       onBlur={() => onHover(null)}
       onClick={() => onSelect(fruit)}
-      title={`${color.emoji} ${fruit.fruitType} — ${stateLabel(state, fruit.txCount)}`}
+      aria-label={`${fruit.fruitType} fruit — ${fruitStateLabel(state, fruit.txCount)}`}
       className={cn(
-        "absolute flex items-center justify-center rounded-[5px] cursor-pointer",
-        "transition-[transform,box-shadow] duration-200 will-change-transform",
-        "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
-        // payload glows at rest so it reads instantly; everything lifts on hover/select
-        hasPayload && cn(color.glow, "crystal-glow-sm"),
-        lifted && cn("z-20 scale-110 crystal-glow", color.glow),
-        isSelected && "ring-2 ring-primary",
+        "absolute flex items-center justify-center cursor-pointer",
+        "transition-[transform,opacity,filter] duration-200 will-change-transform",
+        "focus:outline-hidden focus-visible:ring-2 focus-visible:ring-primary",
+        hasPayload && !ambient && "drop-shadow-[0_0_4px_currentColor]",
+        lifted && "z-20 scale-125",
+        isDimmed && "opacity-20",
+        isSelected && "drop-shadow-[0_0_6px_currentColor]",
       )}
       style={{
         left: fruit.x,
         top: fruit.y,
-        width: size,
-        height: size,
-        marginLeft: -size / 2,
-        marginTop: -size / 2,
+        width,
+        height,
+        marginLeft: -width / 2,
+        marginTop: -height / 2,
+        color: `hsl(${color.hsl})`,
       }}
     >
-      <span
-        className={cn(
-          "h-full w-full chamfered-sm border bg-gradient-to-br",
-          color.border,
-          hasPayload
-            ? cn(color.bg, "saturate-150")
-            : "from-transparent to-transparent",
-          isEmpty && "opacity-70",
-          isMissing && "border-dashed opacity-80",
-          isOrphan && "bg-foreground-muted/15 opacity-40 grayscale border-border/40",
-        )}
-      />
+      {isMissing ? (
+        // Padded outer hexagon = a ring the clip-path cannot eat.
+        <span
+          className="hexagon h-full w-full p-[1.5px]"
+          style={{ backgroundColor: "hsl(var(--warning))" }}
+        >
+          <span
+            className={cn("hexagon block h-full w-full", !ambient && "hex-gem")}
+            style={gemStyle}
+          />
+        </span>
+      ) : (
+        <span
+          className={cn(
+            "hexagon h-full w-full",
+            hasPayload && !ambient && "hex-gem",
+            state === "orphan" && "opacity-50 grayscale",
+          )}
+          style={gemStyle}
+        />
+      )}
 
-      {hasPayload && fruit.txCount ? (
-        <span className="absolute -top-1.5 -right-1.5 flex h-[15px] min-w-[15px] items-center justify-center rounded-full bg-primary px-1 text-[9px] font-mono font-bold text-primary-foreground shadow">
+      {hasPayload && !ambient && fruit.txCount ? (
+        <span className="absolute -top-1 -right-1.5 flex h-[13px] min-w-[13px] items-center justify-center rounded-full bg-primary px-[3px] text-[8px] font-mono font-bold leading-none text-primary-foreground">
           {fruit.txCount > 99 ? "99+" : fruit.txCount}
         </span>
       ) : null}
-
-      {isMissing && (
-        <span className="absolute -top-1.5 -right-1.5 text-warning">
-          <AlertTriangle className="h-3 w-3" />
-        </span>
-      )}
     </button>
   );
 }

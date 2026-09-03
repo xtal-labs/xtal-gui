@@ -2,14 +2,16 @@
  * Pure layout engine for the Chain Visualizer.
  *
  * Maps the backend `EpochStrip[]` (stems → leaf intervals) into absolute px
- * coordinates for a vertical stem spine with fruit clusters fanning to the right.
- * This is the single source of truth for positions so the SVG connector layer and
- * the HTML node layer agree on geometry.
+ * coordinates for a **horizontal** backbone: time runs left → right, oldest →
+ * newest, with each stem's fruit cluster hanging below it. This is the single
+ * source of truth for positions so the SVG connector layer and the HTML node
+ * layer agree on geometry — and so a second viewport (the anchor picture-in-
+ * picture) can render the same scene under a different transform for free.
  *
  * Dedup: consecutive stems re-reference the same fruits as they carry them forward,
  * so a fruit hash recurs across stems. We attribute each fruit to ONE carrier — the
  * stem whose receipts recorded it (`receiptTxCount != null`), tie-broken by earliest
- * height — and render it exactly once beside that stem.
+ * height — and render it exactly once beneath that stem.
  */
 import type {
   EpochStrip,
@@ -20,20 +22,51 @@ import type {
 } from "@/types";
 
 // --- Layout constants (px). All node coordinates are CENTER-anchored. ---
-/** X of the stem spine centre. Shared with the connector layer. */
-export const SPINE_X = 56;
-const TOP_PAD = 40;
-const BOTTOM_PAD = 56;
-const ROW_H = 78;
-const LEAF_H = 64;
-const EPOCH_GAP = 30;
-const FRUIT_GAP_X = 120;
-const FRUIT_DX = 88;
-const MAX_FRUITS_PER_ROW = 6;
-const FRUIT_SUBROW_DY = 46;
-const JITTER_Y = 7;
-const MIN_WIDTH = 640;
+/** Y of the backbone rule. Shared with the connector layer. */
+export const BACKBONE_Y = 52;
+/** Horizontal advance per stem / leaf column. */
+export const STEM_COL_W = 72;
+export const LEAF_COL_W = 48;
+/** Extra advance inserted where one epoch hands off to the next. */
+const EPOCH_GAP = 40;
+const LEFT_PAD = 40;
 const RIGHT_PAD = 64;
+const BOTTOM_PAD = 32;
+/**
+ * Fruit gems lay out on a fixed grid so columns stay aligned; the gem *drawn*
+ * inside a cell varies in size by body state, which is what carries the meaning.
+ */
+export const GEM_CELL = 24;
+/**
+ * Two per row, not three: a 3-wide cluster spans almost the whole stem column, so
+ * neighbouring clusters merge into one band and you lose which stem carries what.
+ * Two leaves a ~24px gutter that reads as a column boundary.
+ */
+const GEMS_PER_ROW = 2;
+/** Gap between the stem's own label and the top of its cluster. */
+const CLUSTER_TOP = BACKBONE_Y + 30;
+/** Gems rendered per stem before collapsing the tail into a `+N` chip. */
+export const FRUITS_PER_STEM_CAP = 12;
+
+/**
+ * Centre of the `index`-th cell in a cluster of `totalCells`, for a stem at `stemX`.
+ * Rows that are not full are centred rather than left-packed — a stem carrying one
+ * fruit should hang it directly below itself, not off to one side.
+ */
+function cellPosition(
+  stemX: number,
+  index: number,
+  totalCells: number,
+): { x: number; y: number } {
+  const row = Math.floor(index / GEMS_PER_ROW);
+  const col = index % GEMS_PER_ROW;
+  const inRow = Math.min(GEMS_PER_ROW, totalCells - row * GEMS_PER_ROW);
+  const rowWidth = inRow * GEM_CELL;
+  return {
+    x: stemX - rowWidth / 2 + col * GEM_CELL + GEM_CELL / 2,
+    y: CLUSTER_TOP + row * GEM_CELL + GEM_CELL / 2,
+  };
+}
 
 /** Normalise a hash for comparison/keys (strip `0x`, lowercase). */
 export function normHash(hash: string): string {
@@ -56,10 +89,16 @@ export type PositionedFruit = {
 
 export type PositionedStem = {
   hash: string;
-  height: number;
   timestamp: number;
+  epoch: number;
+  /** Position along the backbone, oldest = 0. Drives the "N stems back" readout. */
+  index: number;
   /** Number of fruits actually rendered under this stem (after dedup/filter). */
   fruitCount: number;
+  /** Fruits owned but not rendered because the cluster is capped. */
+  hiddenFruitCount: number;
+  /** Y of the last cluster row's centre, or null when the stem carries nothing. */
+  clusterBottom: number | null;
   isTip: boolean;
   x: number;
   y: number;
@@ -70,26 +109,28 @@ export type PositionedLeaf = {
   leafHeight: number;
   timestamp: number;
   txCount: number;
+  epoch: number;
   x: number;
   y: number;
 };
 
-export type NeighborEdge = {
-  id: string;
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
+/** Where one epoch hands off to the next, for the divider rule and its label. */
+export type EpochDivider = {
+  x: number;
+  /** The epoch starting to the right of this divider. */
+  epoch: number;
 };
 
 export type ChainLayout = {
   stems: PositionedStem[];
   leaves: PositionedLeaf[];
   fruits: PositionedFruit[];
-  edges: NeighborEdge[];
-  /** Y of the topmost / bottommost stem centre — drives the static spine beam. */
-  spineTop: number | null;
-  spineBottom: number | null;
+  dividers: EpochDivider[];
+  /** Backbone order by normalised stem hash — lets callers measure anchor distance. */
+  stemOrder: Map<string, number>;
+  /** X of the first / last backbone node — drives the backbone rule's extent. */
+  backboneStart: number | null;
+  backboneEnd: number | null;
   width: number;
   height: number;
 };
@@ -97,6 +138,8 @@ export type ChainLayout = {
 export interface BuildLayoutOptions {
   /** When true, only fruits with a payload (≥1 tx) are rendered. */
   payloadsOnly?: boolean;
+  /** Stems (normalised hashes) whose cluster should render uncapped. */
+  expandedStems?: ReadonlySet<string>;
 }
 
 /**
@@ -116,16 +159,6 @@ function fruitTxCount(f: StripFruit): number | null {
   return f.receiptTxCount ?? null;
 }
 
-/** Stable pseudo-random seed from a hash so jitter is deterministic across renders. */
-function hashSeed(hash: string): number {
-  let h = 0;
-  const start = hash.startsWith("0x") ? 2 : 0;
-  for (let i = start; i < Math.min(hash.length, start + 12); i++) {
-    h = (h * 31 + hash.charCodeAt(i)) >>> 0;
-  }
-  return h;
-}
-
 type Unit =
   | { type: "stem"; stem: StripStem; epoch: number }
   | { type: "leaf"; leaf: StripLeaf; epoch: number };
@@ -136,7 +169,7 @@ export function buildChainLayout(
   strips: EpochStrip[],
   options: BuildLayoutOptions = {},
 ): ChainLayout {
-  const { payloadsOnly = false } = options;
+  const { payloadsOnly = false, expandedStems } = options;
 
   // Pass 1 — chain order (oldest → newest), dedup stems, build the fruit-owner map.
   const ordered = [...strips].sort((a, b) => a.epoch - b.epoch);
@@ -178,44 +211,52 @@ export function buildChainLayout(
     }
   }
 
-  // Newest at top — render the whole epoch (no cap).
-  const topOrder = chain.slice().reverse();
-
   const stems: PositionedStem[] = [];
   const leaves: PositionedLeaf[] = [];
   const fruits: PositionedFruit[] = [];
-  const edges: NeighborEdge[] = [];
+  const dividers: EpochDivider[] = [];
+  const stemOrder = new Map<string, number>();
 
-  let y = TOP_PAD;
-  let maxX = MIN_WIDTH - RIGHT_PAD;
+  let x = LEFT_PAD;
+  let maxClusterRows = 0;
   let prevEpoch: number | null = null;
-  let spineTop: number | null = null;
-  let spineBottom: number | null = null;
+  let backboneStart: number | null = null;
+  let backboneEnd: number | null = null;
+  let stemIndex = 0;
 
-  // Pass 2 — position the rendered units.
-  for (const unit of topOrder) {
-    if (prevEpoch !== null && unit.epoch !== prevEpoch) y += EPOCH_GAP;
+  // Pass 2 — position the units along the backbone.
+  for (const unit of chain) {
+    if (prevEpoch !== null && unit.epoch !== prevEpoch) {
+      dividers.push({ x: x + EPOCH_GAP / 2, epoch: unit.epoch });
+      x += EPOCH_GAP;
+    }
     prevEpoch = unit.epoch;
 
     if (unit.type === "leaf") {
-      const cy = y + LEAF_H / 2;
+      const cx = x + LEAF_COL_W / 2;
       leaves.push({
         hash: unit.leaf.hash,
         leafHeight: unit.leaf.leafHeight,
         timestamp: unit.leaf.timestamp,
         txCount: unit.leaf.txCount,
-        x: SPINE_X,
-        y: cy,
+        epoch: unit.epoch,
+        x: cx,
+        y: BACKBONE_Y,
       });
-      y += LEAF_H;
+      if (backboneStart === null) backboneStart = cx;
+      backboneEnd = cx;
+      x += LEAF_COL_W;
       continue;
     }
 
     const stem = unit.stem;
     const sh = normHash(stem.hash);
+    const cx = x + STEM_COL_W / 2;
 
     // Only the fruits this stem actually owns (deduped).
-    let owned = stem.fruits.filter((f) => owner.get(normHash(f.hash))?.stem === sh);
+    let owned = stem.fruits.filter(
+      (f) => owner.get(normHash(f.hash))?.stem === sh,
+    );
     // Drop "orphan" fruits: produced/anchored but never actually included in a
     // carrier stem (no retrievable body AND no carrier receipt). Keep payload/empty/
     // missing (missing = a carrier receipt recorded it; body just failed to archive).
@@ -224,32 +265,41 @@ export function buildChainLayout(
       owned = owned.filter((f) => classifyFruit(f) === "payload");
     }
 
-    const rows = Math.max(1, Math.ceil(owned.length / MAX_FRUITS_PER_ROW));
-    const rowHeight = ROW_H + (rows - 1) * FRUIT_SUBROW_DY;
-    const cy = y + rowHeight / 2;
+    // Cap the cluster unless this stem has been expanded. When capped we render
+    // one fewer gem so the `+N` chip occupies the final cell.
+    const expanded = expandedStems?.has(sh) ?? false;
+    const capped = !expanded && owned.length > FRUITS_PER_STEM_CAP;
+    const shown = capped ? owned.slice(0, FRUITS_PER_STEM_CAP - 1) : owned;
+    const hidden = owned.length - shown.length;
 
-    if (spineTop === null) spineTop = cy;
-    spineBottom = cy;
+    const cells = shown.length + (hidden > 0 ? 1 : 0);
+    const rows = Math.ceil(cells / GEMS_PER_ROW);
+    maxClusterRows = Math.max(maxClusterRows, rows);
+    const clusterBottom =
+      rows > 0 ? CLUSTER_TOP + (rows - 1) * GEM_CELL + GEM_CELL / 2 : null;
 
+    stemOrder.set(sh, stemIndex);
     stems.push({
       hash: stem.hash,
-      height: stem.height,
       timestamp: stem.timestamp,
-      fruitCount: owned.length,
+      epoch: unit.epoch,
+      index: stemIndex,
+      fruitCount: shown.length,
+      hiddenFruitCount: hidden,
+      clusterBottom,
       isTip: stem.hash === tipHash,
-      x: SPINE_X,
-      y: cy,
+      x: cx,
+      y: BACKBONE_Y,
     });
+    stemIndex += 1;
 
-    // Fruits fan to the right; track per-row predecessor for neighbor edges.
-    const rowLast: Record<number, PositionedFruit> = {};
-    owned.forEach((f, i) => {
-      const row = Math.floor(i / MAX_FRUITS_PER_ROW);
-      const col = i % MAX_FRUITS_PER_ROW;
-      const fx = SPINE_X + FRUIT_GAP_X + col * FRUIT_DX;
-      const jitter = ((hashSeed(f.hash) % 1000) / 1000 - 0.5) * 2 * JITTER_Y;
-      const fy = cy + (row - (rows - 1) / 2) * FRUIT_SUBROW_DY + jitter;
-      const pf: PositionedFruit = {
+    if (backboneStart === null) backboneStart = cx;
+    backboneEnd = cx;
+
+    // Gems hang below the stem on a fixed grid, centred on the column.
+    shown.forEach((f, i) => {
+      const { x: fx, y: fy } = cellPosition(cx, i, cells);
+      fruits.push({
         hash: f.hash,
         fruitType: f.fruitType,
         bodyState: classifyFruit(f),
@@ -257,36 +307,41 @@ export function buildChainLayout(
         x: fx,
         y: fy,
         stemHash: stem.hash,
-        stemX: SPINE_X,
-        stemY: cy,
-      };
-      fruits.push(pf);
-      maxX = Math.max(maxX, fx);
-
-      const prev = rowLast[row];
-      if (prev) {
-        edges.push({
-          id: `${sh}-${row}-${col}`,
-          x1: prev.x,
-          y1: prev.y,
-          x2: fx,
-          y2: fy,
-        });
-      }
-      rowLast[row] = pf;
+        stemX: cx,
+        stemY: BACKBONE_Y,
+      });
     });
 
-    y += rowHeight;
+    x += STEM_COL_W;
   }
 
   return {
     stems,
     leaves,
     fruits,
-    edges,
-    spineTop,
-    spineBottom,
-    width: Math.max(MIN_WIDTH, maxX + RIGHT_PAD),
-    height: y + BOTTOM_PAD,
+    dividers,
+    stemOrder,
+    backboneStart,
+    backboneEnd,
+    width: x + RIGHT_PAD,
+    height: CLUSTER_TOP + maxClusterRows * GEM_CELL + BOTTOM_PAD,
+  };
+}
+
+/**
+ * Cell centre for a stem's `+N` overflow chip — the cell immediately after the
+ * last rendered gem. Kept here so the node layer never re-derives grid maths.
+ */
+export function overflowChipPosition(stem: PositionedStem): {
+  x: number;
+  y: number;
+} {
+  const index = stem.fruitCount;
+  const row = Math.floor(index / GEMS_PER_ROW);
+  const col = index % GEMS_PER_ROW;
+  const clusterLeft = stem.x - (GEMS_PER_ROW * GEM_CELL) / 2;
+  return {
+    x: clusterLeft + col * GEM_CELL + GEM_CELL / 2,
+    y: CLUSTER_TOP + row * GEM_CELL + GEM_CELL / 2,
   };
 }
