@@ -5,26 +5,34 @@
 
 use xtal::shards::Shards;
 
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use primitive_types::U256;
 use serde::Serialize;
 use tauri::State;
 
-use xtal::blockchain::constants::{LEAVES_PER_EPOCH, TARGET_SPACING};
-use xtal::config::ValidatorConfig;
-use xtal::difficulty::DEFAULT_STEM_DIFFICULTY_RATIO;
+use xtal::address_format::parse_address_input;
+use xtal::config::{ValidatorConfig, CONTRACT_ADDRESS};
+use xtal::consensus::validation::COINBASE_MATURITY;
+use xtal::difficulty::Difficulty;
 use xtal::fruit::difficulty::calculate_effective_difficulty;
-use xtal::fruit::production::estimate_production_rate;
-use xtal::fruit::spec::get_fruits_by_stake_requirement;
+use xtal::fruit::production::{
+    estimate_production_rate_from_probability, exclusive_publish_probability,
+    rank_by_profitability, recent_stem_cadence, win_probability, StemCadence,
+};
+use xtal::fruit::spec::{get_fruits_by_stake_requirement, get_spec};
 use xtal::fruit::FruitType;
 use xtal::interfaces::validator::ProductionResult;
 use xtal::interfaces::{ChainDataProvider, UtxoData};
+use xtal::script::{parse_stake_or_unstake_script, TimeLock};
 use xtal::transaction::CurrencyType;
 use xtal::validator::ValidatorService;
+use xtal::vm::cage_contract::CAGE_CONTRACT_ADDRESS;
+use xtal::wallet::database::models::WalletType;
 use xtal::wallet::WalletManager;
 
-use xtal::wallet::database::models::WalletType;
-
+use crate::commands::contract::decode_hex_address;
 use crate::commands::wallet::{
     start_wallet_sync, stop_wallet_sync, wallet_from_mnemonic_impl, FeeEstimate,
 };
@@ -316,6 +324,78 @@ pub struct ValidatorBalanceInfo {
     pub pending_unstake: Shards,   // Pending unstake (locked)
     pub immature_balance: Shards,  // Non-stake immature balance + unconfirmed incoming
     pub total_value: Shards,       // Sum of all
+    /// Stake held on contracts other than the canonical staking contract.
+    /// Counted in `total_stake` / `total_value` but never in `withdrawable_stake`,
+    /// which stays the canonical-only Unstake cap.
+    pub sponsored_stake: Vec<SponsoredStakeEntry>,
+}
+
+/// Stake a validator holds on one non-canonical ("sponsored") contract.
+#[derive(Debug, Clone, Serialize)]
+pub struct SponsoredStakeEntry {
+    /// 0x-prefixed lowercase hex contract address
+    pub contract: String,
+    pub mature: Shards,  // Unstakeable from this contract now
+    pub pending: Shards, // Locked or immature on this contract
+    pub total: Shards,   // mature + pending
+}
+
+/// How one UTXO at the validator address contributes to the stake breakdown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValidatorUtxoClass {
+    /// Stake output past coinbase maturity and its CSV lock: unstakeable now.
+    MatureStake { contract: [u8; 20], amount: u64 },
+    /// Stake output still locked or immature.
+    PendingStake { contract: [u8; 20], amount: u64 },
+    /// Unstake output still inside its CSV lock.
+    PendingUnstake { amount: u64 },
+    /// Immature coinbase output (not a stake).
+    ImmatureCoinbase { amount: u64 },
+    /// Spendable outputs, other owners' stakes, matured unstakes.
+    Ignore,
+}
+
+/// Classify a UTXO the way the balance card and the unstake preconditions both
+/// need to see it, so the two can never disagree about what is unstakeable.
+fn classify_validator_utxo(
+    utxo: &UtxoData,
+    validator_pkh: &[u8; 20],
+    current_leaf_height: u64,
+) -> ValidatorUtxoClass {
+    let age = current_leaf_height.saturating_sub(utxo.creation_height);
+    let amount = utxo.output.amount;
+
+    let Some(info) = parse_stake_or_unstake_script(&utxo.output.script_pubkey) else {
+        if utxo.is_coinbase && age < COINBASE_MATURITY {
+            return ValidatorUtxoClass::ImmatureCoinbase { amount };
+        }
+        return ValidatorUtxoClass::Ignore;
+    };
+
+    if info.owner != *validator_pkh {
+        return ValidatorUtxoClass::Ignore;
+    }
+
+    let csv_locked = matches!(info.lock, TimeLock::Relative(lock) if age < lock);
+
+    if info.is_stake {
+        let maturity_locked = (utxo.is_coinbase || utxo.is_withdrawal) && age < COINBASE_MATURITY;
+        if maturity_locked || csv_locked {
+            ValidatorUtxoClass::PendingStake {
+                contract: info.contract,
+                amount,
+            }
+        } else {
+            ValidatorUtxoClass::MatureStake {
+                contract: info.contract,
+                amount,
+            }
+        }
+    } else if csv_locked {
+        ValidatorUtxoClass::PendingUnstake { amount }
+    } else {
+        ValidatorUtxoClass::Ignore
+    }
 }
 
 /// Get validator balance breakdown (available, staked, pending)
@@ -337,14 +417,19 @@ pub async fn get_validator_balance_info(
     // Scan UTXOs to compute wallet-facing stake breakdown.
     let blockchain = state.services.blockchain();
     let spent_outpoints = state.services.mempool().spent_outpoints();
-    let validator_pkh = xtal::address_format::parse_address_input(&address)
-        .map_err(|e| format!("Invalid address: {}", e))?;
+    let validator_pkh =
+        parse_address_input(&address).map_err(|e| format!("Invalid address: {}", e))?;
     let current_leaf_height = blockchain.get_current_leaf_height();
 
+    // Canonical-contract buckets. `withdrawable_stake` is the default Unstake cap,
+    // so it must stay canonical-only; stake on other contracts is reported per
+    // contract instead (an unstake tx cannot mix contracts).
     let mut withdrawable_stake: u64 = 0;
     let mut pending_stake: u64 = 0;
     let mut pending_unstake: u64 = 0;
     let mut immature_non_stake_balance: u64 = 0;
+    // Non-canonical contract → (mature, pending). BTreeMap keeps UI ordering stable.
+    let mut sponsored: BTreeMap<[u8; 20], (u64, u64)> = BTreeMap::new();
 
     if let Ok(utxos) = blockchain.get_utxos(&validator_pkh) {
         for utxo in &utxos {
@@ -352,47 +437,26 @@ pub async fn get_validator_balance_info(
                 continue;
             }
 
-            if let Some(info) =
-                xtal::script::parse_stake_or_unstake_script(&utxo.output.script_pubkey)
-            {
-                let belongs_to_validator = info.owner == validator_pkh;
-                let is_canonical_contract = info.contract == xtal::config::CONTRACT_ADDRESS;
-
-                if info.is_stake && belongs_to_validator && is_canonical_contract {
-                    let coinbase_or_withdrawal_locked = if utxo.is_coinbase || utxo.is_withdrawal {
-                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                        age < xtal::consensus::validation::COINBASE_MATURITY
+            match classify_validator_utxo(utxo, &validator_pkh, current_leaf_height) {
+                ValidatorUtxoClass::MatureStake { contract, amount } => {
+                    if contract == CONTRACT_ADDRESS {
+                        withdrawable_stake += amount;
                     } else {
-                        false
-                    };
-
-                    if coinbase_or_withdrawal_locked {
-                        pending_stake += utxo.output.amount;
-                    } else if let xtal::script::TimeLock::Relative(lock) = info.lock {
-                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                        if age < lock {
-                            pending_stake += utxo.output.amount;
-                        } else {
-                            withdrawable_stake += utxo.output.amount;
-                        }
-                    } else {
-                        withdrawable_stake += utxo.output.amount;
-                    }
-                } else if !info.is_stake && belongs_to_validator && is_canonical_contract {
-                    // Unstake output — check CSV lock
-                    if let xtal::script::TimeLock::Relative(lock) = info.lock {
-                        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                        if age < lock {
-                            pending_unstake += utxo.output.amount;
-                        }
+                        sponsored.entry(contract).or_default().0 += amount;
                     }
                 }
-            } else if utxo.is_coinbase {
-                // Immature coinbase output
-                let age = current_leaf_height.saturating_sub(utxo.creation_height);
-                if age < xtal::consensus::validation::COINBASE_MATURITY {
-                    immature_non_stake_balance += utxo.output.amount;
+                ValidatorUtxoClass::PendingStake { contract, amount } => {
+                    if contract == CONTRACT_ADDRESS {
+                        pending_stake += amount;
+                    } else {
+                        sponsored.entry(contract).or_default().1 += amount;
+                    }
                 }
+                ValidatorUtxoClass::PendingUnstake { amount } => pending_unstake += amount,
+                ValidatorUtxoClass::ImmatureCoinbase { amount } => {
+                    immature_non_stake_balance += amount
+                }
+                ValidatorUtxoClass::Ignore => {}
             }
         }
     }
@@ -401,8 +465,24 @@ pub async fn get_validator_balance_info(
     // own wallet rather than reassembled here from a database handle.
     let pending_incoming = service.get_pending_incoming_balance().unwrap_or(0);
 
+    let sponsored_total: u64 = sponsored
+        .values()
+        .map(|(mature, pending)| mature + pending)
+        .sum();
+    let sponsored_stake = sponsored
+        .into_iter()
+        .map(|(contract, (mature, pending))| SponsoredStakeEntry {
+            contract: format!("0x{}", hex::encode(contract)),
+            mature: mature.into(),
+            pending: pending.into(),
+            total: (mature + pending).into(),
+        })
+        .collect();
+
     let immature_balance = immature_non_stake_balance + pending_incoming;
-    let total_stake = withdrawable_stake + pending_stake;
+    // Consensus counts stake on every contract toward the validator's total, so the
+    // wallet view does too.
+    let total_stake = withdrawable_stake + pending_stake + sponsored_total;
     let total_value = available_balance + total_stake + pending_unstake + immature_balance;
 
     Ok(ValidatorBalanceInfo {
@@ -415,6 +495,7 @@ pub async fn get_validator_balance_info(
         pending_unstake: pending_unstake.into(),
         immature_balance: immature_balance.into(),
         total_value: total_value.into(),
+        sponsored_stake,
     })
 }
 
@@ -541,37 +622,27 @@ fn collect_validator_address_utxos(state: &AppState, validator_pkh: &[u8; 20]) -
         .unwrap_or_default()
 }
 
-fn mature_canonical_stake_amount(
+/// Amount of `utxo` that can be unstaked from `contract` right now, if any.
+fn mature_stake_amount(
     utxo: &UtxoData,
     validator_pkh: &[u8; 20],
+    contract: &[u8; 20],
     current_leaf_height: u64,
 ) -> Option<u64> {
-    let info = xtal::script::parse_stake_or_unstake_script(&utxo.output.script_pubkey)?;
-    if !info.is_stake
-        || info.owner != *validator_pkh
-        || info.contract != xtal::config::CONTRACT_ADDRESS
-    {
-        return None;
+    match classify_validator_utxo(utxo, validator_pkh, current_leaf_height) {
+        ValidatorUtxoClass::MatureStake {
+            contract: found,
+            amount,
+        } if found == *contract => Some(amount),
+        _ => None,
     }
-
-    if utxo.is_coinbase || utxo.is_withdrawal {
-        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-        if age < xtal::consensus::validation::COINBASE_MATURITY {
-            return None;
-        }
-    }
-
-    if let xtal::script::TimeLock::Relative(lock) = info.lock {
-        let age = current_leaf_height.saturating_sub(utxo.creation_height);
-        if age < lock {
-            return None;
-        }
-    }
-
-    Some(utxo.output.amount)
 }
 
-fn collect_mature_stake_utxos(state: &AppState, validator_pkh: &[u8; 20]) -> (Vec<UtxoData>, u64) {
+fn collect_mature_stake_utxos(
+    state: &AppState,
+    validator_pkh: &[u8; 20],
+    contract: &[u8; 20],
+) -> (Vec<UtxoData>, u64) {
     let current_leaf_height = state.services.blockchain().get_current_leaf_height();
     let spent = state.services.mempool().spent_outpoints();
     let mut mature_stake = 0u64;
@@ -582,7 +653,7 @@ fn collect_mature_stake_utxos(state: &AppState, validator_pkh: &[u8; 20]) -> (Ve
             continue;
         }
         if let Some(amount) =
-            mature_canonical_stake_amount(&utxo, validator_pkh, current_leaf_height)
+            mature_stake_amount(&utxo, validator_pkh, contract, current_leaf_height)
         {
             mature_stake = mature_stake.saturating_add(amount);
             mature_utxos.push(utxo);
@@ -592,19 +663,60 @@ fn collect_mature_stake_utxos(state: &AppState, validator_pkh: &[u8; 20]) -> (Ve
     (mature_utxos, mature_stake)
 }
 
+/// Decode the contract chosen in the UI into the trait-level `Option<[u8; 20]>`.
+/// The canonical contract maps to `None` so explicitly picking the default
+/// behaves exactly like not picking one.
+fn decode_contract_choice(contract_address: Option<&str>) -> Result<Option<[u8; 20]>, String> {
+    let Some(raw) = contract_address.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let addr = decode_hex_address(raw)?;
+    Ok((addr != CONTRACT_ADDRESS).then_some(addr))
+}
+
+/// Refuse CAGE as a stake target: consensus treats it as always sponsorable, so
+/// stake pointed at it buys nothing the validator does not already have.
+fn reject_cage_stake_target(contract: Option<[u8; 20]>) -> Result<(), String> {
+    if contract == Some(CAGE_CONTRACT_ADDRESS) {
+        return Err(
+            "The CAGE contract is always sponsorable; staking to it has no effect".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn insufficient_withdrawable_stake(
+    requested: Shards,
+    mature_stake: u64,
+    contract: Option<[u8; 20]>,
+) -> String {
+    let scope = contract
+        .map(|c| format!(" on contract 0x{}", hex::encode(c)))
+        .unwrap_or_default();
+    format!(
+        "Insufficient withdrawable stake{}. Requested: {} shards, available withdrawable stake: {} shards. \
+         Some of your stake is still locked or immature and cannot be unstaked yet.",
+        scope, requested, mature_stake
+    )
+}
+
 #[tauri::command]
 pub async fn estimate_validator_stake_fee(
     state: State<'_, AppState>,
     address: String,
     amount: Shards,
+    contract_address: Option<String>,
 ) -> Result<FeeEstimate, String> {
     let service = state
         .services
         .get_validator(&address)
         .ok_or_else(|| format!("Validator not found: {}", address))?;
 
+    let contract = decode_contract_choice(contract_address.as_deref())?;
+    reject_cage_stake_target(contract)?;
+
     let estimate = service
-        .estimate_stake_to_contract(None, amount.get())
+        .estimate_stake_to_contract(contract, amount.get())
         .map_err(|e| format!("Failed to estimate stake fee: {}", e))?;
 
     Ok(FeeEstimate {
@@ -621,26 +733,32 @@ pub async fn estimate_validator_unstake_fee(
     state: State<'_, AppState>,
     address: String,
     amount: Shards,
+    contract_address: Option<String>,
 ) -> Result<FeeEstimate, String> {
     let service = state
         .services
         .get_validator(&address)
         .ok_or_else(|| format!("Validator not found: {}", address))?;
 
-    let validator_pkh = xtal::address_format::parse_address_input(&address)
-        .map_err(|e| format!("Invalid address: {}", e))?;
-    let (_, mature_stake) = collect_mature_stake_utxos(&state, &validator_pkh);
+    let contract = decode_contract_choice(contract_address.as_deref())?;
+    let validator_pkh =
+        parse_address_input(&address).map_err(|e| format!("Invalid address: {}", e))?;
+    let (_, mature_stake) = collect_mature_stake_utxos(
+        &state,
+        &validator_pkh,
+        &contract.unwrap_or(CONTRACT_ADDRESS),
+    );
 
     if amount.get() > mature_stake {
-        return Err(format!(
-            "Insufficient withdrawable stake. Requested: {} shards, available withdrawable stake: {} shards. \
-             Some of your stake is still locked or immature and cannot be unstaked yet.",
-            amount, mature_stake
+        return Err(insufficient_withdrawable_stake(
+            amount,
+            mature_stake,
+            contract,
         ));
     }
 
     let estimate = service
-        .estimate_unstake_funds(amount.get())
+        .estimate_unstake_funds(contract, amount.get())
         .map_err(|e| format!("Failed to estimate unstake fee: {}", e))?;
 
     Ok(FeeEstimate {
@@ -659,15 +777,19 @@ pub async fn validator_stake(
     state: State<'_, AppState>,
     address: String,
     amount: Shards,
+    contract_address: Option<String>,
 ) -> Result<String, String> {
     let service = state
         .services
         .get_validator(&address)
         .ok_or_else(|| format!("Validator not found: {}", address))?;
 
-    // Use the ValidatorProduction trait's stake_to_contract method
+    // `None` targets the canonical staking contract; `Some` sponsors that contract.
+    let contract = decode_contract_choice(contract_address.as_deref())?;
+    reject_cage_stake_target(contract)?;
+
     let tx_hash = service
-        .stake_to_contract(None, amount.get())
+        .stake_to_contract(contract, amount.get())
         .map_err(|e| format!("Failed to stake: {}", e))?;
 
     Ok(hex::encode(tx_hash))
@@ -682,29 +804,35 @@ pub async fn validator_unstake(
     state: State<'_, AppState>,
     address: String,
     amount: Shards,
+    contract_address: Option<String>,
 ) -> Result<String, String> {
     let service = state
         .services
         .get_validator(&address)
         .ok_or_else(|| format!("Validator not found: {}", address))?;
 
-    let validator_pkh = xtal::address_format::parse_address_input(&address)
-        .map_err(|e| format!("Invalid address: {}", e))?;
-    let (_, mature_stake) = collect_mature_stake_utxos(&state, &validator_pkh);
+    let contract = decode_contract_choice(contract_address.as_deref())?;
+    let validator_pkh =
+        parse_address_input(&address).map_err(|e| format!("Invalid address: {}", e))?;
+    let (_, mature_stake) = collect_mature_stake_utxos(
+        &state,
+        &validator_pkh,
+        &contract.unwrap_or(CONTRACT_ADDRESS),
+    );
 
-    // Validate: the requested amount must not exceed withdrawable stake
+    // Validate: the requested amount must not exceed withdrawable stake on that contract
     if amount.get() > mature_stake {
-        return Err(format!(
-            "Insufficient withdrawable stake. Requested: {} shards, available withdrawable stake: {} shards. \
-             Some of your stake is still locked or immature and cannot be unstaked yet.",
-            amount, mature_stake
+        return Err(insufficient_withdrawable_stake(
+            amount,
+            mature_stake,
+            contract,
         ));
     }
 
-    // Use the ValidatorProduction trait's unstake_funds method
-    // At this point, amount <= withdrawable stake, so only eligible outputs will be consumed
+    // At this point amount <= withdrawable stake on the chosen contract, so only
+    // eligible outputs of that contract will be consumed.
     let tx_hash = service
-        .unstake_funds(amount.get())
+        .unstake_funds(contract, amount.get())
         .map_err(|e| format!("Failed to unstake: {}", e))?;
 
     Ok(hex::encode(tx_hash))
@@ -1060,35 +1188,14 @@ pub async fn get_fruit_difficulty_history(
         .collect()
 }
 
-fn recent_stem_attempt_cadence(blockchain: &xtal::blockchain::Blockchain) -> (u64, u64) {
-    let leaf_chain = blockchain.get_leaf_chain();
-    let latest_idx = leaf_chain.len().saturating_sub(1);
-    if latest_idx == 0 {
-        return (TARGET_SPACING, u64::from(DEFAULT_STEM_DIFFICULTY_RATIO));
-    }
-
-    let intervals = latest_idx.min(LEAVES_PER_EPOCH as usize);
-    let start_idx = latest_idx - intervals;
-    let start = blockchain.get_block_by_hash(&leaf_chain[start_idx]);
-    let end = blockchain.get_block_by_hash(&leaf_chain[latest_idx]);
-
-    let span_secs = match (start, end) {
-        (Ok(start), Ok(end)) if end.header.timestamp > start.header.timestamp => {
-            end.header.timestamp.saturating_sub(start.header.timestamp)
-        }
-        _ => TARGET_SPACING,
-    };
-
-    (
-        span_secs,
-        intervals as u64 * u64::from(DEFAULT_STEM_DIFFICULTY_RATIO),
-    )
-}
-
 /// Get current production statistics for all fruit types.
-/// Shows dynamic difficulty (current epoch) and expected production rates.
-/// When an address is provided, also calculates personalized expected time
-/// based on the validator's effective difficulty (stake-scaled).
+///
+/// Shows dynamic difficulty (current epoch) and expected production rates at the stem
+/// cadence measured off the canonical chain. When an address is provided, also calculates
+/// the personalized expected time between fruits the validator will actually *publish*:
+/// its stake-scaled win chance, discounted by every higher-ranked type it also produces,
+/// because `most_profitable_won_fruit` publishes one fruit per stem. Types the validator
+/// has not switched on are modeled as if added to its current active set.
 #[tauri::command]
 pub async fn get_fruit_production_stats(
     state: State<'_, AppState>,
@@ -1097,35 +1204,57 @@ pub async fn get_fruit_production_stats(
     let blockchain = state.services.blockchain();
     let current_epoch = blockchain.get_current_epoch();
     let stake_table = blockchain.pos_consensus.validator_stakes_snapshot();
-    let (cadence_numerator_secs, cadence_denominator) =
-        recent_stem_attempt_cadence(blockchain.as_ref());
+    let StemCadence {
+        span_secs: cadence_numerator_secs,
+        stems: cadence_denominator,
+    } = recent_stem_cadence(blockchain.as_ref());
 
-    // Look up local validator stake if an address was provided.
+    // Look up local validator stake and active set if an address was provided.
     // ValidatorService only represents validators loaded in this GUI process.
-    let validator_stake: Option<u64> = if let Some(ref addr) = address {
+    let validator_state: Option<(u64, Vec<FruitType>)> = address.as_ref().and_then(|addr| {
         state
             .services
             .get_validator(addr)
             .and_then(|service| service.get_status().ok())
-            .map(|status| status.stake)
-    } else {
-        None
+            .map(|status| (status.stake, status.active_productions))
+    });
+
+    // One batched derivation for every type: the chain walk behind it keys on the
+    // epoch alone. Types the walk cannot derive fall back to their reference difficulty.
+    let fruit_specs = get_fruits_by_stake_requirement();
+    let requested: Vec<FruitType> = fruit_specs
+        .iter()
+        .map(|(fruit_type, _)| *fruit_type)
+        .collect();
+    let derived: HashMap<FruitType, Difficulty> = blockchain
+        .get_derived_fruit_difficulties(&requested, current_epoch)
+        .map(|pairs| pairs.into_iter().collect())
+        .unwrap_or_default();
+    let base_difficulty = |fruit_type: FruitType| {
+        derived
+            .get(&fruit_type)
+            .copied()
+            .unwrap_or_else(|| get_spec(fruit_type).reference_difficulty())
+    };
+    let personal_win_probability = |fruit_type: FruitType, stake: u64| -> U256 {
+        win_probability(calculate_effective_difficulty(
+            fruit_type,
+            stake,
+            base_difficulty(fruit_type),
+        ))
     };
 
     let mut stats = Vec::new();
-    for (fruit_type, spec) in get_fruits_by_stake_requirement() {
-        // Get CURRENT network difficulty (dynamic, adjusts per epoch)
-        let current_difficulty = blockchain
-            .get_derived_fruit_difficulty(fruit_type, current_epoch)
-            .unwrap_or_else(|_| spec.reference_difficulty());
+    for (fruit_type, spec) in fruit_specs {
+        let current_difficulty = base_difficulty(fruit_type);
 
         // `network_stake_units` (whole threshold-units) is kept for the
         // informational stat field only. The rate itself must NOT floor stake:
         // count validators that meet the threshold and scale the difficulty by
         // their *fractional* stake (the same whole-XTAL accounting as the
         // personal estimate below), then treat the network as one aggregate
-        // entrant (units = 1). Flooring here made the sole-staker network rate
-        // diverge from that validator's own rate.
+        // entrant. Flooring here made the sole-staker network rate diverge from
+        // that validator's own rate.
         let network_stake_units: u64 = stake_table
             .values()
             .map(|stake| stake.total / spec.min_stake_threshold)
@@ -1140,27 +1269,37 @@ pub async fn get_fruit_production_stats(
         } else {
             current_difficulty
         };
-        let network_estimate = estimate_production_rate(
-            network_difficulty.bits(),
+        let network_estimate = estimate_production_rate_from_probability(
+            win_probability(network_difficulty),
             cadence_numerator_secs,
             cadence_denominator,
-            1,
         );
 
-        // Calculate personalized rates from effective difficulty. The
-        // active-production budget determines which fruit tasks can run
-        // together; each running fruit still uses the validator's full stake in
-        // the lottery, matching production and verification.
-        let personal_estimate = validator_stake
-            .filter(|stake| *stake >= spec.min_stake_threshold)
-            .map(|stake| {
-                let effective_difficulty =
-                    calculate_effective_difficulty(fruit_type, stake, current_difficulty);
-                estimate_production_rate(
-                    effective_difficulty.bits(),
+        // Personal rate = chance this type is the one fruit published on a stem. Mirror the
+        // producer's selector exactly: rank the (modeled) active set by profitability, and
+        // discount by every affordable higher-ranked type's own lottery.
+        let personal_estimate = validator_state
+            .as_ref()
+            .filter(|(stake, _)| *stake >= spec.min_stake_threshold)
+            .map(|(stake, active)| {
+                let mut modeled = active.clone();
+                if !modeled.contains(&fruit_type) {
+                    modeled.push(fruit_type);
+                }
+                let higher_ranked: Vec<U256> = rank_by_profitability(&modeled)
+                    .into_iter()
+                    .take_while(|ranked| *ranked != fruit_type)
+                    .filter(|ranked| *stake >= get_spec(*ranked).min_stake_threshold)
+                    .map(|ranked| personal_win_probability(ranked, *stake))
+                    .collect();
+                let publish_probability = exclusive_publish_probability(
+                    personal_win_probability(fruit_type, *stake),
+                    &higher_ranked,
+                );
+                estimate_production_rate_from_probability(
+                    publish_probability,
                     cadence_numerator_secs,
                     cadence_denominator,
-                    1,
                 )
             });
 
@@ -1195,4 +1334,96 @@ pub async fn get_fruit_production_stats(
     }
 
     Ok(stats)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{classify_validator_utxo, mature_stake_amount, ValidatorUtxoClass};
+    use xtal::config::CONTRACT_ADDRESS;
+    use xtal::interfaces::UtxoData;
+    use xtal::script::create_stake_script_with_duration;
+    use xtal::transaction::{CurrencyType, TxOut};
+
+    const LOCK: u64 = 12;
+    const OWNER: [u8; 20] = [1u8; 20];
+    const SPONSORED: [u8; 20] = [7u8; 20];
+    const AMOUNT: u64 = 5_000_000_000;
+
+    fn stake_utxo(owner: [u8; 20], contract: [u8; 20], creation_height: u64) -> UtxoData {
+        UtxoData {
+            outpoint: ([0u8; 32], 0),
+            output: TxOut {
+                amount: AMOUNT,
+                currency: CurrencyType::XTAL,
+                script_pubkey: create_stake_script_with_duration(&owner, &contract, AMOUNT, LOCK),
+            },
+            creation_height,
+            is_coinbase: false,
+            is_withdrawal: false,
+            is_staking: true,
+        }
+    }
+
+    #[test]
+    fn classifies_canonical_mature_stake() {
+        let utxo = stake_utxo(OWNER, CONTRACT_ADDRESS, 100);
+        assert_eq!(
+            classify_validator_utxo(&utxo, &OWNER, 100 + LOCK),
+            ValidatorUtxoClass::MatureStake {
+                contract: CONTRACT_ADDRESS,
+                amount: AMOUNT
+            }
+        );
+    }
+
+    #[test]
+    fn classifies_sponsored_stake_by_contract_and_lock() {
+        let utxo = stake_utxo(OWNER, SPONSORED, 100);
+        assert_eq!(
+            classify_validator_utxo(&utxo, &OWNER, 100 + LOCK - 1),
+            ValidatorUtxoClass::PendingStake {
+                contract: SPONSORED,
+                amount: AMOUNT
+            }
+        );
+        assert_eq!(
+            classify_validator_utxo(&utxo, &OWNER, 100 + LOCK),
+            ValidatorUtxoClass::MatureStake {
+                contract: SPONSORED,
+                amount: AMOUNT
+            }
+        );
+    }
+
+    #[test]
+    fn ignores_stake_owned_by_other_pkh() {
+        let utxo = stake_utxo([2u8; 20], CONTRACT_ADDRESS, 0);
+        assert_eq!(
+            classify_validator_utxo(&utxo, &OWNER, LOCK),
+            ValidatorUtxoClass::Ignore
+        );
+    }
+
+    #[test]
+    fn mature_stake_amount_is_scoped_to_contract() {
+        let canonical = stake_utxo(OWNER, CONTRACT_ADDRESS, 0);
+        let sponsored = stake_utxo(OWNER, SPONSORED, 0);
+
+        assert_eq!(
+            mature_stake_amount(&canonical, &OWNER, &CONTRACT_ADDRESS, LOCK),
+            Some(AMOUNT)
+        );
+        assert_eq!(
+            mature_stake_amount(&canonical, &OWNER, &SPONSORED, LOCK),
+            None
+        );
+        assert_eq!(
+            mature_stake_amount(&sponsored, &OWNER, &SPONSORED, LOCK),
+            Some(AMOUNT)
+        );
+        assert_eq!(
+            mature_stake_amount(&sponsored, &OWNER, &CONTRACT_ADDRESS, LOCK),
+            None
+        );
+    }
 }

@@ -38,6 +38,9 @@ interface UiState {
   toasts: Toast[];
   toastsEnabled: boolean;
 
+  /** Expert controls (e.g. staking to / unstaking from a specific contract). Persisted. */
+  advancedMode: boolean;
+
   // Modals
   activeModal: string | null;
   modalData: unknown;
@@ -61,6 +64,8 @@ interface UiState {
   removeToast: (id: string) => void;
   setToastsEnabled: (enabled: boolean) => void;
   hydrateToastsEnabled: (enabled: boolean) => void;
+  setAdvancedMode: (enabled: boolean) => void;
+  hydrateAdvancedMode: (enabled: boolean) => void;
   openModal: (modalId: string, data?: unknown) => void;
   closeModal: () => void;
   setLoading: (key: string, loading: boolean) => void;
@@ -91,6 +96,7 @@ const initialState = {
 export const useUiStore = create<UiState>((set, get) => ({
   ...initialState,
   toastsEnabled: true,
+  advancedMode: false,
 
   setActiveTab: (tab) => set({ activeTab: tab }),
 
@@ -143,6 +149,18 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
 
   hydrateToastsEnabled: (enabled) => set({ toastsEnabled: enabled }),
+
+  setAdvancedMode: (enabled) => {
+    const previousEnabled = get().advancedMode;
+    set({ advancedMode: enabled });
+
+    void invoke("set_gui_advanced_mode", { enabled }).catch((error) => {
+      console.error("Failed to save advanced mode preference:", error);
+      set({ advancedMode: previousEnabled });
+    });
+  },
+
+  hydrateAdvancedMode: (enabled) => set({ advancedMode: enabled }),
 
   openModal: (modalId, data) =>
     set({

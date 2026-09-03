@@ -144,6 +144,8 @@ export interface TransactionOutput {
   scriptType: string;
   /** Whether this output belongs to the loaded wallet */
   isMine?: boolean;
+  /** Stake/unstake outputs only: the sponsored (non-canonical) contract this stake backs */
+  sponsoredContract?: string;
 }
 
 export type UTXOBridgeDetail = {

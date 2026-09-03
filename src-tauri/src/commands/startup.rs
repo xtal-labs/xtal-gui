@@ -46,6 +46,7 @@ pub async fn get_config_path() -> Result<String, String> {
 #[derive(Debug, Clone, Serialize)]
 pub struct GuiConfigInfo {
     pub toasts_enabled: bool,
+    pub advanced_mode: bool,
     pub dashboard: Option<DashboardLayoutConfig>,
 }
 
@@ -57,6 +58,7 @@ pub async fn get_gui_config() -> Result<GuiConfigInfo, String> {
 
     Ok(GuiConfigInfo {
         toasts_enabled: config.toasts_enabled,
+        advanced_mode: config.advanced_mode,
         dashboard: config.dashboard,
     })
 }
@@ -65,6 +67,14 @@ pub async fn get_gui_config() -> Result<GuiConfigInfo, String> {
 #[tauri::command]
 pub async fn set_gui_toasts_enabled(enabled: bool) -> Result<(), String> {
     update_gui_config(|config| config.toasts_enabled = enabled)
+        .map_err(|e| format!("Failed to save GUI config: {}", e))?;
+    Ok(())
+}
+
+/// Persist whether expert (advanced-mode) controls are shown.
+#[tauri::command]
+pub async fn set_gui_advanced_mode(enabled: bool) -> Result<(), String> {
+    update_gui_config(|config| config.advanced_mode = enabled)
         .map_err(|e| format!("Failed to save GUI config: {}", e))?;
     Ok(())
 }

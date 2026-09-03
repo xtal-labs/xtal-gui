@@ -1,7 +1,15 @@
-import { Play, Plus, X, Eye, EyeOff, RefreshCw, AlertCircle, Minus, Download } from "lucide-react";
+import type { ReactNode } from "react";
+import { Play, Plus, X, Eye, EyeOff, RefreshCw, AlertCircle, Minus, Download, ChevronDown } from "lucide-react";
 import { CardContent, CardHeader, CardTitle, CardDescription, ModalShell, Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { AmountDisplay } from "@/components/common";
 import { MnemonicInput } from "@/components/common/MnemonicInput";
 import { RecoveryPhraseDisplay } from "@/components/common/RecoveryPhraseDisplay";
@@ -23,6 +31,22 @@ interface FeeEstimate {
   outputCount: number;
   feeRate: number;
 }
+
+/** One line in the stake summary for a contract the validator sponsors. */
+interface SponsoredStakeRow {
+  contract: string;
+  label: string;
+  total: ShardAmount;
+}
+
+/** A contract the validator can unstake from. `contract === null` is the canonical one. */
+interface UnstakeOption {
+  contract: string | null;
+  label: string;
+  mature: ShardAmount;
+}
+
+const CANONICAL_UNSTAKE_KEY = "__canonical__";
 
 // Load Validator Modal
 function LoadValidatorModal({
@@ -416,6 +440,9 @@ function StakeModal({
   canSubmit,
   isLoading,
   error,
+  sponsorSection,
+  sponsorTargetLabel,
+  sponsoredStake,
   onClose,
   onStakeAmountChange,
   onSubmit,
@@ -433,6 +460,12 @@ function StakeModal({
   canSubmit: boolean;
   isLoading: boolean;
   error: string | null;
+  /** Advanced-mode "sponsor a contract" controls; omitted when advanced mode is off. */
+  sponsorSection?: ReactNode;
+  /** Label of the contract this stake will sponsor, when one is chosen and valid. */
+  sponsorTargetLabel: string | null;
+  /** Contracts the validator already sponsors, for the summary block. */
+  sponsoredStake: SponsoredStakeRow[];
   onClose: () => void;
   onStakeAmountChange: (value: string) => void;
   onSubmit: () => void;
@@ -480,7 +513,7 @@ function StakeModal({
             <p className="flex items-center gap-1.5">
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="cursor-help decoration-dotted underline-offset-4 [text-decoration-line:underline]">Active stake</span>
+                  <span className="cursor-help decoration-dotted underline-offset-4 underline">Active stake</span>
                 </TooltipTrigger>
                 <TooltipContent className="max-w-[16rem] text-center">
                   Active stake is what consensus counts for fruit production right now. It refreshes at each epoch boundary, so newly-matured stake activates on the next epoch.
@@ -493,9 +526,21 @@ function StakeModal({
             {toShards(pendingStake) > 0n && (
               <p className="text-warning">Pending stake <span className="opacity-80">(locked, maturing)</span>: <span className="font-mono">{formatXtalExact(pendingStake)} XTAL</span></p>
             )}
+            {sponsoredStake.map((row) => (
+              <p key={row.contract} className="flex items-center justify-between gap-3">
+                <span className="truncate">Sponsoring {row.label}</span>
+                <span className="font-mono">{formatXtalExact(row.total)} XTAL</span>
+              </p>
+            ))}
             <div className="h-px bg-border/60 my-2" />
             <p>Total stake <span className="text-foreground-muted">(mature + pending)</span>: <span className="font-mono font-semibold text-foreground">{formatXtalExact(totalStake)} XTAL</span></p>
             <div className="h-px bg-border/60 my-2" />
+            {sponsorTargetLabel && (
+              <p className="flex items-center justify-between gap-3">
+                <span>Target:</span>
+                <span className="font-mono text-foreground truncate">{sponsorTargetLabel}</span>
+              </p>
+            )}
             <div className="flex items-center justify-between">
               <span>Network fee:</span>
               {isFeeEstimating ? (
@@ -516,17 +561,18 @@ function StakeModal({
               </p>
             )}
           </div>
+          {sponsorSection}
           <Button
             className="w-full"
             onClick={onSubmit}
-            disabled={isLoading || !stakeAmount || availableBalance === 0 || !canSubmit}
+            disabled={isLoading || !stakeAmount || toShards(availableBalance) === 0n || !canSubmit}
           >
             {isLoading ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
             ) : (
               <Plus className="h-4 w-4 mr-2" />
             )}
-            Stake XTAL
+            {sponsorTargetLabel ? "Stake XTAL (sponsor)" : "Stake XTAL"}
           </Button>
         </CardContent>
     </ModalShell>
@@ -537,7 +583,6 @@ function StakeModal({
 function UnstakeModal({
   show,
   stakeAmount,
-  withdrawableStake,
   pendingUnstake,
   feeEstimate,
   isFeeEstimating,
@@ -545,13 +590,18 @@ function UnstakeModal({
   canSubmit,
   isLoading,
   error,
+  advancedMode,
+  unstakeOptions,
+  selectedContract,
+  onSelectContract,
+  selectedWithdrawable,
+  otherContractsMature,
   onClose,
   onStakeAmountChange,
   onSubmit,
 }: {
   show: boolean;
   stakeAmount: string;
-  withdrawableStake: ShardAmount;
   pendingUnstake: ShardAmount;
   feeEstimate: FeeEstimate | null;
   isFeeEstimating: boolean;
@@ -559,11 +609,26 @@ function UnstakeModal({
   canSubmit: boolean;
   isLoading: boolean;
   error: string | null;
+  advancedMode: boolean;
+  /** Canonical contract first, then every sponsored contract with stake. */
+  unstakeOptions: UnstakeOption[];
+  /** `null` = canonical staking contract. */
+  selectedContract: string | null;
+  onSelectContract: (contract: string | null) => void;
+  /** Withdrawable stake on the selected contract. */
+  selectedWithdrawable: ShardAmount;
+  /** Mature stake on non-canonical contracts (for the advanced-off hint). */
+  otherContractsMature: ShardAmount;
   onClose: () => void;
   onStakeAmountChange: (value: string) => void;
   onSubmit: () => void;
 }) {
   if (!show) return null;
+
+  const selectedOption =
+    unstakeOptions.find((o) => o.contract === selectedContract) ?? unstakeOptions[0];
+  const showSelector = advancedMode && unstakeOptions.length > 1;
+  const showAdvancedHint = !advancedMode && toShards(otherContractsMature) > 0n;
 
   return (
     <ModalShell cardClassName="max-w-md">
@@ -608,7 +673,13 @@ function UnstakeModal({
             />
           </div>
           <div className="text-sm text-foreground-muted bg-muted/50 p-3 chamfered-sm space-y-1">
-            <p>Withdrawable stake: <span className="font-mono font-semibold text-foreground">{formatXtalExact(withdrawableStake)} XTAL</span></p>
+            <p>
+              Withdrawable stake
+              {selectedContract !== null && selectedOption && (
+                <span className="text-foreground-muted"> (on {selectedOption.label})</span>
+              )}
+              : <span className="font-mono font-semibold text-foreground">{formatXtalExact(selectedWithdrawable)} XTAL</span>
+            </p>
             {toShards(pendingUnstake) > 0n && (
               <p className="text-warning">Pending unstake: <span className="font-mono">{formatXtalExact(pendingUnstake)} XTAL</span></p>
             )}
@@ -633,11 +704,57 @@ function UnstakeModal({
               </p>
             )}
           </div>
+          {showSelector && (
+            <div>
+              <label className="text-sm font-heading text-foreground-muted mb-2 block">
+                Unstake from
+              </label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline-crystalline" className="w-full justify-between text-foreground">
+                    <span className="truncate">{selectedOption?.label ?? "Staking contract (default)"}</span>
+                    <span className="flex items-center gap-2 font-mono text-xs text-foreground-muted">
+                      {selectedOption ? `${formatXtalExact(selectedOption.mature)} XTAL` : ""}
+                      <ChevronDown className="h-4 w-4" />
+                    </span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-[var(--radix-dropdown-menu-trigger-width)]">
+                  <DropdownMenuRadioGroup
+                    value={selectedContract ?? CANONICAL_UNSTAKE_KEY}
+                    onValueChange={(value) =>
+                      onSelectContract(value === CANONICAL_UNSTAKE_KEY ? null : value)
+                    }
+                  >
+                    {unstakeOptions.map((option) => (
+                      <DropdownMenuRadioItem
+                        key={option.contract ?? CANONICAL_UNSTAKE_KEY}
+                        value={option.contract ?? CANONICAL_UNSTAKE_KEY}
+                        disabled={toShards(option.mature) === 0n}
+                        className="flex items-center justify-between gap-3"
+                      >
+                        <span className="truncate">{option.label}</span>
+                        <span className="font-mono text-xs text-foreground-muted">
+                          {formatXtalExact(option.mature)} XTAL
+                        </span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          )}
+          {showAdvancedHint && (
+            <p className="text-xs text-foreground-muted">
+              You also have {formatXtalExact(otherContractsMature)} XTAL staked on other contracts.
+              Enable Advanced mode in Settings to unstake it.
+            </p>
+          )}
           <Button
             variant="destructive"
             className="w-full"
             onClick={onSubmit}
-            disabled={isLoading || !stakeAmount || withdrawableStake === 0 || !canSubmit}
+            disabled={isLoading || !stakeAmount || toShards(selectedWithdrawable) === 0n || !canSubmit}
           >
             {isLoading ? (
               <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
@@ -664,4 +781,6 @@ export {
   MnemonicModal,
   StakeModal,
   UnstakeModal,
+  type SponsoredStakeRow,
+  type UnstakeOption,
 };

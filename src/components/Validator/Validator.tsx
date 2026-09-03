@@ -27,6 +27,7 @@ import {
 import { HashDisplay, StatusBadge, TransactionList } from "@/components/common";
 import { FruitDetailPanel } from "@/components/Explorer/FruitDetailPanel";
 import { FruitCard } from "./FruitCard";
+import { SponsorContractField } from "./SponsorContractField";
 import { StakeCard } from "./StakeCard";
 import { ValidatorDashboardStats } from "./ValidatorDashboard";
 import {
@@ -42,11 +43,13 @@ import {
   MnemonicModal,
   StakeModal,
   UnstakeModal,
+  type UnstakeOption,
 } from "./ValidatorModals";
-import { useValidatorStore, useUiStore } from "@/stores";
+import { useValidatorStore, useUiStore, useGatewayStore } from "@/stores";
 import { tauriCommand, useTauriCommand } from "@/hooks";
 import { cn, formatXtalExact, formatTimeAgo, parseXtalToShards, copyToClipboard, toShards, addShards } from "@/lib/utils";
 import { getFruitColor } from "@/lib/fruitColors";
+import { canonicalContractAddress, normalizeContractAddress, sponsorLabel } from "@/lib/sponsorship";
 import { PAGE_SIZE, getPageOffset, normalizePage } from "@/lib/pagination";
 import type {
   FruitSpec,
@@ -58,6 +61,8 @@ import type {
   NetworkValidatorStats,
   ValidatorEarnings,
   ValidatorBalanceInfo,
+  CageConfig,
+  ContractInfo,
   FruitProductionStats,
   TransactionHistoryResponse,
 } from "@/types";
@@ -338,7 +343,7 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
             </table>
             <p className="text-xs text-foreground-muted mt-3">
               {hasPersonalStats
-                ? "Your Est. = personal expected time based on your stake and effective difficulty"
+                ? "Your Est. = expected time between fruits you actually publish: your stake-scaled win chance, discounted by higher-ranked types you also produce (one fruit per stem), at the measured stem cadence. Inactive types are shown as if switched on."
                 : "* Difficulty differs from reference (adjusted based on network production)"}
             </p>
           </div>
@@ -364,6 +369,7 @@ export default function Validator() {
   const availableBalance = useValidatorStore((state) => state.availableBalance);
   const pendingUnstake = useValidatorStore((state) => state.pendingUnstake);
   const immatureBalance = useValidatorStore((state) => state.immatureBalance);
+  const sponsoredStake = useValidatorStore((state) => state.sponsoredStake);
   const fruitSpecs = useValidatorStore((state) => state.fruitSpecs);
   const productions = useValidatorStore((state) => state.productions);
   const totalFruitsProduced = useValidatorStore((state) => state.totalFruitsProduced);
@@ -398,6 +404,9 @@ export default function Validator() {
   const openModal = useUiStore((state) => state.openModal);
   const closeModal = useUiStore((state) => state.closeModal);
   const addToast = useUiStore((state) => state.addToast);
+  const advancedMode = useUiStore((state) => state.advancedMode);
+  const cachedContracts = useGatewayStore((state) => state.cachedContracts);
+  const loadContractLibrary = useGatewayStore((state) => state.loadLibrary);
 
   // UI state
   const [isLoading, setIsLoading] = useState(false);
@@ -426,6 +435,15 @@ export default function Validator() {
   const [unstakeFeeEstimate, setUnstakeFeeEstimate] = useState<FeeEstimate | null>(null);
   const [isUnstakeFeeEstimating, setIsUnstakeFeeEstimating] = useState(false);
   const [unstakeFeeEstimateError, setUnstakeFeeEstimateError] = useState<string | null>(null);
+  // Advanced mode: sponsor a contract with the stake being created.
+  const [sponsorEnabled, setSponsorEnabled] = useState(false);
+  const [sponsorAddressInput, setSponsorAddressInput] = useState("");
+  const [sponsorContractInfo, setSponsorContractInfo] = useState<ContractInfo | null>(null);
+  const [isResolvingSponsor, setIsResolvingSponsor] = useState(false);
+  const [sponsorResolveError, setSponsorResolveError] = useState<string | null>(null);
+  const [cageAddress, setCageAddress] = useState<string | null>(null);
+  // Advanced mode: which contract to unstake from (`null` = canonical).
+  const [unstakeContract, setUnstakeContract] = useState<string | null>(null);
   const lastEarningsFetchRef = useRef(0);
   // Holds the page the user is currently viewing so background refreshes
   // (new blocks, fruit events) re-fetch that page instead of snapping to page 1.
@@ -468,8 +486,130 @@ export default function Validator() {
   const showStakeModal = activeModal === MODAL_STAKE;
   const showUnstakeModal = activeModal === MODAL_UNSTAKE;
 
+  // ---- Advanced mode: contract sponsorship -------------------------------
+  const normalizedSponsorAddress = normalizeContractAddress(sponsorAddressInput);
+  const isCageSelected =
+    normalizedSponsorAddress !== null && cageAddress !== null && normalizedSponsorAddress === cageAddress;
+  const sponsorTarget =
+    sponsorEnabled &&
+    normalizedSponsorAddress !== null &&
+    !isCageSelected &&
+    sponsorContractInfo !== null &&
+    sponsorContractInfo.isContract &&
+    sponsorContractInfo.address.toLowerCase() === normalizedSponsorAddress
+      ? normalizedSponsorAddress
+      : null;
+  const sponsorThreshold = sponsorContractInfo?.fruitType
+    ? fruitSpecs.find((s) => s.fruitType === sponsorContractInfo.fruitType)?.minStake ?? null
+    : null;
+  const currentSponsoredOnTarget =
+    sponsorTarget !== null
+      ? sponsoredStake.find((e) => canonicalContractAddress(e.contract) === sponsorTarget) ?? null
+      : null;
+  const sponsorTargetLabel = sponsorTarget !== null ? sponsorLabel(sponsorTarget, cachedContracts) : null;
+
+  const resetSponsorState = useCallback(() => {
+    setSponsorEnabled(false);
+    setSponsorAddressInput("");
+    setSponsorContractInfo(null);
+    setSponsorResolveError(null);
+    setIsResolvingSponsor(false);
+  }, []);
+
+  // Advanced-only data: imported contracts for the picker and the CAGE address to refuse.
   useEffect(() => {
-    if (!showStakeModal || !address || parsedStakeAmount === null || toShards(parsedStakeAmount) <= 0n) {
+    if (!advancedMode) return;
+    void loadContractLibrary();
+    tauriCommand<CageConfig>("get_cage_config")
+      .then((config) => setCageAddress(canonicalContractAddress(config.address)))
+      .catch((err) => console.error("Failed to load CAGE config:", err));
+  }, [advancedMode, loadContractLibrary]);
+
+  // Resolve the typed/picked address to a contract (existence, shard binding).
+  useEffect(() => {
+    if (!showStakeModal || !sponsorEnabled || normalizedSponsorAddress === null || isCageSelected) {
+      setSponsorContractInfo(null);
+      setSponsorResolveError(null);
+      setIsResolvingSponsor(false);
+      return;
+    }
+
+    let isCurrent = true;
+    setIsResolvingSponsor(true);
+    setSponsorResolveError(null);
+
+    const timer = window.setTimeout(async () => {
+      try {
+        const info = await tauriCommand<ContractInfo>("get_contract_info", {
+          contractAddress: normalizedSponsorAddress,
+        });
+        if (isCurrent) {
+          setSponsorContractInfo(info);
+        }
+      } catch (err) {
+        if (isCurrent) {
+          setSponsorContractInfo(null);
+          setSponsorResolveError(err instanceof Error ? err.message : String(err));
+        }
+      } finally {
+        if (isCurrent) {
+          setIsResolvingSponsor(false);
+        }
+      }
+    }, 250);
+
+    return () => {
+      isCurrent = false;
+      window.clearTimeout(timer);
+    };
+  }, [showStakeModal, sponsorEnabled, normalizedSponsorAddress, isCageSelected]);
+
+  // ---- Advanced mode: per-contract unstake --------------------------------
+  const unstakeOptions: UnstakeOption[] = [
+    { contract: null, label: "Staking contract (default)", mature: withdrawableStake },
+    ...sponsoredStake.map((entry) => ({
+      contract: canonicalContractAddress(entry.contract),
+      label: sponsorLabel(entry.contract, cachedContracts),
+      mature: entry.mature,
+    })),
+  ];
+  const selectedUnstakeWithdrawable =
+    unstakeContract === null
+      ? withdrawableStake
+      : unstakeOptions.find((o) => o.contract === unstakeContract)?.mature ?? "0";
+  const otherContractsMature = sponsoredStake.reduce(
+    (sum, entry) => sum + toShards(entry.mature),
+    0n,
+  );
+  const hasAnyWithdrawable = toShards(withdrawableStake) > 0n || otherContractsMature > 0n;
+
+  // Keep the unstake selection meaningful: drop a contract that vanished after a
+  // refresh (fully unstaked), and when exactly one contract has withdrawable stake
+  // select it outright so the user is not parked on an empty default.
+  useEffect(() => {
+    const options: Array<{ contract: string | null; mature: string }> = [
+      { contract: null, mature: withdrawableStake },
+      ...sponsoredStake.map((entry) => ({
+        contract: canonicalContractAddress(entry.contract),
+        mature: entry.mature,
+      })),
+    ];
+    const selected = options.find((o) => o.contract === unstakeContract);
+    if (selected && toShards(selected.mature) > 0n) return;
+
+    const withStake = options.filter((o) => toShards(o.mature) > 0n);
+    if (withStake.length === 1) {
+      if (unstakeContract !== withStake[0].contract) setUnstakeContract(withStake[0].contract);
+    } else if (!selected && unstakeContract !== null) {
+      setUnstakeContract(null);
+    }
+  }, [unstakeContract, sponsoredStake, withdrawableStake]);
+
+  useEffect(() => {
+    // With the sponsor tick on, wait until the target resolves to a real contract
+    // so the preview never diverges from the transaction that will be built.
+    const sponsorPending = sponsorEnabled && sponsorTarget === null;
+    if (!showStakeModal || !address || parsedStakeAmount === null || toShards(parsedStakeAmount) <= 0n || sponsorPending) {
       setStakeFeeEstimate(null);
       setIsStakeFeeEstimating(false);
       setStakeFeeEstimateError(null);
@@ -485,6 +625,7 @@ export default function Validator() {
         const result = await tauriCommand<FeeEstimate>("estimate_validator_stake_fee", {
           address,
           amount: parsedStakeAmount,
+          contractAddress: sponsorTarget ?? undefined,
         });
         if (isCurrent) {
           setStakeFeeEstimate(result);
@@ -506,7 +647,7 @@ export default function Validator() {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [showStakeModal, address, parsedStakeAmount]);
+  }, [showStakeModal, address, parsedStakeAmount, sponsorEnabled, sponsorTarget]);
 
   useEffect(() => {
     if (!showUnstakeModal || !address || parsedStakeAmount === null || toShards(parsedStakeAmount) <= 0n) {
@@ -525,6 +666,7 @@ export default function Validator() {
         const result = await tauriCommand<FeeEstimate>("estimate_validator_unstake_fee", {
           address,
           amount: parsedStakeAmount,
+          contractAddress: unstakeContract ?? undefined,
         });
         if (isCurrent) {
           setUnstakeFeeEstimate(result);
@@ -546,7 +688,7 @@ export default function Validator() {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [showUnstakeModal, address, parsedStakeAmount]);
+  }, [showUnstakeModal, address, parsedStakeAmount, unstakeContract]);
 
   const canSubmitStake =
     parsedStakeAmount !== null &&
@@ -554,11 +696,13 @@ export default function Validator() {
     stakeFeeEstimate !== null &&
     !isStakeFeeEstimating &&
     !stakeFeeEstimateError &&
-    addShards(parsedStakeAmount, stakeFeeEstimate.fee) <= toShards(availableBalance);
+    addShards(parsedStakeAmount, stakeFeeEstimate.fee) <= toShards(availableBalance) &&
+    (!sponsorEnabled || sponsorTarget !== null);
 
   const canSubmitUnstake =
     parsedStakeAmount !== null &&
     toShards(parsedStakeAmount) > 0n &&
+    toShards(parsedStakeAmount) <= toShards(selectedUnstakeWithdrawable) &&
     unstakeFeeEstimate !== null &&
     !isUnstakeFeeEstimating &&
     !unstakeFeeEstimateError;
@@ -634,6 +778,7 @@ export default function Validator() {
         totalStake: info.totalStake,
         pendingUnstake: info.pendingUnstake,
         immatureBalance: info.immatureBalance,
+        sponsoredStake: info.sponsoredStake ?? [],
       });
     } catch (err) {
       console.error("Failed to fetch balance info:", err);
@@ -1041,19 +1186,31 @@ export default function Validator() {
       return;
     }
 
+    if (sponsorEnabled && sponsorTarget === null) {
+      setError("Choose a valid contract to sponsor");
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
 
     try {
-      await tauriCommand("validator_stake", { address, amount: amountShards });
+      await tauriCommand("validator_stake", {
+        address,
+        amount: amountShards,
+        contractAddress: sponsorTarget ?? undefined,
+      });
 
       closeModal();
       setStakeAmount("");
+      resetSponsorState();
 
       addToast({
         type: "stake",
         title: "Stake transaction submitted",
-        message: `Staking ${stakeAmount.trim()} XTAL`,
+        message: sponsorTargetLabel
+          ? `Staking ${stakeAmount.trim()} XTAL on ${sponsorTargetLabel}`
+          : `Staking ${stakeAmount.trim()} XTAL`,
         duration: 5000,
       });
 
@@ -1089,16 +1246,24 @@ export default function Validator() {
     setIsLoading(true);
     setError(null);
 
+    const unstakeLabel =
+      unstakeContract !== null ? ` from ${sponsorLabel(unstakeContract, cachedContracts)}` : "";
+
     try {
-      await tauriCommand("validator_unstake", { address, amount: amountShards });
+      await tauriCommand("validator_unstake", {
+        address,
+        amount: amountShards,
+        contractAddress: unstakeContract ?? undefined,
+      });
 
       closeModal();
       setStakeAmount("");
+      setUnstakeContract(null);
 
       addToast({
         type: "unstake",
         title: "Unstake transaction submitted",
-        message: `Unstaking ${stakeAmount.trim()} XTAL (locked for 1 epoch)`,
+        message: `Unstaking ${stakeAmount.trim()} XTAL${unstakeLabel} (locked for 1 epoch)`,
         duration: 5000,
       });
 
@@ -1234,6 +1399,14 @@ export default function Validator() {
             availableBalance={availableBalance}
             pendingUnstake={pendingUnstake}
             immatureBalance={immatureBalance}
+            sponsoredStake={sponsoredStake.map((entry) => ({
+              contract: canonicalContractAddress(entry.contract),
+              label: sponsorLabel(entry.contract, cachedContracts),
+              total: entry.total,
+              mature: entry.mature,
+              pending: entry.pending,
+            }))}
+            canUnstake={hasAnyWithdrawable}
             hideBalances={hideBalances}
             onToggleHide={() => setHideBalances(!hideBalances)}
             onStake={() => openModal(MODAL_STAKE)}
@@ -1349,7 +1522,7 @@ export default function Validator() {
                           "transition-colors cursor-pointer text-left",
                           "hover:brightness-125",
                           color.border,
-                          "bg-gradient-to-r",
+                          "bg-linear-to-r",
                           color.bg,
                         )}
                       >
@@ -1497,7 +1670,37 @@ export default function Validator() {
         canSubmit={canSubmitStake}
         isLoading={isLoading}
         error={error}
-        onClose={() => { closeModal(); setStakeAmount(""); setError(null); }}
+        sponsorSection={
+          advancedMode ? (
+            <SponsorContractField
+              enabled={sponsorEnabled}
+              onEnabledChange={(enabled) => {
+                setSponsorEnabled(enabled);
+                if (!enabled) {
+                  setSponsorAddressInput("");
+                }
+              }}
+              address={sponsorAddressInput}
+              onAddressChange={setSponsorAddressInput}
+              options={cachedContracts}
+              contractInfo={sponsorContractInfo}
+              isResolving={isResolvingSponsor}
+              resolveError={sponsorResolveError}
+              isCageSelected={isCageSelected}
+              threshold={sponsorThreshold}
+              label={sponsorTargetLabel}
+              currentOnTarget={currentSponsoredOnTarget}
+              stakeAmount={parsedStakeAmount !== null && toShards(parsedStakeAmount) > 0n ? parsedStakeAmount : null}
+            />
+          ) : undefined
+        }
+        sponsorTargetLabel={sponsorTargetLabel}
+        sponsoredStake={sponsoredStake.map((entry) => ({
+          contract: canonicalContractAddress(entry.contract),
+          label: sponsorLabel(entry.contract, cachedContracts),
+          total: entry.total,
+        }))}
+        onClose={() => { closeModal(); setStakeAmount(""); setError(null); resetSponsorState(); }}
         onStakeAmountChange={setStakeAmount}
         onSubmit={handleStake}
       />
@@ -1505,7 +1708,6 @@ export default function Validator() {
       <UnstakeModal
         show={showUnstakeModal}
         stakeAmount={stakeAmount}
-        withdrawableStake={withdrawableStake}
         pendingUnstake={pendingUnstake}
         feeEstimate={unstakeFeeEstimate}
         isFeeEstimating={isUnstakeFeeEstimating}
@@ -1513,7 +1715,13 @@ export default function Validator() {
         canSubmit={canSubmitUnstake}
         isLoading={isLoading}
         error={error}
-        onClose={() => { closeModal(); setStakeAmount(""); setError(null); }}
+        advancedMode={advancedMode}
+        unstakeOptions={unstakeOptions}
+        selectedContract={unstakeContract}
+        onSelectContract={setUnstakeContract}
+        selectedWithdrawable={selectedUnstakeWithdrawable}
+        otherContractsMature={otherContractsMature}
+        onClose={() => { closeModal(); setStakeAmount(""); setError(null); setUnstakeContract(null); }}
         onStakeAmountChange={setStakeAmount}
         onSubmit={handleUnstake}
       />

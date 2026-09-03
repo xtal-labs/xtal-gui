@@ -9,6 +9,7 @@ import type {
   ValidatorWalletSummary,
   ValidatorWalletCreationResult,
   NetworkValidatorStats,
+  SponsoredStakeEntry,
   Transaction,
 } from "@/types";
 import {
@@ -24,6 +25,7 @@ export interface ValidatorBalances {
   totalStake: string;
   pendingUnstake: string;
   immatureBalance: string;
+  sponsoredStake: SponsoredStakeEntry[];
 }
 
 interface ValidatorState {
@@ -40,6 +42,7 @@ interface ValidatorState {
   totalStake: string;       // Mature + pending, as computed by the backend
   pendingUnstake: string;   // Pending unstake (locked)
   immatureBalance: string;  // Immature coinbase/withdrawal + unconfirmed incoming
+  sponsoredStake: SponsoredStakeEntry[]; // Stake on non-canonical contracts, per contract
   totalFruitsProduced: number;
 
   // Network-wide statistics (for dashboard)
@@ -113,6 +116,7 @@ const initialState = {
   totalStake: "0",
   pendingUnstake: "0",
   immatureBalance: "0",
+  sponsoredStake: [] as SponsoredStakeEntry[],
   totalFruitsProduced: 0,
   networkStats: null as NetworkValidatorStats | null,
   validatorEarnings: null as string | null,
@@ -156,6 +160,7 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
             totalStake: "0",
             pendingUnstake: "0",
             immatureBalance: "0",
+            sponsoredStake: [],
             totalFruitsProduced: 0,
             validatorEarnings: null,
             productions: {},
@@ -179,6 +184,7 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
     totalStake,
     pendingUnstake,
     immatureBalance,
+    sponsoredStake,
   }) =>
     set({
       availableBalance,
@@ -188,6 +194,7 @@ export const useValidatorStore = create<ValidatorState>((set) => ({
       totalStake,
       pendingUnstake,
       immatureBalance,
+      sponsoredStake,
     }),
 
   setNetworkStats: (stats) => set({ networkStats: stats }),

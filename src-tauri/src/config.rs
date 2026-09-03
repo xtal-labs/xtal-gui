@@ -23,6 +23,11 @@ pub struct GuiConfig {
     #[serde(default = "default_toasts_enabled")]
     pub toasts_enabled: bool,
 
+    /// Whether expert controls (e.g. staking to, and unstaking from, a specific
+    /// contract) are shown. Off by default so the ordinary flows stay simple.
+    #[serde(default)]
+    pub advanced_mode: bool,
+
     /// The network the app should boot into. Acts as the active-network pointer:
     /// the GUI resolves per-network config/data from it before any node config is
     /// read. `None` on a genuine first run (no network set up yet).
@@ -50,6 +55,7 @@ impl Default for GuiConfig {
     fn default() -> Self {
         Self {
             toasts_enabled: default_toasts_enabled(),
+            advanced_mode: false,
             ipfs: IpfsConfig::default(),
             last_network: None,
             dashboard: None,
@@ -312,7 +318,27 @@ mod tests {
         let serialized = toml::to_string(&config).unwrap();
         let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized.toasts_enabled, config.toasts_enabled);
+        assert_eq!(deserialized.advanced_mode, config.advanced_mode);
         assert_eq!(deserialized.ipfs.enabled, config.ipfs.enabled);
+    }
+
+    #[test]
+    fn test_gui_config_round_trips_advanced_mode() {
+        let config = GuiConfig {
+            advanced_mode: true,
+            ..GuiConfig::default()
+        };
+        let serialized = toml::to_string(&config).unwrap();
+        // Scalars must precede the [ipfs] table or TOML serialization breaks.
+        assert!(serialized.find("advanced_mode").unwrap() < serialized.find("[ipfs]").unwrap());
+        let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
+        assert!(deserialized.advanced_mode);
+    }
+
+    #[test]
+    fn test_gui_config_without_advanced_mode_parses() {
+        let deserialized: GuiConfig = toml::from_str("toasts_enabled = false\n").unwrap();
+        assert!(!deserialized.advanced_mode);
     }
 
     #[test]

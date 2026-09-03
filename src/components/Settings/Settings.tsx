@@ -86,7 +86,7 @@ function summarizePendingChanges(changes: string[]) {
 
 export default function Settings() {
   const { theme, setTheme } = useTheme();
-  const { toastsEnabled, setToastsEnabled } = useUiStore();
+  const { toastsEnabled, setToastsEnabled, advancedMode, setAdvancedMode } = useUiStore();
   const { execute: getNodeInfo, data: nodeInfo } = useTauriCommand<NodeInfo>("get_node_info");
   const { execute: getNodeConfig, data: nodeConfig } = useTauriCommand<NodeConfig>("get_node_config");
   const { execute: getConfigPath, data: configPath } = useTauriCommand<string>("get_config_path");
@@ -218,7 +218,7 @@ export default function Settings() {
                   onClick={() => setTheme(option.id)}
                   className={cn(
                     "flex flex-col items-center gap-3 p-4 chamfered transition-all w-full",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                    "focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring",
                     isSelected
                       ? "bg-primary/10 shadow-crystalline"
                       : "hover:bg-muted/50"
@@ -275,6 +275,32 @@ export default function Settings() {
               </p>
             </div>
             <Switch checked={toastsEnabled} onCheckedChange={setToastsEnabled} />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Advanced */}
+      <Card variant="crystalline">
+        <CardHeader>
+          <CardTitle className="text-base font-heading tracking-wide flex items-center gap-2">
+            <div className="icon-hex icon-hex-sm bg-primary/20">
+              <FlaskConical className="h-3.5 w-3.5 text-primary" />
+            </div>
+            ADVANCED
+          </CardTitle>
+          <CardDescription>
+            Expert controls for power users
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between py-2 px-3 chamfered-sm bg-muted/50 gap-4">
+            <div>
+              <span className="text-sm font-heading text-foreground-secondary">ADVANCED MODE</span>
+              <p className="text-xs text-foreground-muted mt-0.5">
+                Show expert options such as staking to, and unstaking from, a specific contract
+              </p>
+            </div>
+            <Switch checked={advancedMode} onCheckedChange={setAdvancedMode} />
           </div>
         </CardContent>
       </Card>
@@ -468,7 +494,7 @@ export default function Settings() {
           {hasPendingNodeChanges && (
             <div className="mt-4 p-3 chamfered-sm bg-warning/10 border border-warning/30 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 text-sm">
-                <AlertTriangle className="h-4 w-4 text-warning flex-shrink-0" />
+                <AlertTriangle className="h-4 w-4 text-warning shrink-0" />
                 <span className="text-foreground-secondary">
                   Changes to{" "}
                   <span className="font-heading font-medium text-foreground">
@@ -477,7 +503,7 @@ export default function Settings() {
                   require a restart.
                 </span>
               </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
+              <div className="flex items-center gap-2 shrink-0">
                 <Button
                   variant="ghost"
                   size="sm"

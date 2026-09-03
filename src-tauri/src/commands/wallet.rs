@@ -463,6 +463,10 @@ pub struct TransactionOutput {
     /// Whether this output belongs to the loaded wallet
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub is_mine: bool,
+    /// For stake/unstake outputs that back a contract other than the canonical
+    /// staking contract: that contract's 0x-hex address ("sponsored" stake).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sponsored_contract: Option<String>,
 }
 
 /// Full transaction details for the detail panel
@@ -805,7 +809,7 @@ pub(crate) fn format_sweep_failure(operation: &str, error: &VmSweepError) -> Swe
             operation, inner
         )),
         VmSweepError::PartiallySubmitted {
-            submitted,
+            submitted_legs,
             unsent_legs,
             failed_leg_index,
             leg_count,
@@ -817,9 +821,9 @@ pub(crate) fn format_sweep_failure(operation: &str, error: &VmSweepError) -> Swe
                 .map(|leg| format!("{} shards from {}", leg.amount, leg.hex_address))
                 .collect::<Vec<_>>()
                 .join(", ");
-            let submitted_txids = submitted
+            let submitted_txids = submitted_legs
                 .iter()
-                .map(hex::encode)
+                .map(|leg| hex::encode(leg.txid))
                 .collect::<Vec<_>>()
                 .join(",");
 
@@ -830,7 +834,7 @@ pub(crate) fn format_sweep_failure(operation: &str, error: &VmSweepError) -> Swe
                  failed ({}). Unsent legs: [{}]. Broadcast legs cannot be rolled back. \
                  submitted_txids: {}",
                 operation,
-                submitted.len(),
+                submitted_legs.len(),
                 leg_count,
                 failed_leg_index + 1,
                 source,
@@ -6216,8 +6220,20 @@ mod tests {
         let partial = format_sweep_failure(
             "Withdrawal",
             &VmSweepError::PartiallySubmitted {
-                submitted: vec![[0xabu8; 32], [0xcdu8; 32]],
-                submitted_legs: vec![],
+                submitted_legs: vec![
+                    LibSubmittedSweepLeg {
+                        txid: [0xabu8; 32],
+                        from_address: format_contract_address(&[3u8; 20]),
+                        amount: 5_000,
+                        max_gas_fee: 21_000,
+                    },
+                    LibSubmittedSweepLeg {
+                        txid: [0xcdu8; 32],
+                        from_address: format_contract_address(&[4u8; 20]),
+                        amount: 7_500,
+                        max_gas_fee: 21_000,
+                    },
+                ],
                 unsent_legs: vec![leg],
                 failed_leg_index: 2,
                 leg_count: 3,

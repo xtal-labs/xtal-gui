@@ -211,7 +211,7 @@ function FruitCard({
     <div
       className={cn(
         "relative group chamfered-sm transition-all duration-300",
-        "bg-gradient-to-br border",
+        "bg-linear-to-br border",
         // Always apply fruit colors
         colors.bg,
         colors.border,
@@ -223,7 +223,7 @@ function FruitCard({
     >
       {/* Active indicator pulse */}
       {isActive && (
-        <div className="absolute inset-0 animate-pulse-live opacity-30 bg-gradient-to-br from-transparent to-white/5" />
+        <div className="absolute inset-0 animate-pulse-live opacity-30 bg-linear-to-br from-transparent to-white/5" />
       )}
 
       <div className="relative p-4 space-y-3">
@@ -289,8 +289,8 @@ function FruitCard({
               <div
                 className="flex items-center gap-1.5"
                 title={personalExpectedTimeSecs !== undefined
-                  ? "Your expected time to produce one fruit"
-                  : "Network expected time (load validator for personal estimate)"
+                  ? "Your expected time between published fruits of this type, at the measured stem cadence. Only the most profitable fruit you win on a stem is published, so higher-ranked active types pre-empt this one."
+                  : "Network expected time at the measured stem cadence (load validator for personal estimate)"
                 }
               >
                 <Timer className="h-3.5 w-3.5 text-foreground-muted" />
@@ -322,7 +322,7 @@ function FruitCard({
 
         {/* Active indicator bar */}
         {isActive && (
-          <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-primary via-accent to-primary animate-shimmer" />
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-linear-to-r from-primary via-accent to-primary animate-shimmer" />
         )}
       </div>
     </div>
@@ -331,7 +331,7 @@ function FruitCard({
     {showTooltip && (
       <div
         ref={tooltipRef}
-        className="fixed z-50 animate-[fadeInDown_150ms_ease-out] overflow-y-auto overscroll-contain rounded-md bg-black/70 backdrop-blur-xl border border-white/[0.08] shadow-xl shadow-black/40"
+        className="fixed z-50 animate-[fadeInDown_150ms_ease-out] overflow-y-auto overscroll-contain rounded-md bg-black/70 backdrop-blur-xl border border-white/8 shadow-xl shadow-black/40"
         style={{
           top: tooltipPos.top,
           left: tooltipPos.left,
@@ -342,7 +342,7 @@ function FruitCard({
         onMouseLeave={() => setShowTooltip(false)}
       >
         {/* Fruit-colored accent bar */}
-        <div className={cn("h-0.5 bg-gradient-to-r", colors.bg.replace(/\/\d+/g, ""))} />
+        <div className={cn("h-0.5 bg-linear-to-r", colors.bg.replace(/\/\d+/g, ""))} />
 
         <div className="p-3 space-y-2.5">
           {/* Header */}
@@ -401,7 +401,7 @@ function FruitCard({
           </div>
 
           {latestDifficulty && (
-            <div className="pt-2 border-t border-white/[0.08]">
+            <div className="pt-2 border-t border-white/8">
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] text-white/50 uppercase tracking-wider">Epoch Difficulty</span>
                 <span className="font-mono text-[11px] text-white/45">
@@ -456,7 +456,7 @@ function FruitCard({
                     </AreaChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="flex h-full items-center justify-center rounded-sm border border-white/[0.08] bg-white/[0.03]">
+                  <div className="flex h-full items-center justify-center rounded-sm border border-white/8 bg-white/3">
                     <span className="font-mono text-[11px] text-white/45">
                       Epoch {latestDifficulty.epoch}
                     </span>

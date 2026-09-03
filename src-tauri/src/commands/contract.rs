@@ -252,7 +252,7 @@ fn fruit_type_name(ft: FruitType) -> &'static str {
     }
 }
 
-fn decode_hex_address(addr: &str) -> Result<[u8; 20], String> {
+pub(crate) fn decode_hex_address(addr: &str) -> Result<[u8; 20], String> {
     let hex_str = addr.strip_prefix("0x").unwrap_or(addr);
     let bytes =
         hex::decode(hex_str).map_err(|_| "Invalid address: must be hex encoded".to_string())?;

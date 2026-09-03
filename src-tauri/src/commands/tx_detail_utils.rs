@@ -3,11 +3,12 @@
 use xtal::shards::Shards;
 
 use xtal::address_format::{format_script_address, format_utxo_address};
+use xtal::config::CONTRACT_ADDRESS;
 use xtal::crypto::hash_public_key;
 use xtal::interfaces::ChainDataProvider;
 use xtal::script::{
     extract_p2sh_redeem_script, extract_pubkey_from_script_sig, p2sh_script_hash,
-    p2sh_script_pubkey, parse_multisig_script, Script,
+    p2sh_script_pubkey, parse_multisig_script, parse_stake_or_unstake_script, Script,
 };
 use xtal::transaction::receipt::TransactionReceipt;
 use xtal::transaction::{Transaction, TxIn, TxOut, MIN_GAS_PRICE};
@@ -127,6 +128,7 @@ pub fn extract_transaction_details(
                 address: extract_address_from_txout(&cb_tx.output()),
                 script_type: "coinbase".to_string(),
                 is_mine: false,
+                sponsored_contract: None,
             }];
             // Add stem outputs if any
             for (idx, out) in cb_tx.stem_outputs().iter().enumerate() {
@@ -137,6 +139,7 @@ pub fn extract_transaction_details(
                     address: extract_address_from_txout(out),
                     script_type: "coinbase".to_string(),
                     is_mine: false,
+                    sponsored_contract: None,
                 });
             }
             // Add fruit outputs (auto-staked validator rewards)
@@ -149,6 +152,7 @@ pub fn extract_transaction_details(
                     address: extract_address_from_txout(out),
                     script_type: "stake".to_string(),
                     is_mine: false,
+                    sponsored_contract: None,
                 });
             }
             let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
@@ -275,6 +279,7 @@ pub fn extract_transaction_details(
                 address: Some(format!("0x{}", hex::encode(at_tx.recipient.as_bytes()))),
                 script_type: "account".to_string(),
                 is_mine: false,
+                sponsored_contract: None,
             }];
             let fee = vm_transaction_fee(tx);
             Ok((
@@ -295,6 +300,7 @@ pub fn extract_transaction_details(
                 address: extract_address_from_txout(&vw_tx.output),
                 script_type: "vm_withdrawal".to_string(),
                 is_mine: false,
+                sponsored_contract: None,
             }];
             Ok((
                 "vm_withdrawal".to_string(),
@@ -427,6 +433,14 @@ pub fn extract_output_from_transaction(
 }
 
 /// Extract output details from TxOut array
+/// The contract a stake/unstake output backs when it is not the canonical
+/// staking contract, i.e. stake that sponsors gas-free calls to that contract.
+fn sponsored_contract_of(out: &TxOut) -> Option<String> {
+    parse_stake_or_unstake_script(&out.script_pubkey)
+        .filter(|info| info.contract != CONTRACT_ADDRESS)
+        .map(|info| format!("0x{}", hex::encode(info.contract)))
+}
+
 pub fn extract_outputs(tx_outputs: &[TxOut], script_type: &str) -> Vec<TransactionOutput> {
     tx_outputs
         .iter()
@@ -449,6 +463,7 @@ pub fn extract_outputs(tx_outputs: &[TxOut], script_type: &str) -> Vec<Transacti
                 address: extract_address_from_txout(out),
                 script_type: resolved_type.to_string(),
                 is_mine: false,
+                sponsored_contract: sponsored_contract_of(out),
             }
         })
         .collect()

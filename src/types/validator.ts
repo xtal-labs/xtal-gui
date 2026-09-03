@@ -102,6 +102,15 @@ export interface ValidatorEarnings {
   coinbaseCount: number;
 }
 
+/** Stake a validator holds on one non-canonical ("sponsored") contract. */
+export interface SponsoredStakeEntry {
+  /** 0x-prefixed lowercase hex contract address */
+  contract: string;
+  mature: string;   // Unstakeable from this contract now (shards)
+  pending: string;  // Locked or immature on this contract (shards)
+  total: string;    // mature + pending (shards)
+}
+
 /** Validator balance breakdown */
 export interface ValidatorBalanceInfo {
   validatorAddress: string;
@@ -113,6 +122,8 @@ export interface ValidatorBalanceInfo {
   pendingUnstake: string;    // Pending unstake (locked)
   immatureBalance: string;   // Non-stake immature balance + unconfirmed incoming
   totalValue: string;        // Sum of all
+  /** Stake on contracts other than the canonical staking contract (never in withdrawableStake). */
+  sponsoredStake: SponsoredStakeEntry[];
 }
 
 /** Fruit production statistics with dynamic difficulty */

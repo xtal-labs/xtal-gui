@@ -404,6 +404,7 @@ function UtxoDetailBody({
                     flow="output"
                     pending={pending}
                     rewardType={rewardType}
+                    sponsoredContract={output.sponsoredContract}
                   />
                 );
               })
@@ -709,7 +710,7 @@ export function TransactionDetailPanel({
         <div
           className={cn(
             "absolute top-0 left-0 right-0 h-32 pointer-events-none",
-            "bg-gradient-to-b",
+            "bg-linear-to-b",
             style.gradient
           )}
         />
@@ -767,7 +768,7 @@ export function TransactionDetailPanel({
                       Execution Error
                     </span>
                   </div>
-                  <p className="text-sm font-medium text-destructive break-words">
+                  <p className="text-sm font-medium text-destructive wrap-break-word">
                     {visibleDetail.receipt.error}
                   </p>
                 </div>

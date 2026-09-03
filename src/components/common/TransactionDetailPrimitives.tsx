@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { AmountDisplay } from "@/components/common/AmountDisplay";
 import { HashDisplay } from "@/components/common/HashDisplay";
+import { shortContractAddress } from "@/lib/sponsorship";
 import { cn, type ShardAmount } from "@/lib/utils";
 import { ownershipBorderClass, type IOFlow } from "@/lib/txOwnership";
 
@@ -73,6 +74,7 @@ export function IORow({
   label,
   rewardType,
   redeemScriptType,
+  sponsoredContract,
 }: {
   address?: string;
   amount?: ShardAmount;
@@ -83,6 +85,8 @@ export function IORow({
   label?: string;
   rewardType?: "leaf" | "stem" | "fruit";
   redeemScriptType?: string;
+  /** Stake output backing a non-canonical contract (sponsored stake). */
+  sponsoredContract?: string;
 }) {
   return (
     <div
@@ -124,6 +128,15 @@ export function IORow({
                 className="shrink-0 text-[10px] px-1.5 py-0 text-violet-400 border-violet-400/40"
               >
                 P2SH · {redeemScriptType}
+              </Badge>
+            )}
+            {sponsoredContract && (
+              <Badge
+                variant="outline"
+                className="shrink-0 text-[10px] px-1.5 py-0"
+                title={sponsoredContract}
+              >
+                Sponsoring {shortContractAddress(sponsoredContract)}
               </Badge>
             )}
           </div>

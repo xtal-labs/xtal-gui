@@ -5,6 +5,15 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { AmountDisplay } from "@/components/common";
 import { formatXtalExact, addShards, toShards, type ShardAmount } from "@/lib/utils";
 
+/** Stake the validator holds on one non-canonical ("sponsored") contract. */
+interface SponsoredStakeCardRow {
+  contract: string;
+  label: string;
+  total: ShardAmount;
+  mature: ShardAmount;
+  pending: ShardAmount;
+}
+
 interface StakeCardProps {
   withdrawableStake: ShardAmount;
   activeStake: ShardAmount;
@@ -12,6 +21,9 @@ interface StakeCardProps {
   availableBalance: ShardAmount;
   pendingUnstake: ShardAmount;
   immatureBalance: ShardAmount;
+  sponsoredStake: SponsoredStakeCardRow[];
+  /** Any contract (canonical or sponsored) has withdrawable stake. */
+  canUnstake: boolean;
   hideBalances: boolean;
   onToggleHide: () => void;
   onStake: () => void;
@@ -31,6 +43,8 @@ function StakeCard({
   availableBalance,
   pendingUnstake,
   immatureBalance,
+  sponsoredStake,
+  canUnstake,
   hideBalances,
   onToggleHide,
   onStake,
@@ -39,7 +53,7 @@ function StakeCard({
   const otherPending = addShards(pendingUnstake, immatureBalance);
 
   return (
-    <Card variant="crystalline" className="bg-gradient-to-br from-primary/10 via-transparent to-accent/10 border-primary/20 relative">
+    <Card variant="crystalline" className="bg-linear-to-br from-primary/10 via-transparent to-accent/10 border-primary/20 relative">
       <CardContent className="pt-6">
         {/* Hide/Reveal toggle button */}
         <Button
@@ -56,7 +70,7 @@ function StakeCard({
           <div>
             <Tooltip>
               <TooltipTrigger asChild>
-                <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2 cursor-help decoration-dotted underline-offset-4 [text-decoration-line:underline]">
+                <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2 cursor-help decoration-dotted underline-offset-4 underline">
                   YOUR ACTIVE STAKE
                 </p>
               </TooltipTrigger>
@@ -92,6 +106,27 @@ function StakeCard({
                   </span>
                 </div>
               )}
+              {sponsoredStake.map((row) => (
+                <div key={row.contract} className="flex items-center justify-between gap-3 text-foreground-muted">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="cursor-help decoration-dotted underline-offset-4 underline truncate">
+                        Sponsoring {row.label}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="max-w-[18rem] text-center space-y-0.5">
+                      <p className="font-mono break-all">{row.contract}</p>
+                      <p>
+                        {hideBalances ? MASKED_VALUE : formatXtalExact(row.mature)} mature ·{" "}
+                        {hideBalances ? MASKED_VALUE : formatXtalExact(row.pending)} pending
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <span className="text-foreground whitespace-nowrap">
+                    {hideBalances ? MASKED_VALUE : formatXtalExact(row.total)} XTAL
+                  </span>
+                </div>
+              ))}
               {otherPending > 0 && (
                 <div className="flex items-center justify-between gap-3">
                   <span className="text-warning">Other pending</span>
@@ -108,7 +143,7 @@ function StakeCard({
               variant="crystalline"
               size="sm"
               onClick={onStake}
-              disabled={availableBalance === 0}
+              disabled={toShards(availableBalance) === 0n}
               className="text-foreground"
             >
               <Plus className="h-4 w-4 mr-1" />
@@ -118,7 +153,7 @@ function StakeCard({
               variant="outline-crystalline"
               size="sm"
               onClick={onUnstake}
-              disabled={withdrawableStake === 0}
+              disabled={!canUnstake}
               className="text-foreground"
             >
               <Minus className="h-4 w-4 mr-1" />
