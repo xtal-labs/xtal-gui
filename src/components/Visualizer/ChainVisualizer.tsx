@@ -51,7 +51,13 @@ import {
   type PositionedFruit,
 } from "./chainLayout";
 import { ChainScene } from "./ChainScene";
-import { AnchorPiP, PIP_HEIGHT } from "./AnchorPiP";
+import {
+  AnchorPiP,
+  PIP_HEIGHT,
+  PIP_OFFSET_NONE,
+  PIP_WIDTH,
+  type PiPOffset,
+} from "./AnchorPiP";
 import { TypeChips } from "./TypeChips";
 
 /** Zoom bounds, and the scale below which the scene drops to its ambient tier. */
@@ -81,6 +87,8 @@ const ANCHOR_VISIBLE_MARGIN = 48;
  * window cancels the release; leaving it starts a fresh one.
  */
 const ANCHOR_RELEASE_MS = 500;
+/** Exit transition after the grace period — kept in step with the CSS in `AnchorPiP`. */
+const ANCHOR_FADE_MS = 220;
 
 type Viewport = {
   scrollLeft: number;
@@ -107,6 +115,8 @@ export default function ChainVisualizer() {
     fruit: PositionedFruit;
     anchorHash: string;
   } | null>(null);
+  /** Set for the length of the exit transition, between the grace period and unmount. */
+  const [isAnchorFading, setIsAnchorFading] = useState(false);
 
   const [hoveredFruit, setHoveredFruit] = useState<PositionedFruit | null>(
     null,
@@ -127,6 +137,13 @@ export default function ChainVisualizer() {
     height: 0,
   });
 
+  /**
+   * Where the user last dragged the anchor window, as a delta from the edge position
+   * the conduit implies. Held here rather than in `AnchorPiP` so it survives the window
+   * unmounting between hovers — every later anchor spawns where the last one was left.
+   */
+  const [pipOffset, setPipOffset] = useState<PiPOffset>(PIP_OFFSET_NONE);
+
   const currentEpochRef = useRef<number | null>(null);
   const viewEpochRef = useRef<number | null>(null);
   const hoveredFruitRef = useRef<PositionedFruit | null>(null);
@@ -135,6 +152,7 @@ export default function ChainVisualizer() {
   const backfilledRef = useRef<Set<number>>(new Set());
   const pipHoverRef = useRef(false);
   const releaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fadeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const scaleRef = useRef(1);
   const scrollToEndRef = useRef(true);
@@ -619,18 +637,32 @@ export default function ChainVisualizer() {
 
   /* --- Anchor window placement --- */
 
+  // Cancelling mid-fade takes the window back to full opacity rather than letting it
+  // vanish and re-enter, so a pointer returning late reads as one continuous window.
   const cancelAnchorRelease = useCallback(() => {
     if (releaseTimerRef.current) {
       clearTimeout(releaseTimerRef.current);
       releaseTimerRef.current = null;
     }
+    if (fadeTimerRef.current) {
+      clearTimeout(fadeTimerRef.current);
+      fadeTimerRef.current = null;
+    }
+    setIsAnchorFading(false);
   }, []);
 
+  /** Grace period, then a fade, then unmount — never a hard cut. */
   const scheduleAnchorRelease = useCallback(() => {
     cancelAnchorRelease();
     releaseTimerRef.current = setTimeout(() => {
       releaseTimerRef.current = null;
-      if (!pipHoverRef.current) setHeldAnchor(null);
+      if (pipHoverRef.current) return;
+      setIsAnchorFading(true);
+      fadeTimerRef.current = setTimeout(() => {
+        fadeTimerRef.current = null;
+        setIsAnchorFading(false);
+        setHeldAnchor(null);
+      }, ANCHOR_FADE_MS);
     }, ANCHOR_RELEASE_MS);
   }, [cancelAnchorRelease]);
 
@@ -856,10 +888,6 @@ export default function ChainVisualizer() {
             <span className="hexagon h-2 w-[9px] bg-foreground-muted/50" />
             Empty
           </span>
-          <span className="flex items-center gap-1.5">
-            <span className="hexagon h-2.5 w-[11px] bg-warning" />
-            Missing body
-          </span>
           <span className="hidden h-3 w-px bg-border md:block" />
           <span className="flex items-center gap-1.5">
             <span className="diamond h-2.5 w-2.5 bg-crystal-stem" />
@@ -985,7 +1013,11 @@ export default function ChainVisualizer() {
             anchorEpoch={pip.anchorEpoch}
             side={pip.side}
             edgeY={pip.edgeY}
+            canvasWidth={Math.max(viewport.width, PIP_WIDTH + 32)}
             canvasHeight={Math.max(viewport.height, PIP_HEIGHT + 32)}
+            offset={pipOffset}
+            onOffsetChange={setPipOffset}
+            fading={isAnchorFading}
             onPointerEnter={() => {
               pipHoverRef.current = true;
               cancelAnchorRelease();
