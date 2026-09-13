@@ -289,7 +289,7 @@ function FruitCard({
               <div
                 className="flex items-center gap-1.5"
                 title={personalExpectedTimeSecs !== undefined
-                  ? "Your expected time between published fruits of this type, at the measured stem cadence. Only the most profitable fruit you win on a stem is published, so higher-ranked active types pre-empt this one."
+                  ? "Your expected time between fruits of this type, at the measured stem cadence, based on your stake and the current fruit difficulty."
                   : "Network expected time at the measured stem cadence (load validator for personal estimate)"
                 }
               >

@@ -8,7 +8,6 @@ use xtal::shards::Shards;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use primitive_types::U256;
 use serde::Serialize;
 use tauri::State;
 
@@ -18,8 +17,8 @@ use xtal::consensus::validation::COINBASE_MATURITY;
 use xtal::difficulty::Difficulty;
 use xtal::fruit::difficulty::calculate_effective_difficulty;
 use xtal::fruit::production::{
-    estimate_production_rate_from_probability, exclusive_publish_probability,
-    rank_by_profitability, recent_stem_cadence, win_probability, StemCadence,
+    estimate_production_rate_from_probability, recent_stem_cadence, win_probability,
+    ProductionRateEstimate, StemCadence,
 };
 use xtal::fruit::spec::{get_fruits_by_stake_requirement, get_spec};
 use xtal::fruit::FruitType;
@@ -1188,14 +1187,38 @@ pub async fn get_fruit_difficulty_history(
         .collect()
 }
 
+/// A validator's expected time between fruits of one type, considered on its own.
+///
+/// Each `(anchor stem, fruit type)` pair is an independent lottery draw, so this is the rate
+/// the type would sustain if it were the only one the validator produced. It deliberately does
+/// not model the producer publishing only its most profitable winner per stem: that discount
+/// makes a type's number depend on which *other* types are switched on, and drives the
+/// low-reward types to zero ("Never") at today's near-ceiling difficulties. Matches the node's
+/// own per-validator estimate in `fruit::production::difficulty_report`.
+fn personal_production_estimate(
+    fruit_type: FruitType,
+    stake: u64,
+    base_difficulty: Difficulty,
+    cadence_numerator_secs: u64,
+    cadence_denominator: u64,
+) -> ProductionRateEstimate {
+    estimate_production_rate_from_probability(
+        win_probability(calculate_effective_difficulty(
+            fruit_type,
+            stake,
+            base_difficulty,
+        )),
+        cadence_numerator_secs,
+        cadence_denominator,
+    )
+}
+
 /// Get current production statistics for all fruit types.
 ///
 /// Shows dynamic difficulty (current epoch) and expected production rates at the stem
 /// cadence measured off the canonical chain. When an address is provided, also calculates
-/// the personalized expected time between fruits the validator will actually *publish*:
-/// its stake-scaled win chance, discounted by every higher-ranked type it also produces,
-/// because `most_profitable_won_fruit` publishes one fruit per stem. Types the validator
-/// has not switched on are modeled as if added to its current active set.
+/// the validator's own expected time between fruits of each type, from its stake-scaled win
+/// chance. See [`personal_production_estimate`] for what that figure does and does not model.
 #[tauri::command]
 pub async fn get_fruit_production_stats(
     state: State<'_, AppState>,
@@ -1209,14 +1232,14 @@ pub async fn get_fruit_production_stats(
         stems: cadence_denominator,
     } = recent_stem_cadence(blockchain.as_ref());
 
-    // Look up local validator stake and active set if an address was provided.
+    // Look up the local validator's stake if an address was provided.
     // ValidatorService only represents validators loaded in this GUI process.
-    let validator_state: Option<(u64, Vec<FruitType>)> = address.as_ref().and_then(|addr| {
+    let validator_stake: Option<u64> = address.as_ref().and_then(|addr| {
         state
             .services
             .get_validator(addr)
             .and_then(|service| service.get_status().ok())
-            .map(|status| (status.stake, status.active_productions))
+            .map(|status| status.stake)
     });
 
     // One batched derivation for every type: the chain walk behind it keys on the
@@ -1235,13 +1258,6 @@ pub async fn get_fruit_production_stats(
             .get(&fruit_type)
             .copied()
             .unwrap_or_else(|| get_spec(fruit_type).reference_difficulty())
-    };
-    let personal_win_probability = |fruit_type: FruitType, stake: u64| -> U256 {
-        win_probability(calculate_effective_difficulty(
-            fruit_type,
-            stake,
-            base_difficulty(fruit_type),
-        ))
     };
 
     let mut stats = Vec::new();
@@ -1275,29 +1291,15 @@ pub async fn get_fruit_production_stats(
             cadence_denominator,
         );
 
-        // Personal rate = chance this type is the one fruit published on a stem. Mirror the
-        // producer's selector exactly: rank the (modeled) active set by profitability, and
-        // discount by every affordable higher-ranked type's own lottery.
-        let personal_estimate = validator_state
-            .as_ref()
-            .filter(|(stake, _)| *stake >= spec.min_stake_threshold)
-            .map(|(stake, active)| {
-                let mut modeled = active.clone();
-                if !modeled.contains(&fruit_type) {
-                    modeled.push(fruit_type);
-                }
-                let higher_ranked: Vec<U256> = rank_by_profitability(&modeled)
-                    .into_iter()
-                    .take_while(|ranked| *ranked != fruit_type)
-                    .filter(|ranked| *stake >= get_spec(*ranked).min_stake_threshold)
-                    .map(|ranked| personal_win_probability(ranked, *stake))
-                    .collect();
-                let publish_probability = exclusive_publish_probability(
-                    personal_win_probability(fruit_type, *stake),
-                    &higher_ranked,
-                );
-                estimate_production_rate_from_probability(
-                    publish_probability,
+        // Personal rate = this validator's own lottery for this type at its stake, at the
+        // measured stem cadence. Types it cannot afford fall back to the network estimate.
+        let personal_estimate = validator_stake
+            .filter(|stake| *stake >= spec.min_stake_threshold)
+            .map(|stake| {
+                personal_production_estimate(
+                    fruit_type,
+                    stake,
+                    current_difficulty,
                     cadence_numerator_secs,
                     cadence_denominator,
                 )
@@ -1338,8 +1340,13 @@ pub async fn get_fruit_production_stats(
 
 #[cfg(test)]
 mod tests {
-    use super::{classify_validator_utxo, mature_stake_amount, ValidatorUtxoClass};
+    use super::{
+        classify_validator_utxo, mature_stake_amount, personal_production_estimate,
+        ValidatorUtxoClass,
+    };
     use xtal::config::CONTRACT_ADDRESS;
+    use xtal::fruit::spec::get_spec;
+    use xtal::fruit::FruitType;
     use xtal::interfaces::UtxoData;
     use xtal::script::create_stake_script_with_duration;
     use xtal::transaction::{CurrencyType, TxOut};
@@ -1425,5 +1432,58 @@ mod tests {
             mature_stake_amount(&sponsored, &OWNER, &CONTRACT_ADDRESS, LOCK),
             None
         );
+    }
+
+    /// Stem cadence used by the estimate tests: the configured 600s / 32 stems = 18.75s.
+    const CADENCE_SPAN_SECS: u64 = 600;
+    const CADENCE_STEMS: u64 = 32;
+
+    #[test]
+    fn lowest_ranked_fruit_still_has_a_finite_estimate() {
+        // Apple is last in profitability rank. The old estimate discounted it by every
+        // higher-ranked active type, which underflowed to zero and rendered as "Never".
+        // On its own lottery it wins ~54% of stems.
+        let spec = get_spec(FruitType::Apple);
+        let estimate = personal_production_estimate(
+            FruitType::Apple,
+            spec.min_stake_threshold,
+            spec.reference_difficulty(),
+            CADENCE_SPAN_SECS,
+            CADENCE_STEMS,
+        );
+
+        assert_ne!(estimate.expected_time_secs, u64::MAX);
+        assert_ne!(estimate.expected_time_label, "Never");
+        // ceil(18.75 / 0.537902) = 35s.
+        assert_eq!(estimate.expected_time_secs, 35);
+    }
+
+    #[test]
+    fn estimate_depends_only_on_threshold_stake_and_difficulty() {
+        // Pear, Orange and Strawberry share a min stake threshold but sit at three different
+        // profitability ranks. With the pre-emption discount gone, rank cannot move the
+        // number: the same stake against the same base difficulty must estimate identically.
+        let types = [FruitType::Pear, FruitType::Orange, FruitType::Strawberry];
+        let threshold = get_spec(FruitType::Pear).min_stake_threshold;
+        for fruit_type in types {
+            assert_eq!(get_spec(fruit_type).min_stake_threshold, threshold);
+        }
+
+        let difficulty = get_spec(FruitType::Apple).reference_difficulty();
+        let estimates: Vec<_> = types
+            .into_iter()
+            .map(|fruit_type| {
+                personal_production_estimate(
+                    fruit_type,
+                    threshold,
+                    difficulty,
+                    CADENCE_SPAN_SECS,
+                    CADENCE_STEMS,
+                )
+            })
+            .collect();
+
+        assert_eq!(estimates[0], estimates[1]);
+        assert_eq!(estimates[1], estimates[2]);
     }
 }

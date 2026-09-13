@@ -343,7 +343,7 @@ function FruitProductionRates({ stats, isLoading }: FruitProductionRatesProps) {
             </table>
             <p className="text-xs text-foreground-muted mt-3">
               {hasPersonalStats
-                ? "Your Est. = expected time between fruits you actually publish: your stake-scaled win chance, discounted by higher-ranked types you also produce (one fruit per stem), at the measured stem cadence. Inactive types are shown as if switched on."
+                ? "Your Est. = your expected time between fruits of each type, at the measured stem cadence: your stake-scaled win chance against that type's current difficulty."
                 : "* Difficulty differs from reference (adjusted based on network production)"}
             </p>
           </div>
