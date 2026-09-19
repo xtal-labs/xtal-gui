@@ -98,12 +98,12 @@ jobs:
       - name: Configure git auth
         run: git config --global url."https://x-access-token:${{ secrets.ORG_PAT }}@github.com/".insteadOf "https://github.com/"
 
-      - name: Use the published xtal lib (CI only; local dev keeps the sibling `path = ".."`)
+      - name: Use the xtal 0.9.5 backend revision (CI only; local dev keeps the sibling `path = ".."`)
         shell: bash
         run: |
-          sed -i.bak -E 's#^xtal = \{ path = "\.\." \}#xtal = { git = "https://github.com/xtal-labs/xtal.git", branch = "main" }#' Cargo.toml
+          sed -i.bak -E 's#^xtal = \{ path = "\.\." \}#xtal = { git = "https://github.com/xtal-labs/xtal.git", rev = "6df524010ab0092bf3a2737f428695d5b34d43b2" }#' Cargo.toml
           rm -f Cargo.toml.bak
-          grep -q 'git = "https://github.com/xtal-labs/xtal.git"' Cargo.toml  # fail fast if the rewrite missed
+          grep -q 'rev = "6df524010ab0092bf3a2737f428695d5b34d43b2"' Cargo.toml  # fail fast if the rewrite missed
 
       - name: Install Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
