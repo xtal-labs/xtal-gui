@@ -67,4 +67,3 @@ custom-protocol = ["tauri/custom-protocol"]
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
 
-[workspace]
