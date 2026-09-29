@@ -6,31 +6,36 @@ _Released {{DATE}}_
 
 ## ✨ What's Changed
 
-### From the bundled node (xtal 0.9.5)
+### Recover a restored wallet
 
-- **A peer can no longer trigger a false full-chain resync by relaying current
-  gossip.** Sync source selection now uses the height the peer proved in its
-  handshake. A peer that joined far behind but later relayed a current block is
-  kept as telemetry and is not promoted into a source for missing history.
-- **Header sync validates its anchor before changing local sync state.** The
-  anchor must be on the canonical chain and above the active hardened-checkpoint
-  reorg floor. Genesis-rooted history, noncanonical anchors and replayed
-  canonical prefixes are rejected before headers are staged, the leaf base is
-  rebased or block bodies are requested.
-- **Fork work is deterministic across epoch boundaries.** Comparisons include
-  shared stems whose backing can still change, deduplicate validator backing
-  and price each stem from the stake table at its own branch boundary. Candidate
-  branch committees are reconstructed from historical stake state, removing
-  arrival-order preference cycles and observer-dependent scores.
-- **Finalized work revisions include later stem contributions safely.** The
-  work gate and canonical update now cover the same comparison window, while
-  missing headers, bodies, undo records or epoch stake data fail closed instead
-  of producing a partial score.
+- **File → Recover Wallet Balance...** opens recovery from any tab. Enter the
+  wallet password to search for used addresses and rebuild history after restoring
+  an older backup. This recovery action does not unlock the wallet for spending.
+- The dialog displays address discovery and history scan progress, reports
+  incomplete searches, and refreshes wallet data after recovery finishes.
+- **Continue searching** widens address discovery automatically when funds may
+  lie beyond an unused address gap. No numeric search range is required.
+- Search settings and the incomplete-recovery marker survive restarts; rerun
+  recovery after synchronizing missing node history or extending the search.
 
-### In the app
+### Bundled backend fixes
 
-- The desktop package now embeds the 0.9.5 node library, so the sync and fork
-  safety fixes apply whether Crystal runs through the GUI or as a headless node.
+The app embeds xtal 0.9.6, with these changes since the backend bundled in v0.9.5:
+
+- All known mining, receiving and change addresses contribute to available balance
+  and coin selection, even when an older backup's allocation indices are stale.
+- Historical discovery includes spent receipts and revisits earlier payments
+  after deriving additional keys. Transaction labels and wallet locking are preserved.
+- Live gossip recovers missing ancestry through bounded header requests. Sibling
+  blocks and temporary retrieval failures no longer force a full-chain resync;
+  retries can fail over to other peers.
+- Existing wallet registries replay history once after upgrading. Balances may be
+  incomplete while that replay or an explicit recovery is running.
+
+### Release packaging
+
+- Desktop and frontend versions are aligned at 0.9.6. The release workflow checks
+  version consistency and builds against a pinned 0.9.6 backend revision.
 
 ---
 

@@ -10,6 +10,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Rust / Cargo (Tauri Backend)
+Cargo.lock
 target/
 target-linux-*/
 src-tauri/target/

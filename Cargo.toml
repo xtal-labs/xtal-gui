@@ -1,6 +1,8 @@
+[workspace]
+
 [package]
 name = "crystal-gui"
-version = "0.9.5"
+version = "0.9.6"
 description = "Crystal Blockchain GUI - Bitcoin-Qt style interface"
 authors = ["Crystal Labs"]
 edition = "2021"
