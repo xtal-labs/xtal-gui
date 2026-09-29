@@ -17,6 +17,7 @@ declare global {
     openWalletImportMnemonic?: () => void;
     openWalletImportKey?: () => void;
     openWalletImportFile?: () => void;
+    openWalletRecovery?: () => void;
     unloadWallet?: () => Promise<void>;
   }
 }

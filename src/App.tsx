@@ -19,7 +19,7 @@ import {
   Orbit,
 } from "lucide-react";
 
-import { ThemeProvider, LoadingScreen, NodeStartupError, BootstrapScreen } from "@/components/common";
+import { ThemeProvider, LoadingScreen, NodeStartupError, BootstrapScreen, WalletRecoveryModal } from "@/components/common";
 import { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent, ToastContainer } from "@/components/ui";
 import { Button } from "@/components/ui/button";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
@@ -493,6 +493,7 @@ function AppContent() {
   const [apiPort, setApiPort] = useState<number | null>(null);
   const [startupError, setStartupError] = useState<StartupErrorInfo | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const hasConnectedOnce = useRef(false);
 
   // Bootstrap loading state (shown while node starts in background)
@@ -1054,6 +1055,9 @@ function AppContent() {
       openModal("wallet-import-file");
     };
 
+    // Open the standalone wallet recovery modal (native File menu)
+    window.openWalletRecovery = () => setRecoveryOpen(true);
+
     // Unload wallet from menu
     window.unloadWallet = async () => {
       if (walletIsLoaded) {
@@ -1080,6 +1084,7 @@ function AppContent() {
       delete window.openWalletImportMnemonic;
       delete window.openWalletImportKey;
       delete window.openWalletImportFile;
+      delete window.openWalletRecovery;
       delete window.unloadWallet;
     };
   }, [
@@ -1316,6 +1321,13 @@ function AppContent() {
           </div>
         </div>
       </main>
+
+      {/* Standalone wallet recovery dialog (native File menu) */}
+      <WalletRecoveryModal
+        open={recoveryOpen}
+        onClose={() => setRecoveryOpen(false)}
+        onRecovered={() => requestWalletRefresh(true)}
+      />
     </div>
   );
 }

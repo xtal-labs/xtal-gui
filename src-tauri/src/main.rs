@@ -172,6 +172,12 @@ fn update_wallet_menu(app: &AppHandle, wallet_loaded: bool, available_wallets: &
             }
         }
 
+        if let Some(item) = find_menu_item_recursive(&menu, "recover_wallet_menu") {
+            if let Some(menu_item) = item.as_menuitem() {
+                let _ = menu_item.set_enabled(wallet_loaded);
+            }
+        }
+
         if let Some(item) = find_menu_item_recursive(&menu, "create_multisig_address_menu") {
             if let Some(menu_item) = item.as_menuitem() {
                 let _ = menu_item.set_enabled(wallet_loaded);
@@ -478,6 +484,11 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                     .build(app)?,
                 )
                 .item(
+                    &MenuItemBuilder::with_id("recover_wallet_menu", "Recover Wallet Balance...")
+                        .enabled(false)
+                        .build(app)?,
+                )
+                .item(
                     &MenuItemBuilder::with_id("unload_wallet", "Unload Wallet")
                         .enabled(false)
                         .build(app)?,
@@ -568,6 +579,11 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                     "change_wallet_password" => {
                         if let Err(e) = window.eval("window.openWalletChangePassword?.()") {
                             error!("Failed to eval openWalletChangePassword: {}", e);
+                        }
+                    }
+                    "recover_wallet_menu" => {
+                        if let Err(e) = window.eval("window.openWalletRecovery?.()") {
+                            error!("Failed to eval openWalletRecovery: {}", e);
                         }
                     }
                     "create_multisig_address_menu" => {
@@ -805,6 +821,8 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::change_password,
             commands::get_wallet_status,
             commands::get_wallet_balance,
+            commands::recover_wallet,
+            commands::get_wallet_sync_status,
             commands::get_wallet_mnemonic,
             // Wallet commands (addresses & transactions)
             commands::generate_address,

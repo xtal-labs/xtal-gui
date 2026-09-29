@@ -1543,6 +1543,68 @@ pub async fn change_password(
 // Wallet Status & Info
 // =============================================================================
 
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+pub struct RecoverWalletRequest {
+    password: String,
+    #[serde(default)]
+    continue_search: bool,
+}
+
+#[tauri::command]
+pub async fn recover_wallet(
+    state: State<'_, AppState>,
+    request: RecoverWalletRequest,
+) -> Result<xtal::wallet::recovery::RecoveryResult, String> {
+    let wallet = state
+        .services
+        .wallet
+        .as_ref()
+        .ok_or("Wallet not available")?;
+    let mode = if request.continue_search {
+        xtal::wallet::recovery::RecoveryMode::ContinueSearching
+    } else {
+        xtal::wallet::recovery::RecoveryMode::Automatic
+    };
+    wallet
+        .recover_wallet(&request.password, mode)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[derive(Serialize)]
+pub struct WalletSyncStatus {
+    current_height: u64,
+    target_height: u64,
+    is_syncing: bool,
+    recovery: xtal::wallet::recovery::RecoveryStatus,
+}
+
+#[tauri::command]
+pub async fn get_wallet_sync_status(
+    state: State<'_, AppState>,
+) -> Result<WalletSyncStatus, String> {
+    let wallet_id = state
+        .services
+        .wallet
+        .as_ref()
+        .and_then(|w| w.current_wallet_id())
+        .ok_or("No wallet loaded")?;
+    let service = state
+        .wallet_sync
+        .lock()
+        .map_err(|_| "Wallet sync lock unavailable")?
+        .get(&wallet_id)
+        .map(|handle| handle.service())
+        .ok_or("Wallet synchronization is starting")?;
+    let status = service.get_status().await;
+    Ok(WalletSyncStatus {
+        current_height: status.current_height,
+        target_height: status.target_height,
+        is_syncing: status.is_syncing,
+        recovery: status.recovery,
+    })
+}
+
 /// Get wallet status
 #[tauri::command]
 pub async fn get_wallet_status(state: State<'_, AppState>) -> Result<WalletStatus, String> {
@@ -5434,6 +5496,40 @@ mod tests {
         assert_eq!(totals.total, 5_000);
         assert_eq!(totals.immature, 0);
         assert_eq!(totals.confirmed, 5_000);
+    }
+
+    #[test]
+    fn history_receipt_at_a_known_high_index_is_also_available_when_unspent() {
+        let vk = ed25519_dalek::SigningKey::from_bytes(&[42; 32]).verifying_key();
+        let pkh = hash_public_key(&vk);
+        let wallet =
+            xtal::wallet::hd::HDWallet::from_public_keys(xtal::wallet::hd::ViewOnlyWalletData {
+                version: 3,
+                next_mining_index: 0,
+                next_receiving_index: 0,
+                next_change_index: 0,
+                next_vm_account_index: 0,
+                gap_limit: 20,
+                derived_public_keys: HashMap::from([(
+                    "m/44'/0'/0'/1/100".into(),
+                    hex::encode(vk.as_bytes()),
+                )]),
+            })
+            .unwrap();
+        let utxo = balance_utxo(1, 5_000, p2pkh_script_pubkey(&pkh));
+        let receipt =
+            Transaction::Standard(StandardTransaction::new(vec![], vec![utxo.output.clone()]));
+        assert!(transaction_outputs_to_pkhs(&receipt, &HashSet::from([pkh])));
+        let totals = classify_wallet_balance(
+            &HashMap::from([(pkh, vec![utxo])]),
+            &wallet.spend_candidate_pkhs(),
+            &HashSet::new(),
+            100,
+        );
+        assert_eq!(
+            totals.confirmed, 5_000,
+            "a stale address index must not separate history ownership from balance ownership"
+        );
     }
 
     #[test]
