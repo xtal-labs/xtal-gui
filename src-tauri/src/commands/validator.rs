@@ -5,7 +5,7 @@
 
 use xtal::shards::Shards;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::Serialize;
@@ -14,13 +14,10 @@ use tauri::State;
 use xtal::address_format::parse_address_input;
 use xtal::config::{ValidatorConfig, CONTRACT_ADDRESS};
 use xtal::consensus::validation::COINBASE_MATURITY;
-use xtal::difficulty::Difficulty;
-use xtal::fruit::difficulty::calculate_effective_difficulty;
 use xtal::fruit::production::{
-    estimate_production_rate_from_probability, recent_stem_cadence, win_probability,
-    ProductionRateEstimate, StemCadence,
+    build_fruit_difficulty_report, FruitDifficultyInfo, FruitDifficultyRequest,
 };
-use xtal::fruit::spec::{get_fruits_by_stake_requirement, get_spec};
+use xtal::fruit::spec::get_fruits_by_stake_requirement;
 use xtal::fruit::FruitType;
 use xtal::interfaces::validator::ProductionResult;
 use xtal::interfaces::{ChainDataProvider, UtxoData};
@@ -1187,162 +1184,70 @@ pub async fn get_fruit_difficulty_history(
         .collect()
 }
 
-/// A validator's expected time between fruits of one type, considered on its own.
-///
-/// Each `(anchor stem, fruit type)` pair is an independent lottery draw, so this is the rate
-/// the type would sustain if it were the only one the validator produced. It deliberately does
-/// not model the producer publishing only its most profitable winner per stem: that discount
-/// makes a type's number depend on which *other* types are switched on, and drives the
-/// low-reward types to zero ("Never") at today's near-ceiling difficulties. Matches the node's
-/// own per-validator estimate in `fruit::production::difficulty_report`.
-fn personal_production_estimate(
-    fruit_type: FruitType,
-    stake: u64,
-    base_difficulty: Difficulty,
-    cadence_numerator_secs: u64,
-    cadence_denominator: u64,
-) -> ProductionRateEstimate {
-    estimate_production_rate_from_probability(
-        win_probability(calculate_effective_difficulty(
-            fruit_type,
-            stake,
-            base_difficulty,
-        )),
-        cadence_numerator_secs,
-        cadence_denominator,
-    )
+/// Adapt the shared node outlook to the existing GUI field names and labels.
+fn fruit_production_stats(fruit: FruitDifficultyInfo) -> Result<FruitProductionStats, String> {
+    let fruit_type = parse_fruit_type(&fruit.fruit_type)?;
+    let personal = fruit
+        .validator
+        .and_then(|validator| validator.validator_estimate);
+    let network = fruit.network_estimate;
+    Ok(FruitProductionStats {
+        fruit_type: fruit.fruit_type,
+        emoji: fruit_to_emoji(fruit_type),
+        min_stake: fruit.min_stake,
+        target_interval_secs: fruit.target_interval_secs,
+        current_difficulty_bits: fruit.base_difficulty_bits,
+        expected_time_secs: network.expected_time_secs,
+        expected_time_label: network.expected_time_label,
+        expected_fruits_per_hour: network.expected_fruits_per_hour,
+        expected_stems_label: network.expected_stems_label,
+        win_probability_label: network.win_probability_label,
+        network_stake_units: fruit.network_stake_units,
+        reference_difficulty_bits: fruit.reference_difficulty_bits,
+        personal_expected_time_secs: personal
+            .as_ref()
+            .map(|estimate| estimate.expected_time_secs),
+        personal_expected_time_label: personal
+            .as_ref()
+            .map(|estimate| estimate.expected_time_label.clone()),
+        personal_expected_fruits_per_hour: personal
+            .as_ref()
+            .map(|estimate| estimate.expected_fruits_per_hour.clone()),
+        personal_expected_stems_label: personal
+            .as_ref()
+            .map(|estimate| estimate.expected_stems_label.clone()),
+        personal_win_probability_label: personal.map(|estimate| estimate.win_probability_label),
+    })
 }
 
-/// Get current production statistics for all fruit types.
-///
-/// Shows dynamic difficulty (current epoch) and expected production rates at the stem
-/// cadence measured off the canonical chain. When an address is provided, also calculates
-/// the validator's own expected time between fruits of each type, from its stake-scaled win
-/// chance. See [`personal_production_estimate`] for what that figure does and does not model.
+/// Per-type lottery opportunities at measured chain cadence, using the same
+/// epoch-effective stake and derived difficulty as REST, RPC, and WebSocket.
+/// Personal estimates work for any valid validator address, whether loaded here
+/// or not. Derivation failures are surfaced instead of inventing reference rates.
 #[tauri::command]
 pub async fn get_fruit_production_stats(
     state: State<'_, AppState>,
     address: Option<String>,
 ) -> Result<Vec<FruitProductionStats>, String> {
-    let blockchain = state.services.blockchain();
-    let current_epoch = blockchain.get_current_epoch();
-    let stake_table = blockchain.pos_consensus.validator_stakes_snapshot();
-    let StemCadence {
-        span_secs: cadence_numerator_secs,
-        stems: cadence_denominator,
-    } = recent_stem_cadence(blockchain.as_ref());
-
-    // Look up the local validator's stake if an address was provided.
-    // ValidatorService only represents validators loaded in this GUI process.
-    let validator_stake: Option<u64> = address.as_ref().and_then(|addr| {
-        state
-            .services
-            .get_validator(addr)
-            .and_then(|service| service.get_status().ok())
-            .map(|status| status.stake)
-    });
-
-    // One batched derivation for every type: the chain walk behind it keys on the
-    // epoch alone. Types the walk cannot derive fall back to their reference difficulty.
-    let fruit_specs = get_fruits_by_stake_requirement();
-    let requested: Vec<FruitType> = fruit_specs
-        .iter()
-        .map(|(fruit_type, _)| *fruit_type)
-        .collect();
-    let derived: HashMap<FruitType, Difficulty> = blockchain
-        .get_derived_fruit_difficulties(&requested, current_epoch)
-        .map(|pairs| pairs.into_iter().collect())
-        .unwrap_or_default();
-    let base_difficulty = |fruit_type: FruitType| {
-        derived
-            .get(&fruit_type)
-            .copied()
-            .unwrap_or_else(|| get_spec(fruit_type).reference_difficulty())
-    };
-
-    let mut stats = Vec::new();
-    for (fruit_type, spec) in fruit_specs {
-        let current_difficulty = base_difficulty(fruit_type);
-
-        // `network_stake_units` (whole threshold-units) is kept for the
-        // informational stat field only. The rate itself must NOT floor stake:
-        // count validators that meet the threshold and scale the difficulty by
-        // their *fractional* stake (the same whole-XTAL accounting as the
-        // personal estimate below), then treat the network as one aggregate
-        // entrant. Flooring here made the sole-staker network rate diverge from
-        // that validator's own rate.
-        let network_stake_units: u64 = stake_table
-            .values()
-            .map(|stake| stake.total / spec.min_stake_threshold)
-            .sum();
-        let qualifying_stake: u64 = stake_table
-            .values()
-            .map(|stake| stake.total)
-            .filter(|total| *total >= spec.min_stake_threshold)
-            .sum();
-        let network_difficulty = if qualifying_stake >= spec.min_stake_threshold {
-            calculate_effective_difficulty(fruit_type, qualifying_stake, current_difficulty)
-        } else {
-            current_difficulty
-        };
-        let network_estimate = estimate_production_rate_from_probability(
-            win_probability(network_difficulty),
-            cadence_numerator_secs,
-            cadence_denominator,
-        );
-
-        // Personal rate = this validator's own lottery for this type at its stake, at the
-        // measured stem cadence. Types it cannot afford fall back to the network estimate.
-        let personal_estimate = validator_stake
-            .filter(|stake| *stake >= spec.min_stake_threshold)
-            .map(|stake| {
-                personal_production_estimate(
-                    fruit_type,
-                    stake,
-                    current_difficulty,
-                    cadence_numerator_secs,
-                    cadence_denominator,
-                )
-            });
-
-        stats.push(FruitProductionStats {
-            fruit_type: format!("{:?}", fruit_type),
-            emoji: fruit_to_emoji(fruit_type),
-            min_stake: spec.min_stake_threshold.into(),
-            target_interval_secs: spec.target_interval_secs.unwrap_or(60),
-            current_difficulty_bits: current_difficulty.bits(),
-            expected_time_secs: network_estimate.expected_time_secs,
-            expected_time_label: network_estimate.expected_time_label,
-            expected_fruits_per_hour: network_estimate.expected_fruits_per_hour,
-            expected_stems_label: network_estimate.expected_stems_label,
-            win_probability_label: network_estimate.win_probability_label,
-            network_stake_units,
-            reference_difficulty_bits: spec.reference_difficulty_bits,
-            personal_expected_time_secs: personal_estimate
-                .as_ref()
-                .map(|estimate| estimate.expected_time_secs),
-            personal_expected_time_label: personal_estimate
-                .as_ref()
-                .map(|estimate| estimate.expected_time_label.clone()),
-            personal_expected_fruits_per_hour: personal_estimate
-                .as_ref()
-                .map(|estimate| estimate.expected_fruits_per_hour.clone()),
-            personal_expected_stems_label: personal_estimate
-                .as_ref()
-                .map(|estimate| estimate.expected_stems_label.clone()),
-            personal_win_probability_label: personal_estimate
-                .map(|estimate| estimate.win_probability_label),
-        });
-    }
-
-    Ok(stats)
+    let report = build_fruit_difficulty_report(
+        state.services.blockchain().as_ref(),
+        &FruitDifficultyRequest {
+            validator_address: address,
+            ..Default::default()
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    report
+        .fruits
+        .into_iter()
+        .map(fruit_production_stats)
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_validator_utxo, mature_stake_amount, personal_production_estimate,
-        ValidatorUtxoClass,
+        classify_validator_utxo, fruit_production_stats, mature_stake_amount, ValidatorUtxoClass,
     };
     use xtal::config::CONTRACT_ADDRESS;
     use xtal::fruit::spec::get_spec;
@@ -1434,56 +1339,56 @@ mod tests {
         );
     }
 
-    /// Stem cadence used by the estimate tests: the configured 600s / 32 stems = 18.75s.
-    const CADENCE_SPAN_SECS: u64 = 600;
-    const CADENCE_STEMS: u64 = 32;
-
     #[test]
-    fn lowest_ranked_fruit_still_has_a_finite_estimate() {
-        // Apple is last in profitability rank. The old estimate discounted it by every
-        // higher-ranked active type, which underflowed to zero and rendered as "Never".
-        // On its own lottery it wins ~54% of stems.
+    fn estimate_adapter_preserves_personal_outlook_and_ineligibility() {
+        use xtal::fruit::production::{
+            estimate_production_rate, FruitDifficultyInfo, ValidatorFruitDifficultyInfo,
+        };
         let spec = get_spec(FruitType::Apple);
-        let estimate = personal_production_estimate(
-            FruitType::Apple,
-            spec.min_stake_threshold,
-            spec.reference_difficulty(),
-            CADENCE_SPAN_SECS,
-            CADENCE_STEMS,
+        let network = estimate_production_rate(spec.reference_difficulty_bits, 80, 1, 1);
+        let personal = estimate_production_rate(spec.reference_difficulty_bits, 40, 1, 1);
+        let make_fruit = |estimate: Option<xtal::fruit::production::ProductionRateEstimate>| {
+            FruitDifficultyInfo {
+                fruit_type: "Apple".into(),
+                min_stake: spec.min_stake_threshold.into(),
+                target_interval_secs: spec.target_interval_secs.unwrap_or(60),
+                reference_difficulty_bits: spec.reference_difficulty_bits,
+                base_difficulty_bits: spec.reference_difficulty_bits,
+                base_target: "1".into(),
+                base_work: "1".into(),
+                network_stake_units: 1,
+                network_estimate: network.clone(),
+                validator: Some(ValidatorFruitDifficultyInfo {
+                    address: hex::encode(OWNER),
+                    stake: spec.min_stake_threshold.into(),
+                    stake_units: 1,
+                    eligible: estimate.is_some(),
+                    missing_stake: None,
+                    effective_difficulty_bits: None,
+                    effective_target: None,
+                    effective_work: None,
+                    validator_estimate: estimate,
+                }),
+                required_stake: None,
+            }
+        };
+        let stats = fruit_production_stats(make_fruit(Some(personal.clone())))
+            .expect("GUI estimate projection");
+        assert_eq!(stats.expected_time_secs, network.expected_time_secs);
+        assert_eq!(
+            stats.expected_fruits_per_hour,
+            network.expected_fruits_per_hour
         );
-
-        assert_ne!(estimate.expected_time_secs, u64::MAX);
-        assert_ne!(estimate.expected_time_label, "Never");
-        // ceil(18.75 / 0.537902) = 35s.
-        assert_eq!(estimate.expected_time_secs, 35);
-    }
-
-    #[test]
-    fn estimate_depends_only_on_threshold_stake_and_difficulty() {
-        // Pear, Orange and Strawberry share a min stake threshold but sit at three different
-        // profitability ranks. With the pre-emption discount gone, rank cannot move the
-        // number: the same stake against the same base difficulty must estimate identically.
-        let types = [FruitType::Pear, FruitType::Orange, FruitType::Strawberry];
-        let threshold = get_spec(FruitType::Pear).min_stake_threshold;
-        for fruit_type in types {
-            assert_eq!(get_spec(fruit_type).min_stake_threshold, threshold);
-        }
-
-        let difficulty = get_spec(FruitType::Apple).reference_difficulty();
-        let estimates: Vec<_> = types
-            .into_iter()
-            .map(|fruit_type| {
-                personal_production_estimate(
-                    fruit_type,
-                    threshold,
-                    difficulty,
-                    CADENCE_SPAN_SECS,
-                    CADENCE_STEMS,
-                )
-            })
-            .collect();
-
-        assert_eq!(estimates[0], estimates[1]);
-        assert_eq!(estimates[1], estimates[2]);
+        assert_eq!(
+            stats.personal_expected_time_secs,
+            Some(personal.expected_time_secs)
+        );
+        assert_eq!(
+            stats.personal_win_probability_label,
+            Some(personal.win_probability_label)
+        );
+        let ineligible = fruit_production_stats(make_fruit(None)).expect("ineligible projection");
+        assert!(ineligible.personal_expected_time_secs.is_none());
+        assert!(ineligible.personal_expected_fruits_per_hour.is_none());
     }
 }
