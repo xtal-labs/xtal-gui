@@ -38,7 +38,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
-import { AmountDisplay, HashDisplay, StatusBadge, TransactionList } from "@/components/common";
+import { AmountDisplay, StatusBadge, TransactionList } from "@/components/common";
 import { TourButton } from "@/components/Tour";
 import { walletChapter } from "@/components/Tour/chapters/wallet";
 import { useWalletStore, useUiStore, useTourStore } from "@/stores";
@@ -60,7 +60,7 @@ import { SendModal } from "./SendModal";
 import { ReceiveModal } from "./ReceiveModal";
 import { VmSendModal } from "./VmSendModal";
 import { VmReceiveModal } from "./VmReceiveModal";
-import { VmAccountList, type BalanceSortOrder } from "./VmAccountList";
+import { AccountList, type AccountListEntry, type BalanceSortOrder } from "./AccountList";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
 import { MultisigModal } from "./MultisigModal";
@@ -115,10 +115,22 @@ function transactionHistoryParams(
   page: number,
   filter: UtxoTransactionFilter
 ): Record<string, unknown> {
+  // Read at call time so a refresh always follows the current selection.
+  const address = useWalletStore.getState().selectedAddress;
   return {
     limit: PAGE_SIZE,
     offset: getPageOffset(page),
     ...(filter === "all" ? {} : { txTypeFilter: filter }),
+    ...(address ? { address } : {}),
+  };
+}
+
+function vmTransactionHistoryParams(page: number): Record<string, unknown> {
+  const address = useWalletStore.getState().selectedVmAccount;
+  return {
+    limit: PAGE_SIZE,
+    offset: getPageOffset(page),
+    ...(address ? { address } : {}),
   };
 }
 
@@ -141,6 +153,7 @@ export default function Wallet() {
     walletName,
     balance,
     addresses,
+    selectedAddress,
     transactions,
     transactionPagination,
     vmBalance,
@@ -151,6 +164,7 @@ export default function Wallet() {
     availableWallets,
     setBalance,
     setAddresses,
+    setSelectedAddress,
     setTransactionPage,
     setPageLoading,
     setVmBalance,
@@ -165,11 +179,17 @@ export default function Wallet() {
   } = useWalletStore();
   const { addToast, activeModal, modalData, openModal, closeModal } = useUiStore();
   const [vmSortOrder, setVmSortOrder] = useState<BalanceSortOrder>("desc");
+  const [vmHideEmpty, setVmHideEmpty] = useState(false);
+  const [utxoSortOrder, setUtxoSortOrder] = useState<BalanceSortOrder>("desc");
+  const [utxoHideEmpty, setUtxoHideEmpty] = useState(false);
   const selectedVmAddress =
     vmAddresses.find((addr) => addr.address === selectedVmAccount) ?? null;
   // What VM sends and withdrawals can draw from: the selected account, or
   // every account when none is selected.
   const vmSourceBalance = selectedVmAddress?.balance ?? vmBalance?.balance ?? "0";
+  const selectedUtxoAddress =
+    addresses.find((addr) => addr.address === selectedAddress) ?? null;
+  const utxoSourceBalance = selectedUtxoAddress?.spendable ?? balance.confirmed;
 
   // Derive modal visibility from store
   const showLoadModal = activeModal === MODAL_WALLET_LOAD;
@@ -328,20 +348,17 @@ export default function Wallet() {
       const [vmBalanceResult, vmAddrsResult, txResult] = await Promise.all([
         tauriCommand<VmAccountBalance>("get_vm_account_balance"),
         tauriCommand<VmAddress[]>("get_vm_addresses"),
-        tauriCommand<TransactionHistoryResponse>("get_vm_transaction_history", {
-          limit: PAGE_SIZE,
-          offset: getPageOffset(requestedPage),
-        }),
+        tauriCommand<TransactionHistoryResponse>(
+          "get_vm_transaction_history",
+          vmTransactionHistoryParams(requestedPage)
+        ),
       ]);
 
       const totalPages = Math.max(1, Math.ceil(txResult.totalCount / PAGE_SIZE));
       if (requestedPage > totalPages) {
         const clampedResult = await tauriCommand<TransactionHistoryResponse>(
           "get_vm_transaction_history",
-          {
-            limit: PAGE_SIZE,
-            offset: getPageOffset(totalPages),
-          }
+          vmTransactionHistoryParams(totalPages)
         );
         setVmBalance(vmBalanceResult);
         setVmAddresses(vmAddrsResult);
@@ -486,11 +503,10 @@ export default function Wallet() {
     vmTransactionPageRef.current = requestedPage;
     setVmPageLoading(true);
     try {
-      const offset = getPageOffset(requestedPage);
-      const result = await tauriCommand<TransactionHistoryResponse>("get_vm_transaction_history", {
-        limit: PAGE_SIZE,
-        offset,
-      });
+      const result = await tauriCommand<TransactionHistoryResponse>(
+        "get_vm_transaction_history",
+        vmTransactionHistoryParams(requestedPage)
+      );
       setVmTransactionPage(requestedPage, result.transactions, result.totalCount);
     } catch (err) {
       console.error("Failed to load VM transactions:", err);
@@ -515,6 +531,52 @@ export default function Wallet() {
     setUtxoTransactionFilter(value);
     refreshWalletData(1, undefined, value);
   };
+
+  // Selecting an address narrows the history below to it, from page one.
+  const handleSelectUtxoAddress = (address: string | null) => {
+    setSelectedAddress(address);
+    fetchTransactionPage(1);
+  };
+
+  const handleSelectVmAccount = (address: string | null) => {
+    setSelectedVmAccount(address);
+    fetchVmTransactionPage(1);
+  };
+
+  const utxoAccountEntries: AccountListEntry[] = addresses.map((addr) => ({
+    address: addr.address,
+    balance: addr.spendable,
+    locked: addr.locked,
+    order: addr.order ?? 0,
+    className: addr.kind === "validator" ? "validator-address-row" : undefined,
+    icon:
+      addr.kind === "validator" ? <ShieldCheck className="h-3.5 w-3.5 text-primary shrink-0" /> : undefined,
+    badges: (
+      <>
+        {addr.label && (
+          <Badge variant="outline" shape="chamfered" className="text-xs shrink-0">
+            {addr.label}
+          </Badge>
+        )}
+        {(addr.kind === "validator" || addr.kind === "staking") && (
+          <Badge variant="secondary" shape="chamfered" className="text-xs shrink-0">
+            {addr.kind === "validator" ? "Validator" : "Staking"}
+          </Badge>
+        )}
+      </>
+    ),
+  }));
+
+  const vmAccountEntries: AccountListEntry[] = vmAddresses.map((addr) => ({
+    address: addr.address,
+    balance: addr.balance,
+    order: addr.order ?? 0,
+    badges: addr.label ? (
+      <Badge variant="outline" shape="chamfered" className="text-xs shrink-0">
+        {addr.label}
+      </Badge>
+    ) : undefined,
+  }));
 
   const handleLoadWallet = async () => {
     if (!selectedWallet) {
@@ -961,10 +1023,40 @@ export default function Wallet() {
         <CardContent className="pt-6">
           <div className="text-center">
             <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2">
-              AVAILABLE BALANCE
+              {selectedUtxoAddress ? "SELECTED ADDRESS BALANCE" : "AVAILABLE BALANCE"}
             </p>
-            <AmountDisplay amount={balance.confirmed} size="xl" showSymbol />
-            {(toShards(balance.pending) > 0n || toShards(balance.immature) > 0n) && (
+            <AmountDisplay amount={utxoSourceBalance} size="xl" showSymbol />
+            {selectedUtxoAddress && (
+              <>
+                <p className="font-mono text-xs text-foreground-muted mt-2 truncate">
+                  {selectedUtxoAddress.address}
+                </p>
+                {toShards(selectedUtxoAddress.locked) > 0n && (
+                  <div className="mt-4 text-sm">
+                    <p className="text-foreground-muted font-heading text-xs">LOCKED</p>
+                    <AmountDisplay
+                      amount={selectedUtxoAddress.locked ?? 0}
+                      size="sm"
+                      showSymbol={false}
+                    />
+                  </div>
+                )}
+                <div className="flex items-center justify-center gap-2 mt-4 text-xs text-foreground-muted">
+                  <span>Wallet available</span>
+                  <AmountDisplay amount={balance.confirmed} size="sm" showSymbol />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-accent"
+                    onClick={() => handleSelectUtxoAddress(null)}
+                  >
+                    Use all addresses
+                  </Button>
+                </div>
+              </>
+            )}
+            {!selectedUtxoAddress &&
+              (toShards(balance.pending) > 0n || toShards(balance.immature) > 0n) && (
               <div className="flex items-center justify-center gap-4 mt-4 text-sm">
                 {toShards(balance.pending) > 0n && (
                   <div>
@@ -1015,63 +1107,34 @@ export default function Wallet() {
         </Button>
       </div>
 
-      {/* Addresses */}
-      <Card variant="crystalline">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-heading tracking-wide">ADDRESSES</CardTitle>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm" onClick={() => openModal(MODAL_MULTISIG)}>
-                <ShieldCheck className="h-4 w-4 mr-1" />
-                Multisig
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => openModal(MODAL_RECEIVE)}>
-                <Plus className="h-4 w-4 mr-1" />
-                New Address
-              </Button>
-            </div>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {addresses.length === 0 ? (
-            <p className="text-center text-foreground-muted py-4 font-heading">
-              No addresses yet
-            </p>
-          ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {addresses.map((addr) => (
-                <div
-                  key={addr.address}
-                  className={cn(
-                    "flex items-center justify-between py-2 px-3 chamfered-sm bg-muted/50",
-                    addr.kind === "validator" && "validator-address-row"
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    {addr.kind === "validator" && (
-                      <ShieldCheck className="h-3.5 w-3.5 text-primary" />
-                    )}
-                    <HashDisplay hash={addr.address} truncate={false} showTooltip={false} />
-                    {addr.label && (
-                      <Badge variant="outline" shape="chamfered" className="text-xs">
-                        {addr.label}
-                      </Badge>
-                    )}
-                    {addr.kind === "validator" && (
-                      <Badge variant="secondary" shape="chamfered" className="text-xs">
-                        Validator
-                      </Badge>
-                    )}
-                  </div>
-                  <Badge variant={addr.used ? "secondary" : "success"} shape="chamfered" diamond>
-                    {addr.used ? "Used" : "Fresh"}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* Addresses: selecting one makes it the source of UTXO sends */}
+      <AccountList
+        title="ADDRESSES"
+        entries={utxoAccountEntries}
+        allLabel="All addresses"
+        totalBalance={balance.confirmed}
+        selected={selectedAddress}
+        onSelect={handleSelectUtxoAddress}
+        sortOrder={utxoSortOrder}
+        onSortOrderChange={setUtxoSortOrder}
+        hideEmpty={utxoHideEmpty}
+        onHideEmptyChange={setUtxoHideEmpty}
+        selectedHint="Sends spend from the selected address, change returns to it, and the history below shows only its transactions."
+        unselectedHint="Select an address to send from it alone and see its history."
+        emptyText="No addresses yet"
+        actions={
+          <>
+            <Button variant="ghost" size="sm" onClick={() => openModal(MODAL_MULTISIG)}>
+              <ShieldCheck className="h-4 w-4 mr-1" />
+              Multisig
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => openModal(MODAL_RECEIVE)}>
+              <Plus className="h-4 w-4 mr-1" />
+              New Address
+            </Button>
+          </>
+        }
+      />
 
       {/* Transaction History */}
       <div data-tour="wallet-transactions">
@@ -1122,7 +1185,7 @@ export default function Wallet() {
                   variant="ghost"
                   size="sm"
                   className="h-7 px-2 text-accent"
-                  onClick={() => setSelectedVmAccount(null)}
+                  onClick={() => handleSelectVmAccount(null)}
                 >
                   Use all accounts
                 </Button>
@@ -1166,14 +1229,26 @@ export default function Wallet() {
       </div>
 
       {/* VM Accounts: selecting one makes it the source of every VM write */}
-      <VmAccountList
-        addresses={vmAddresses}
+      <AccountList
+        title="VM ACCOUNTS"
+        entries={vmAccountEntries}
+        allLabel="All accounts"
         totalBalance={vmBalance?.balance ?? 0}
         selected={selectedVmAccount}
-        onSelect={setSelectedVmAccount}
+        onSelect={handleSelectVmAccount}
         sortOrder={vmSortOrder}
         onSortOrderChange={setVmSortOrder}
-        onGenerateAddress={handleGenerateVmAddress}
+        hideEmpty={vmHideEmpty}
+        onHideEmptyChange={setVmHideEmpty}
+        selectedHint="Sends, withdrawals and contract calls use the selected account, and the history below shows only its transactions."
+        unselectedHint="Select an account to send, withdraw or call contracts from it alone and see its history."
+        emptyText="No VM addresses yet"
+        actions={
+          <Button variant="ghost" size="sm" onClick={handleGenerateVmAddress}>
+            <Plus className="h-4 w-4 mr-1" />
+            New Address
+          </Button>
+        }
       />
 
       {/* VM Transaction History */}
@@ -2163,7 +2238,8 @@ export default function Wallet() {
       <SendModal
         isOpen={showSendModal}
         onClose={closeModal}
-        maxBalance={balance.confirmed}
+        maxBalance={utxoSourceBalance}
+        fromAddress={selectedAddress}
       />
 
       {/* Receive Modal */}

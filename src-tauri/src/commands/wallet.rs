@@ -20,7 +20,7 @@ use xtal::fruit::codec::{Decode, Encode};
 use xtal::fruit::core::FruitTx;
 
 use xtal::address::encode_sh;
-use xtal::address_format::{format_contract_address, format_utxo_address};
+use xtal::address_format::{format_contract_address, format_utxo_address, parse_address_input};
 use xtal::consensus::validation::COINBASE_MATURITY;
 use xtal::crypto::hash_public_key;
 use xtal::gas::TX_BASE_GAS;
@@ -43,7 +43,7 @@ use xtal::wallet::database::models::{
     InputDetail, KeyType, TransactionRecord, TransactionType, WalletScriptRecord, WalletType,
 };
 use xtal::wallet::database::queries::WalletQueries;
-use xtal::wallet::transfer::{TransferRecipient, TransferRequest};
+use xtal::wallet::transfer::{TransferRecipient, TransferRequest, UtxoAddressBalance};
 use xtal::wallet::vm_sweep::{
     SubmittedSweepLeg as LibSubmittedSweepLeg, SweepGas, SweepLegQuote, SweepPlanError,
     VmAccountState, VmSweepError,
@@ -147,6 +147,12 @@ pub struct WalletAddressInfo {
     pub order: u32,
     pub label: Option<String>,
     pub used: bool,
+    /// What a send from this address can spend now; `None` for addresses
+    /// this wallet cannot spend from alone (multisig).
+    pub spendable: Option<Shards>,
+    /// Outputs not spendable yet (immature or staked); `None` alongside
+    /// `spendable`.
+    pub locked: Option<Shards>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2070,6 +2076,15 @@ pub async fn get_addresses(
         .as_ref()
         .filter(|record| record.wallet_type == WalletType::Validator)
         .and_then(|record| record.validator_address());
+    let balances: HashMap<[u8; 20], UtxoAddressBalance> = wallet
+        .utxo_address_balances(
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map_err(|e| format!("Failed to read address balances: {}", e))?
+        .into_iter()
+        .map(|balance| (balance.pkh, balance))
+        .collect();
     let saved_script_addresses =
         if let (Some(db), Some(wallet_id)) = (wallet.database(), wallet_id.as_ref()) {
             let queries = WalletQueries::new(db.connection());
@@ -2083,7 +2098,11 @@ pub async fn get_addresses(
             Vec::new()
         };
 
-    wallet
+    let staking_pkh = wallet
+        .with_wallet(|w| w.get_validator_staking_public_key())
+        .ok()
+        .map(|(_, verifying_key)| hash_public_key(&verifying_key));
+    let mut addresses = wallet
         .with_wallet(|w| {
             let mining_keys = w.get_all_mining_keys().unwrap_or_default();
             let receiving = w.get_all_receiving_addresses().unwrap_or_default();
@@ -2110,6 +2129,8 @@ pub async fn get_addresses(
                         order: addresses.len() as u32,
                         label: Some("Primary".to_string()),
                         used: false,
+                        spendable: None,
+                        locked: None,
                     });
                 }
             }
@@ -2129,6 +2150,8 @@ pub async fn get_addresses(
                             None
                         },
                         used: false,
+                        spendable: None,
+                        locked: None,
                     });
                 }
             }
@@ -2142,6 +2165,8 @@ pub async fn get_addresses(
                         order: addresses.len() as u32,
                         label: None,
                         used: false,
+                        spendable: None,
+                        locked: None,
                     });
                 }
             }
@@ -2172,6 +2197,8 @@ pub async fn get_addresses(
                         order: addresses.len() as u32,
                         label,
                         used: false,
+                        spendable: None,
+                        locked: None,
                     });
                 }
             }
@@ -2185,6 +2212,8 @@ pub async fn get_addresses(
                         order: addresses.len() as u32,
                         label: None,
                         used: false,
+                        spendable: None,
+                        locked: None,
                     });
                 }
             }
@@ -2199,7 +2228,50 @@ pub async fn get_addresses(
             }
             Ok(addresses)
         })
-        .map_err(|e| format!("Failed to get addresses: {}", e))
+        .map_err(|e| format!("Failed to get addresses: {}", e))?;
+    attach_address_balances(&mut addresses, balances, staking_pkh);
+    Ok(addresses)
+}
+
+/// Fill in each address's balance, then list funded spend candidates the
+/// catalog leaves out: the staking key of a normal wallet, or keys a stale
+/// derivation cursor no longer covers.
+fn attach_address_balances(
+    addresses: &mut Vec<WalletAddressInfo>,
+    mut balances: HashMap<[u8; 20], UtxoAddressBalance>,
+    staking_pkh: Option<[u8; 20]>,
+) {
+    for info in addresses.iter_mut().filter(|info| info.kind != "multisig") {
+        let balance = parse_address_input(&info.address)
+            .ok()
+            .and_then(|pkh| balances.remove(&pkh));
+        info.spendable = Some(
+            balance
+                .as_ref()
+                .map_or(Shards::ZERO, |b| b.spendable.into()),
+        );
+        info.locked = Some(balance.map_or(Shards::ZERO, |b| b.locked.into()));
+    }
+
+    let mut extras: Vec<UtxoAddressBalance> = balances.into_values().collect();
+    extras.sort_by_key(|balance| balance.pkh);
+    for balance in extras {
+        let kind = if staking_pkh == Some(balance.pkh) {
+            "staking"
+        } else {
+            "funded"
+        };
+        addresses.push(WalletAddressInfo {
+            address: format_utxo_address(&balance.pkh),
+            index: 0,
+            kind: kind.to_string(),
+            order: addresses.len() as u32,
+            label: None,
+            used: true,
+            spendable: Some(balance.spendable.into()),
+            locked: Some(balance.locked.into()),
+        });
+    }
 }
 
 // =============================================================================
@@ -2233,6 +2305,22 @@ fn fee_strategy_from_request(
     }
 }
 
+/// `request` restricted to the address the user selected to send from, if
+/// any; change then returns to that address.
+fn with_utxo_source(
+    request: TransferRequest,
+    from_address: Option<&str>,
+) -> Result<TransferRequest, String> {
+    match from_address {
+        Some(address) => {
+            let source = parse_address_input(address)
+                .map_err(|e| format!("Invalid source address: {}", e))?;
+            Ok(request.with_source(source))
+        }
+        None => Ok(request),
+    }
+}
+
 /// Estimate the selected-input transaction fee for a wallet send.
 #[tauri::command]
 pub async fn estimate_send_transaction_fee(
@@ -2240,6 +2328,7 @@ pub async fn estimate_send_transaction_fee(
     to_address: String,
     amount: Shards,
     fee_rate: u64,
+    from_address: Option<String>,
 ) -> Result<SendFeeEstimate, String> {
     if amount.get() == 0 {
         return Err("Amount must be greater than 0".to_string());
@@ -2255,8 +2344,11 @@ pub async fn estimate_send_transaction_fee(
         .ok_or("Wallet manager not available")?;
     let recipient = parse_send_recipient(&to_address)?;
 
-    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount.get())])
-        .with_fee(FeeStrategy::PerByte(fee_rate));
+    let request = with_utxo_source(
+        TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount.get())])
+            .with_fee(FeeStrategy::PerByte(fee_rate)),
+        from_address.as_deref(),
+    )?;
     let blockchain = state.services.blockchain();
     let estimate = wallet
         .estimate_transfer(request, blockchain.as_ref(), state.services.mempool())
@@ -2288,6 +2380,7 @@ pub async fn send_transaction(
     fee: Option<Shards>,
     fee_rate: Option<u64>,
     password: String,
+    from_address: Option<String>,
 ) -> Result<SendResult, String> {
     let wallet = state
         .services
@@ -2306,8 +2399,11 @@ pub async fn send_transaction(
     // now sends a per-byte rate so the builder can price by selected UTXO size.
     let fee_strategy = fee_strategy_from_request(fee, fee_rate)?;
 
-    let request = TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount.get())])
-        .with_fee(fee_strategy);
+    let request = with_utxo_source(
+        TransferRequest::new(vec![TransferRecipient::p2pkh(recipient, amount.get())])
+            .with_fee(fee_strategy),
+        from_address.as_deref(),
+    )?;
     let blockchain = state.services.blockchain();
     let outcome = wallet
         .send_transfer_with_details(request, blockchain.as_ref(), state.services.mempool())
@@ -2436,6 +2532,27 @@ fn transaction_outputs_to_pkhs(tx: &Transaction, wallet_pkhs: &HashSet<[u8; 20]>
     })
 }
 
+/// Whether `record` spends from or pays any of `pkhs`: the per-address
+/// history filter for the wallet's own outgoing rows.
+fn transaction_record_touches_pkhs(record: &TransactionRecord, pkhs: &HashSet<[u8; 20]>) -> bool {
+    let spends_from = record
+        .input_details
+        .as_deref()
+        .and_then(InputDetail::deserialize_list)
+        .is_some_and(|inputs| {
+            inputs.iter().any(|input| {
+                input
+                    .address
+                    .as_deref()
+                    .and_then(|address| parse_address_input(address).ok())
+                    .is_some_and(|pkh| pkhs.contains(&pkh))
+            })
+        });
+    spends_from
+        || Transaction::decode(&mut record.raw_tx.as_slice())
+            .is_ok_and(|tx| transaction_outputs_to_pkhs(&tx, pkhs))
+}
+
 /// Get transaction history including confirmed transactions from blockchain
 #[tauri::command]
 pub async fn get_transaction_history(
@@ -2473,15 +2590,16 @@ pub async fn get_transaction_history(
     // 2. Validator address  -> resolve its wallet id by that key directly
     //    (get_status() can fail and silently drop us onto the main wallet).
     // 3. Otherwise          -> the main wallet.
-    let (wallet_db_ref, query_wallet_id) = if let Some(wid) = wallet_id.clone() {
-        (main_db.clone(), Some(wid))
-    } else if let Some(ref addr) = address {
+    let validator_wallet_id = address.as_ref().and_then(|addr| {
         state
             .services
             .get_validator(addr.as_str())
             .and_then(|validator| validator.wallet_id())
-            .map(|wid| (main_db.clone(), Some(wid)))
-            .unwrap_or_else(main_pair)
+    });
+    let (wallet_db_ref, query_wallet_id) = if let Some(wid) = wallet_id.clone() {
+        (main_db.clone(), Some(wid))
+    } else if let Some(wid) = validator_wallet_id.clone() {
+        (main_db.clone(), Some(wid))
     } else {
         main_pair()
     };
@@ -2503,6 +2621,14 @@ pub async fn get_transaction_history(
 
         get_wallet_pkh_set(wallet)?
     };
+    // A validator's address stands for its whole wallet. Any other address
+    // narrows the main wallet's history to rows that touch that address;
+    // incoming rows already follow `wallet_pkhs`, outgoing ones need this.
+    let outgoing_touches_address = |record: &TransactionRecord| {
+        address.is_none()
+            || validator_wallet_id.is_some()
+            || transaction_record_touches_pkhs(record, &wallet_pkhs)
+    };
 
     // Query wallet database for outgoing transactions (works for both validator and normal wallet)
     // This must happen before building the address set since both contexts share the same DB
@@ -2514,7 +2640,10 @@ pub async fn get_transaction_history(
         match queries.list_pending_outgoing() {
             Ok(pending) => {
                 log::debug!("Found {} pending outgoing transactions", pending.len());
-                for ptx in pending {
+                for ptx in pending
+                    .into_iter()
+                    .filter(|ptx| outgoing_touches_address(ptx))
+                {
                     let in_mempool = mempool.get_transaction_by_hash(&ptx.txid).is_some();
 
                     // An in-memory mempool starts empty after a process restart, so its absence
@@ -2632,7 +2761,10 @@ pub async fn get_transaction_history(
 
         // Include confirmed outgoing transactions (sends, stakes, unstakes)
         if let Ok(confirmed_outgoing) = queries.list_confirmed_outgoing() {
-            for ctx in confirmed_outgoing {
+            for ctx in confirmed_outgoing
+                .into_iter()
+                .filter(|ctx| outgoing_touches_address(ctx))
+            {
                 if !seen_txids.contains(&ctx.txid) {
                     seen_txids.insert(ctx.txid);
                     let (confirmed_at, height) = ctx.confirmation.unwrap_or((ctx.created_at, 0));
@@ -2709,6 +2841,9 @@ pub async fn get_transaction_history(
                     && !transaction_record_is_incoming_for_pkhs(&ctx, &wallet_pkhs)
                     && !is_utxo_bridge_deposit_record
                 {
+                    continue;
+                }
+                if ctx.is_outgoing() && !outgoing_touches_address(&ctx) {
                     continue;
                 }
 
@@ -4909,6 +5044,7 @@ pub async fn get_vm_transaction_history(
     limit: Option<usize>,
     offset: Option<usize>,
     wallet_id: Option<String>,
+    address: Option<String>,
 ) -> Result<TransactionHistoryResponse, String> {
     let limit = limit.unwrap_or(50);
     let offset = offset.unwrap_or(0);
@@ -4933,7 +5069,12 @@ pub async fn get_vm_transaction_history(
         .ok_or("Wallet not available")?;
     let db = wallet.database().ok_or("Wallet database not available")?;
     let queries = WalletQueries::new(db.connection()).for_wallet(query_wallet_id.as_str());
-    let wallet_pkhs = get_wallet_pkh_set(wallet)?;
+    // One account's history classifies every transaction against that
+    // account alone, so amounts are its own, not the wallet's.
+    let wallet_pkhs = match parse_vm_source(address.as_deref())? {
+        Some(pkh) => HashSet::from([pkh]),
+        None => get_wallet_pkh_set(wallet)?,
+    };
     let mut transactions: Vec<TransactionSummary> = Vec::new();
 
     let mut seen_txids = std::collections::HashSet::new();
@@ -5516,6 +5657,122 @@ mod tests {
             totals.pending_spent, 5_000,
             "mempool-consumed value is available for projected-total replacement"
         );
+    }
+
+    /// A send spending one output of `input_owner` and paying `outputs`.
+    fn send_record(input_owner: &[u8; 20], outputs: &[[u8; 20]]) -> TransactionRecord {
+        let tx = Transaction::Standard(StandardTransaction::new(
+            Vec::new(),
+            outputs
+                .iter()
+                .map(|pkh| TxOut {
+                    amount: 1_000,
+                    currency: CurrencyType::XTAL,
+                    script_pubkey: p2pkh_script_pubkey(pkh),
+                })
+                .collect(),
+        ));
+        TransactionRecord {
+            txid: [7u8; 32],
+            raw_tx: tx.encode(),
+            tx_type: TransactionType::Send,
+            amount: 1_000,
+            fee: Some(100),
+            to_address: None,
+            memo: None,
+            created_at: 0,
+            confirmation: None,
+            expires_at: None,
+            priority: None,
+            input_details: InputDetail::serialize_list(&[InputDetail {
+                txid: hex::encode([6u8; 32]),
+                index: 0,
+                amount: 2_100,
+                address: Some(format_utxo_address(input_owner)),
+            }]),
+            execution_status: None,
+        }
+    }
+
+    fn catalog_entry(address: String, kind: &str) -> WalletAddressInfo {
+        WalletAddressInfo {
+            address,
+            index: 0,
+            kind: kind.to_string(),
+            order: 0,
+            label: None,
+            used: false,
+            spendable: None,
+            locked: None,
+        }
+    }
+
+    #[test]
+    fn address_balances_fill_the_catalog_and_list_funded_extras() {
+        let mining = [1u8; 20];
+        let receiving = [2u8; 20];
+        let staking = [3u8; 20];
+        let balance = |pkh, spendable, locked| {
+            (
+                pkh,
+                UtxoAddressBalance {
+                    pkh,
+                    spendable,
+                    locked,
+                },
+            )
+        };
+        let mut addresses = vec![
+            catalog_entry(format_utxo_address(&mining), "mining"),
+            catalog_entry(format_utxo_address(&receiving), "receiving"),
+            catalog_entry("3Multisig".to_string(), "multisig"),
+        ];
+
+        attach_address_balances(
+            &mut addresses,
+            HashMap::from([balance(mining, 500, 200), balance(staking, 70, 30)]),
+            Some(staking),
+        );
+
+        let figures: Vec<_> = addresses
+            .iter()
+            .map(|info| (info.kind.as_str(), info.spendable, info.locked))
+            .collect();
+        assert_eq!(
+            figures,
+            vec![
+                ("mining", Some(Shards::from(500)), Some(Shards::from(200))),
+                ("receiving", Some(Shards::ZERO), Some(Shards::ZERO)),
+                ("multisig", None, None),
+                ("staking", Some(Shards::from(70)), Some(Shards::from(30))),
+            ]
+        );
+        assert_eq!(addresses[3].address, format_utxo_address(&staking));
+    }
+
+    #[test]
+    fn a_record_touches_the_addresses_it_spends_from_or_pays() {
+        let source = [1u8; 20];
+        let unrelated = [2u8; 20];
+        let external = [3u8; 20];
+        let send = send_record(&source, &[external]);
+
+        assert!(transaction_record_touches_pkhs(
+            &send,
+            &HashSet::from([source])
+        ));
+        assert!(transaction_record_touches_pkhs(
+            &send,
+            &HashSet::from([external])
+        ));
+        assert!(!transaction_record_touches_pkhs(
+            &send,
+            &HashSet::from([unrelated])
+        ));
+        assert!(transaction_record_touches_pkhs(
+            &send_record(&unrelated, &[external, source]),
+            &HashSet::from([source])
+        ));
     }
 
     #[test]

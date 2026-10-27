@@ -117,7 +117,14 @@ export const useWalletStore = create<WalletState>((set) => ({
           : 0,
     }),
 
-  setAddresses: (addresses) => set({ addresses }),
+  setAddresses: (addresses) =>
+    set((state) => ({
+      addresses,
+      // A selection the wallet no longer lists (another wallet loaded) is void.
+      selectedAddress: addresses.some((addr) => addr.address === state.selectedAddress)
+        ? state.selectedAddress
+        : null,
+    })),
 
   addAddress: (address) =>
     set((state) => ({

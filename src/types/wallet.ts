@@ -20,10 +20,14 @@ export interface WalletBalance {
 export interface Address {
   address: string;
   index: number;
-  kind?: "mining" | "receiving" | "change" | "multisig" | "validator";
+  kind?: "mining" | "receiving" | "change" | "multisig" | "validator" | "staking" | "funded";
   order?: number;
   label?: string;
   used: boolean;
+  /** What a send from this address can spend now, in shards; null when the wallet cannot send from it alone (multisig) */
+  spendable: string | null;
+  /** Shards at this address that are not spendable yet (immature or staked) */
+  locked: string | null;
 }
 
 export interface VmAddress {

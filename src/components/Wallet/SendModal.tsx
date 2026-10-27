@@ -19,7 +19,7 @@ import { CardContent, CardHeader, CardTitle, CardDescription } from "@/component
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ModalShell } from "@/components/ui/modal-shell";
-import { AmountDisplay } from "@/components/common";
+import { AmountDisplay, SendFromRow } from "@/components/common";
 import {
   cn,
   getXtalInputError,
@@ -38,6 +38,8 @@ interface SendModalProps {
   isOpen: boolean;
   onClose: () => void;
   maxBalance: ShardAmount;
+  /** The address selected in the wallet; null spends from every address. */
+  fromAddress: string | null;
 }
 
 type SendStep = "form" | "confirm" | "sending" | "success" | "error";
@@ -72,7 +74,7 @@ interface SendFeeEstimate {
   maxSendable: string;
 }
 
-export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
+export function SendModal({ isOpen, onClose, maxBalance, fromAddress }: SendModalProps) {
   const { addToast } = useUiStore();
   const { triggerRefresh } = useWalletStore();
 
@@ -163,6 +165,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
           toAddress: estimateRecipient,
           amount: amountShards.toString(),
           feeRate,
+          fromAddress,
         });
         if (isCurrent) {
           setFeeEstimate(result);
@@ -184,7 +187,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
       isCurrent = false;
       window.clearTimeout(timer);
     };
-  }, [isOpen, amountShards, amountError, customFeeRateError, feeRate, recipientPkh]);
+  }, [isOpen, amountShards, amountError, customFeeRateError, feeRate, recipientPkh, fromAddress]);
 
   // Keep the amount pinned to the latest max while in max-send mode. The fee effect
   // re-runs on feeRate changes, so switching tier re-solves the max automatically.
@@ -226,6 +229,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
         amount: parsedAmountShards,
         feeRate: feeRate,
         password: password,
+        fromAddress,
       });
 
       setTxResult(result);
@@ -345,6 +349,12 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
           {/* Step 1: Form */}
           {step === "form" && (
             <>
+              <SendFromRow
+                address={fromAddress}
+                automaticLabel="All addresses (automatic)"
+                selectHint="Select an address in the wallet's address list to change this"
+              />
+
               {/* Recipient Address */}
               <div className="space-y-2">
                 <label className="text-sm font-heading tracking-wide text-foreground-secondary">
@@ -389,6 +399,7 @@ export function SendModal({ isOpen, onClose, maxBalance }: SendModalProps) {
                             toAddress: recipientPkh || ESTIMATE_RECIPIENT_HEX,
                             amount: (amountShards > 0n ? amountShards : 1n).toString(),
                             feeRate,
+                            fromAddress,
                           }
                         );
                         const estMax = toShards(est.maxSendable);

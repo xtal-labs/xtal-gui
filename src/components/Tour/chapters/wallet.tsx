@@ -42,6 +42,10 @@ export const walletChapter: TourChapter = {
             on its way but not yet confirmed. <strong>Immature</strong> has arrived but is still
             inside its maturity window, which the last step of this chapter explains.
           </p>
+          <p>
+            The address list shows what each address holds. Select one to send from it alone,
+            with change returned to it, and to see only its transactions.
+          </p>
         </>
       ),
     },
@@ -183,8 +187,8 @@ export const walletChapter: TourChapter = {
           </p>
           <p>
             The VM accounts list shows each account’s balance. Select one to send, withdraw
-            and call contracts from it alone; <strong>All accounts</strong> lets the wallet draw
-            on every account.
+            and call contracts from it alone and to see only its history; <strong>All
+            accounts</strong> lets the wallet draw on every account.
           </p>
         </>
       ),
