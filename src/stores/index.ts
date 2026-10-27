@@ -10,3 +10,4 @@ export { useNetworkStore } from "./networkStore";
 export { useUiStore, type Tab, type Toast, type NodeConnectionState } from "./uiStore";
 export { useGatewayStore } from "./gatewayStore";
 export { useDashboardStore } from "./dashboardStore";
+export { useTourStore } from "./tourStore";

@@ -331,6 +331,7 @@ function FruitCard({
     {showTooltip && (
       <div
         ref={tooltipRef}
+        role="tooltip"
         className="fixed z-50 animate-[fadeInDown_150ms_ease-out] overflow-y-auto overscroll-contain rounded-md bg-black/70 backdrop-blur-xl border border-white/8 shadow-xl shadow-black/40"
         style={{
           top: tooltipPos.top,

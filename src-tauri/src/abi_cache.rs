@@ -4,6 +4,7 @@
 //! The index contains denormalized metadata (name, description, method count)
 //! so the library view can render without loading every ABI file.
 
+use std::cmp::Reverse;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -157,7 +158,7 @@ impl AbiCache {
     pub fn list(&self) -> Vec<CacheEntry> {
         let mut entries: Vec<CacheEntry> = self.index.values().cloned().collect();
         // Most recently added first
-        entries.sort_by(|a, b| b.added_at.cmp(&a.added_at));
+        entries.sort_by_key(|entry| Reverse(entry.added_at));
         entries
     }
 

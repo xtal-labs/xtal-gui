@@ -26,7 +26,7 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { deriveSyncStatus, type SyncStatus } from "@/lib/syncStatus";
 import { cn, formatXtalFull } from "@/lib/utils";
 
-import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore, useDashboardStore, type Tab, type NodeConnectionState } from "@/stores";
+import { useUiStore, useBlockchainStore, useNetworkStore, useMiningStore, useWalletStore, useValidatorStore, useDashboardStore, useTourStore, type Tab, type NodeConnectionState } from "@/stores";
 import { useNodeWebSocket, useTauriEvent, useMediaQuery, type WebSocketMessage } from "@/hooks";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { useDiagnosticMonitor, useRenderTracker } from "@/hooks/useDiagnosticMonitor";
@@ -58,6 +58,7 @@ import Network from "@/components/Network/Network";
 import RpcConsole from "@/components/RpcConsole/RpcConsole";
 import SettingsPanel from "@/components/Settings/Settings";
 import { SetupWizard } from "@/components/SetupWizard";
+import { TourOverlay } from "@/components/Tour";
 
 // Geometric Crystal Logo Component
 function CrystalLogo({ className, size = 32 }: { className?: string; size?: number }) {
@@ -869,6 +870,7 @@ function AppContent() {
         hydrateToastsEnabled(guiConfig.toastsEnabled);
         hydrateAdvancedMode(guiConfig.advancedMode);
         useDashboardStore.getState().hydrateLayout(guiConfig.dashboard ?? null);
+        useTourStore.getState().hydrate(guiConfig.tutorial);
       } catch (guiConfigErr) {
         console.error("Failed to initialize GUI preferences:", guiConfigErr);
       }
@@ -1058,6 +1060,9 @@ function AppContent() {
     // Open the standalone wallet recovery modal (native File menu)
     window.openWalletRecovery = () => setRecoveryOpen(true);
 
+    // Run the full walkthrough (native Help menu)
+    window.startWalkthrough = () => void useTourStore.getState().start();
+
     // Unload wallet from menu
     window.unloadWallet = async () => {
       if (walletIsLoaded) {
@@ -1085,6 +1090,7 @@ function AppContent() {
       delete window.openWalletImportKey;
       delete window.openWalletImportFile;
       delete window.openWalletRecovery;
+      delete window.startWalkthrough;
       delete window.unloadWallet;
     };
   }, [
@@ -1328,6 +1334,8 @@ function AppContent() {
         onClose={() => setRecoveryOpen(false)}
         onRecovered={() => requestWalletRefresh(true)}
       />
+
+      <TourOverlay />
     </div>
   );
 }

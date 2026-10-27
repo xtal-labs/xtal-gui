@@ -45,6 +45,11 @@ pub struct GuiConfig {
     /// renders its built-in default layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dashboard: Option<DashboardLayoutConfig>,
+
+    /// Guided-walkthrough state. Omitted from the file until the walkthrough is
+    /// first offered or finished.
+    #[serde(default, skip_serializing_if = "TutorialConfig::is_untouched")]
+    pub tutorial: TutorialConfig,
 }
 
 fn default_toasts_enabled() -> bool {
@@ -59,7 +64,29 @@ impl Default for GuiConfig {
             ipfs: IpfsConfig::default(),
             last_network: None,
             dashboard: None,
+            tutorial: TutorialConfig::default(),
         }
+    }
+}
+
+/// Persisted state of the guided walkthrough.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TutorialConfig {
+    /// Start the walkthrough on the next normal-mode launch. The setup wizard
+    /// sets this instead of starting the walkthrough itself, because completing
+    /// setup restarts the app.
+    #[serde(default)]
+    pub pending: bool,
+
+    /// Chapters the user has finished. Deliberately opaque strings, like
+    /// `DashboardWidgetConfig::widget_type`: the frontend owns the chapter list.
+    #[serde(default)]
+    pub completed: Vec<String>,
+}
+
+impl TutorialConfig {
+    fn is_untouched(&self) -> bool {
+        !self.pending && self.completed.is_empty()
     }
 }
 
@@ -374,6 +401,46 @@ mod tests {
         assert!(!serialized.contains("last_network"));
         let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized.last_network, None);
+    }
+
+    #[test]
+    fn test_gui_config_tutorial_round_trip() {
+        let mut config = GuiConfig::default();
+        config.tutorial = TutorialConfig {
+            pending: true,
+            completed: vec!["wallet".to_string(), "mining".to_string()],
+        };
+        // Alongside a dashboard, so both tables serialize after the scalars.
+        config.dashboard = Some(DashboardLayoutConfig {
+            version: 1,
+            widgets: vec![],
+        });
+
+        let serialized = toml::to_string(&config).unwrap();
+        let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.tutorial, config.tutorial);
+        assert_eq!(deserialized.dashboard, config.dashboard);
+    }
+
+    #[test]
+    fn test_gui_config_without_tutorial_parses() {
+        let deserialized: GuiConfig = toml::from_str("toasts_enabled = false\n").unwrap();
+        assert_eq!(deserialized.tutorial, TutorialConfig::default());
+
+        // And an untouched walkthrough never writes the table.
+        let serialized = toml::to_string(&GuiConfig::default()).unwrap();
+        assert!(!serialized.contains("tutorial"));
+    }
+
+    #[test]
+    fn test_gui_config_keeps_completed_chapters_once_pending_clears() {
+        let mut config = GuiConfig::default();
+        config.tutorial.completed = vec!["wallet".to_string()];
+
+        let serialized = toml::to_string(&config).unwrap();
+        let deserialized: GuiConfig = toml::from_str(&serialized).unwrap();
+        assert!(!deserialized.tutorial.pending);
+        assert_eq!(deserialized.tutorial.completed, vec!["wallet".to_string()]);
     }
 
     #[test]

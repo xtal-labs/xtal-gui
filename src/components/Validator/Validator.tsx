@@ -25,6 +25,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { HashDisplay, StatusBadge, TransactionList } from "@/components/common";
+import { TourButton } from "@/components/Tour";
 import { FruitDetailPanel } from "@/components/Explorer/FruitDetailPanel";
 import { FruitCard } from "./FruitCard";
 import { SponsorContractField } from "./SponsorContractField";
@@ -105,7 +106,7 @@ function WalletCTACard({ availableWallets, onSelectWallet, onCreateWallet, onImp
   };
 
   return (
-    <Card variant="crystalline" className="max-w-md mx-auto">
+    <Card data-tour="validator-wallet-cta" variant="crystalline" className="max-w-md mx-auto">
       <CardHeader className="text-center">
         <div className="icon-hex mx-auto mb-4 bg-primary/20" style={{ width: "4rem", height: "4rem" }}>
           <Shield className="h-8 w-8 text-primary" />
@@ -215,7 +216,7 @@ function FruitStakeRequirements({ fruitSpecs }: FruitStakeRequirementsProps) {
   if (fruitSpecs.length === 0) return null;
 
   return (
-    <Card variant="crystalline">
+    <Card data-tour="validator-requirements" variant="crystalline">
       <CardHeader>
         <CardTitle className="text-base font-heading tracking-wide">
           FRUIT STAKE REQUIREMENTS
@@ -1346,6 +1347,7 @@ export default function Validator() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          <TourButton chapter="validator" />
           {isLoaded && (
             <Button
               variant="ghost"
@@ -1392,26 +1394,28 @@ export default function Validator() {
       ) : (
         <>
           {/* Stake Card - at top when validator is loaded */}
-          <StakeCard
-            withdrawableStake={withdrawableStake}
-            activeStake={effectiveStake}
-            pendingStake={pendingStake}
-            availableBalance={availableBalance}
-            pendingUnstake={pendingUnstake}
-            immatureBalance={immatureBalance}
-            sponsoredStake={sponsoredStake.map((entry) => ({
-              contract: canonicalContractAddress(entry.contract),
-              label: sponsorLabel(entry.contract, cachedContracts),
-              total: entry.total,
-              mature: entry.mature,
-              pending: entry.pending,
-            }))}
-            canUnstake={hasAnyWithdrawable}
-            hideBalances={hideBalances}
-            onToggleHide={() => setHideBalances(!hideBalances)}
-            onStake={() => openModal(MODAL_STAKE)}
-            onUnstake={() => openModal(MODAL_UNSTAKE)}
-          />
+          <div data-tour="validator-stake">
+            <StakeCard
+              withdrawableStake={withdrawableStake}
+              activeStake={effectiveStake}
+              pendingStake={pendingStake}
+              availableBalance={availableBalance}
+              pendingUnstake={pendingUnstake}
+              immatureBalance={immatureBalance}
+              sponsoredStake={sponsoredStake.map((entry) => ({
+                contract: canonicalContractAddress(entry.contract),
+                label: sponsorLabel(entry.contract, cachedContracts),
+                total: entry.total,
+                mature: entry.mature,
+                pending: entry.pending,
+              }))}
+              canUnstake={hasAnyWithdrawable}
+              hideBalances={hideBalances}
+              onToggleHide={() => setHideBalances(!hideBalances)}
+              onStake={() => openModal(MODAL_STAKE)}
+              onUnstake={() => openModal(MODAL_UNSTAKE)}
+            />
+          </div>
 
           {/* Dashboard Stats Grid */}
           <ValidatorDashboardStats
@@ -1422,7 +1426,7 @@ export default function Validator() {
           />
 
           {/* Fruit Production Section */}
-          <div className="space-y-4">
+          <div data-tour="validator-fruits" className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-heading font-semibold tracking-wide text-foreground flex items-center gap-2">
                 <Zap className="h-5 w-5 text-accent" />

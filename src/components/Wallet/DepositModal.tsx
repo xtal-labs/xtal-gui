@@ -1,467 +1,198 @@
-import { useState, useEffect } from "react";
-import {
-  ArrowUpFromLine,
-  X,
-  ArrowLeft,
-  AlertCircle,
-  CheckCircle,
-  Loader2,
-  Eye,
-  EyeOff,
-  Lock,
-  Coins,
-  Inbox,
-  RefreshCw,
-} from "lucide-react";
-
+import { useEffect, useRef, useState } from "react";
+// Keep deposit DTO keys unchanged so a reviewed quote round-trips to Rust/RPC.
+import { invoke } from "@tauri-apps/api/core";
+import { ArrowUpFromLine, X, Loader2, Lock, CheckCircle, AlertCircle } from "lucide-react";
 import { CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ModalShell } from "@/components/ui/modal-shell";
-import { AmountDisplay } from "@/components/common";
-import { cn, formatXtal } from "@/lib/utils";
+import { cn, formatXtalExact, isValidXtalInput, parseXtalToShards, toShards } from "@/lib/utils";
 import { tauriCommand } from "@/hooks";
 import { useUiStore, useWalletStore } from "@/stores";
-import type { WalletUtxo, DepositUtxoResult } from "@/types/contract";
+import type { WalletUtxo } from "@/types/contract";
+import type { DepositOperation, DepositQuote, DepositRequest, DepositStatus } from "@/types/deposit";
 
-interface DepositModalProps {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
-type DepositStep = "loading" | "select" | "confirm" | "sending" | "success" | "error";
+interface DepositModalProps { isOpen: boolean; onClose: () => void }
+interface VmAddress { address: string; label?: string }
+const statusText: Record<DepositStatus, string> = {
+  preparing: "Preparing funds", waiting_confirmation: "Waiting for preparation confirmation",
+  waiting_stem: "Waiting for the deposit window", needs_unlock: "Unlock to finish depositing",
+  depositing: "Deposit submitted · awaiting confirmation", confirmed: "Deposit confirmed",
+  needs_attention: "Deposit needs attention", cancelled: "Deposit cancelled",
+};
+const finished = (op: DepositOperation) => op.status === "confirmed" || op.status === "cancelled";
 
 export function DepositModal({ isOpen, onClose }: DepositModalProps) {
   const { addToast } = useUiStore();
-  const { isLoaded: walletLoaded, triggerRefresh } = useWalletStore();
-
-  const [step, setStep] = useState<DepositStep>("loading");
+  const { triggerRefresh, walletName } = useWalletStore();
+  const [mode, setMode] = useState<"amount" | "utxo">("amount");
+  const [amount, setAmount] = useState("");
+  const [destination, setDestination] = useState("");
+  const [addresses, setAddresses] = useState<VmAddress[]>([]);
   const [utxos, setUtxos] = useState<WalletUtxo[]>([]);
-  const [selected, setSelected] = useState<WalletUtxo | null>(null);
+  const [selected, setSelected] = useState("");
+  const [feeRate, setFeeRate] = useState("1000");
+  const [review, setReview] = useState<{ request: DepositRequest; quote: DepositQuote; id: string } | null>(null);
+  const [operations, setOperations] = useState<DepositOperation[]>([]);
   const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<DepositUtxoResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const generation = useRef(0);
+  const previousStatuses = useRef(new Map<string, DepositStatus>());
 
-  // Fetch UTXOs when modal opens
   useEffect(() => {
-    if (isOpen) {
-      fetchUtxos();
-    }
-  }, [isOpen]);
+    const current = ++generation.current;
+    setPassword(""); setReview(null); setError(null); setOperations([]); setSelected("");
+    setAmount(""); setDestination(""); setBusy(false);
+    previousStatuses.current.clear();
+    if (!isOpen) return;
+    setLoading(true);
+    let polling = false;
+    const refresh = async () => {
+      if (polling) return;
+      polling = true;
+      try {
+        const [coins, accounts, ops] = await Promise.all([
+          tauriCommand<WalletUtxo[]>("list_unspent_outputs"),
+          tauriCommand<VmAddress[]>("get_vm_addresses"),
+          invoke<DepositOperation[]>("list_deposit_operations"),
+        ]);
+        if (generation.current !== current) return;
+        setUtxos(coins); setAddresses(accounts); setOperations(ops);
+        setDestination(value => value || accounts[0]?.address || coins.find(c => c.isEligible)?.address || "");
+        for (const op of ops) {
+          const previous = previousStatuses.current.get(op.operation_id);
+          if (previous && previous !== op.status && op.status === "confirmed") {
+            addToast({ type: "success", title: "Deposit confirmed", message: `${formatXtalExact(op.received_amount ?? op.quote.receive_amount)} XTAL to your VM account` });
+            triggerRefresh();
+          }
+          previousStatuses.current.set(op.operation_id, op.status);
+        }
+      } catch (e) { if (generation.current === current) setError(String(e)); }
+      finally { polling = false; if (generation.current === current) setLoading(false); }
+    };
+    void refresh();
+    const timer = setInterval(() => void refresh(), 3000);
+    return () => { clearInterval(timer); generation.current++; };
+  }, [isOpen, walletName, addToast, triggerRefresh]);
 
-  // Reset form when modal closes
-  useEffect(() => {
-    if (!isOpen) {
-      setTimeout(() => {
-        setStep("loading");
-        setUtxos([]);
-        setSelected(null);
-        setPassword("");
-        setShowPassword(false);
-        setError(null);
-        setResult(null);
-      }, 200);
-    }
-  }, [isOpen]);
-
-  async function fetchUtxos() {
-    setStep("loading");
-    setError(null);
-    try {
-      const list = await tauriCommand<WalletUtxo[]>("list_unspent_outputs");
-      setUtxos(list);
-      setStep("select");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setStep("error");
-    }
+  async function run(action: () => Promise<void>) {
+    const current = generation.current;
+    setBusy(true); setError(null);
+    try { await action(); }
+    catch (e) { if (generation.current === current) setError(String(e)); }
+    finally { if (generation.current === current) { setBusy(false); setPassword(""); } }
   }
 
-  async function handleDeposit() {
-    if (!selected || !password) return;
-
-    setStep("sending");
-    setError(null);
-
-    try {
-      const res = await tauriCommand<DepositUtxoResult>("deposit_utxo", {
-        txid: selected.txid,
-        vout: selected.vout,
-        password,
-      });
-
-      setResult(res);
-      setStep("success");
-      setPassword("");
-
-      addToast({
-        type: "success",
-        title: "Deposit Submitted",
-        message: `${formatXtal(res.amount)} XTAL deposited to VM`,
-        duration: 5000,
-      });
-
-      triggerRefresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setStep("error");
-      setPassword("");
+  async function prepareReview() {
+    const current = generation.current;
+    let request: DepositRequest;
+    if (mode === "amount") {
+      const shards = parseXtalToShards(amount);
+      const rate = Number(feeRate);
+      if (shards === null || toShards(shards) <= 0n) throw new Error("Enter an amount greater than zero.");
+      if (!Number.isSafeInteger(rate) || rate <= 0) throw new Error("Enter a positive whole-number fee rate.");
+      if (!destination.trim()) throw new Error("Choose a wallet-owned destination account.");
+      request = { mode, amount: String(shards), destination: destination.trim(), fee_rate: rate };
+    } else {
+      const coin = utxos.find(u => `${u.txid}:${u.vout}` === selected && u.isEligible);
+      if (!coin) throw new Error("Select an available UTXO.");
+      request = { mode, txid: coin.txid, vout: coin.vout };
     }
+    const quote = await invoke<DepositQuote>("estimate_deposit", { request });
+    if (generation.current === current) setReview({ request, quote, id: crypto.randomUUID() });
   }
 
-  const handleClose = () => {
-    if (step === "sending") return;
-    onClose();
-  };
-
-  const handleCopyTxid = async () => {
-    if (!result) return;
-    try {
-      await navigator.clipboard.writeText(result.txid);
-      addToast({
-        type: "success",
-        title: "Copied",
-        message: "Transaction ID copied to clipboard",
-        duration: 2000,
-      });
-    } catch (err) {
-      console.error("Failed to copy:", err);
-    }
-  };
+  async function submit() {
+    if (!review || !password) return;
+    const current = generation.current;
+    // Retain this ID if the response is lost: another click returns the same operation.
+    const op = await invoke<DepositOperation>("start_deposit", {
+      request: { operation_id: review.id, request: review.request, quote: review.quote }, password,
+    });
+    if (generation.current !== current) return;
+    setOperations(ops => [op, ...ops.filter(o => o.operation_id !== op.operation_id)]);
+    setReview(null); setAmount(""); setSelected(""); triggerRefresh();
+    addToast({ type: "success", title: "Deposit scheduled", message: "You can close this dialog. Progress is saved in your wallet." });
+  }
 
   if (!isOpen) return null;
-
-  const eligible = utxos.filter((u) => u.isEligible);
-
+  const active = operations.filter(op => !finished(op));
+  const recent = operations.filter(finished).slice(0, 3);
+  const shown = [...active, ...recent];
   return (
-    <ModalShell
-      className="bg-black/60 backdrop-blur-xs"
-      cardClassName="max-w-lg relative"
-      onClose={onClose}
-      title="Deposit"
-    >
-        {/* Decorative crystal facet overlay — primary (UTXO source) to accent (VM destination) */}
-        <div className="absolute inset-0 opacity-5 pointer-events-none">
-          <div
-            className="absolute top-0 right-0 w-32 h-32 bg-linear-to-bl from-primary/50 to-transparent"
-            style={{ clipPath: "polygon(100% 0, 0 0, 100% 100%)" }}
-          />
-          <div
-            className="absolute bottom-0 left-0 w-24 h-24 bg-linear-to-tr from-accent/50 to-transparent"
-            style={{ clipPath: "polygon(0 100%, 100% 100%, 0 0)" }}
-          />
+    <ModalShell cardClassName="max-w-lg max-h-[90vh] overflow-y-auto" onClose={() => { if (!busy) onClose(); }} title="Deposit to VM">
+      <CardHeader>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 font-heading"><ArrowUpFromLine className="h-5 w-5" /> DEPOSIT TO VM</CardTitle>
+          <Button variant="ghost" size="icon" aria-label="Close deposit" disabled={busy} onClick={onClose}><X className="h-4 w-4" /></Button>
         </div>
-
-        <CardHeader className="relative">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div
-                className="icon-hex bg-accent/20"
-                style={{ width: "2.5rem", height: "2.5rem" }}
-              >
-                <ArrowUpFromLine className="h-5 w-5 text-accent" />
-              </div>
-              <div>
-                <CardTitle className="font-heading tracking-wide">
-                  {step === "success" ? "DEPOSIT COMPLETE" : "DEPOSIT TO VM"}
-                </CardTitle>
-                <CardDescription>
-                  {step === "loading" && "Loading available UTXOs..."}
-                  {step === "select" && "Select a UTXO to deposit to your VM account"}
-                  {step === "confirm" && "Review deposit details"}
-                  {step === "sending" && "Signing and broadcasting..."}
-                  {step === "success" && "Your deposit has been submitted"}
-                  {step === "error" && "Deposit failed"}
-                </CardDescription>
-              </div>
-            </div>
-            <Button variant="ghost" size="icon" onClick={handleClose} disabled={step === "sending"}>
-              <X className="h-4 w-4" />
-            </Button>
+        <CardDescription>Enter an exact amount or deposit a specific UTXO.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {error && <p role="alert" className="text-sm text-destructive break-words flex gap-2"><AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />{error}</p>}
+        {loading ? <p className="flex gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" /> Loading wallet…</p> : review ? (
+          <div className="space-y-4">
+            <h3 className="font-heading">REVIEW DEPOSIT</h3>
+            <dl className="space-y-2 text-sm bg-muted/50 p-3 chamfered-sm">
+              <div className="flex justify-between"><dt>You receive in VM</dt><dd className="font-mono font-semibold">{formatXtalExact(review.quote.receive_amount)} XTAL</dd></div>
+              <div className="flex justify-between"><dt>Bridge fee</dt><dd>{formatXtalExact(review.quote.bridge_fee)} XTAL</dd></div>
+              <div className="flex justify-between"><dt>Preparation fee</dt><dd>{formatXtalExact(review.quote.preparation_fee)} XTAL</dd></div>
+              <div className="flex justify-between border-t border-border pt-2"><dt>Total leaving UTXO balance</dt><dd>{formatXtalExact(review.quote.total_debit)} XTAL</dd></div>
+              <div><dt className="text-foreground-muted">Destination account</dt><dd className="font-mono text-xs break-all mt-1">{review.quote.destination}</dd></div>
+              {review.quote.outpoint && <div><dt className="text-foreground-muted">Selected UTXO</dt><dd className="font-mono text-xs break-all mt-1">{review.quote.outpoint.txid}:{review.quote.outpoint.vout}</dd></div>}
+            </dl>
+            <p className="text-xs text-foreground-muted">{review.quote.needs_preparation ? "The wallet will prepare the deposit amount, return change, and wait for confirmation before depositing. This requires two transactions." : "This output can be deposited directly, without a preparation transaction."} Deposit gas is sponsored; the bridge fee is shown above.</p>
+            <p className="text-xs text-foreground-muted">Your wallet unlocks for 30 seconds. If it locks before the deposit can be signed, you will be asked to unlock again. Keep the node running to continue automatically.</p>
+            <label className="block text-sm">Wallet password<Input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} disabled={busy} className="mt-1" /></label>
+            <div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={() => { setReview(null); setPassword(""); setError(null); }}>Back</Button><Button className="flex-1" disabled={busy || !password} onClick={() => void run(submit)}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Confirm deposit"}</Button></div>
           </div>
-
-          {/* Step indicator */}
-          {(step === "select" || step === "confirm") && (
-            <div className="flex items-center gap-2 mt-4">
-              {["select", "confirm"].map((s, i) => (
-                <div key={s} className="flex items-center gap-2">
-                  <div
-                    className={cn(
-                      "w-6 h-6 flex items-center justify-center text-xs font-heading chamfered-sm",
-                      step === s || (step === "confirm" && s === "select")
-                        ? "bg-accent text-primary-foreground"
-                        : "bg-muted text-foreground-muted"
-                    )}
-                  >
-                    {i + 1}
-                  </div>
-                  {i < 1 && (
-                    <div className={cn("w-8 h-0.5", step === "confirm" ? "bg-accent" : "bg-muted")} />
-                  )}
-                </div>
-              ))}
+        ) : (
+          <div className="space-y-4">
+            <div className="flex gap-2" role="group" aria-label="Deposit method">
+              <Button className="flex-1" variant={mode === "amount" ? "default" : "outline"} aria-pressed={mode === "amount"} disabled={busy} onClick={() => setMode("amount")}>Enter amount</Button>
+              <Button className="flex-1" variant={mode === "utxo" ? "default" : "outline"} aria-pressed={mode === "utxo"} disabled={busy} onClick={() => setMode("utxo")}>Select UTXO</Button>
             </div>
-          )}
-        </CardHeader>
-
-        <CardContent className="space-y-4 relative">
-          {/* Loading */}
-          {step === "loading" && (
-            <div className="py-8 text-center">
-              <Loader2 className="h-6 w-6 text-foreground-muted animate-spin mx-auto mb-3" />
-              <p className="text-sm text-foreground-muted font-heading">Loading UTXOs...</p>
-            </div>
-          )}
-
-          {/* Select UTXO */}
-          {step === "select" && (
-            <>
-              {utxos.length === 0 ? (
-                <div className="py-8 text-center">
-                  <Inbox className="h-8 w-8 text-foreground-muted mx-auto mb-3 opacity-40" />
-                  <p className="text-sm text-foreground-secondary font-heading">No UTXOs found</p>
-                  <p className="text-xs text-foreground-muted mt-1">
-                    Receive XTAL via a standard transaction first
-                  </p>
-                </div>
-              ) : eligible.length === 0 ? (
-                <div className="py-6 text-center">
-                  <AlertCircle className="h-8 w-8 text-warning mx-auto mb-3 opacity-60" />
-                  <p className="text-sm text-foreground-secondary font-heading">No eligible UTXOs</p>
-                  <p className="text-xs text-foreground-muted mt-1">
-                    Coinbase, withdrawal, and staking UTXOs cannot be deposited
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  <label className="text-sm font-heading tracking-wide text-foreground-secondary">
-                    SELECT UTXO
-                  </label>
-                  <div className="space-y-1 max-h-64 overflow-y-auto pr-1">
-                    {utxos.map((utxo) => {
-                      const isSelected = selected?.txid === utxo.txid && selected?.vout === utxo.vout;
-                      return (
-                        <button
-                          key={`${utxo.txid}:${utxo.vout}`}
-                          onClick={() => utxo.isEligible && setSelected(utxo)}
-                          disabled={!utxo.isEligible}
-                          className={cn(
-                            "w-full flex items-center gap-3 p-3 chamfered-sm text-left transition-all",
-                            utxo.isEligible
-                              ? isSelected
-                                ? "bg-accent/15 border border-accent/40"
-                                : "bg-muted/20 hover:bg-muted/40 border border-transparent"
-                              : "bg-muted/10 opacity-50 cursor-not-allowed border border-transparent"
-                          )}
-                        >
-                          <Coins className={cn(
-                            "h-4 w-4 shrink-0",
-                            isSelected ? "text-accent" : "text-foreground-muted"
-                          )} />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center justify-between">
-                              <span className="font-mono text-sm font-medium">
-                                {formatXtal(utxo.amount)} XTAL
-                              </span>
-                              <span className="text-xs text-foreground-muted">
-                                {utxo.confirmations} conf
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between mt-0.5">
-                              <span className="font-mono text-xs text-foreground-muted truncate mr-2">
-                                {utxo.txid.slice(0, 8)}...{utxo.txid.slice(-8)}:{utxo.vout}
-                              </span>
-                              {!utxo.isEligible && utxo.ineligibleReason && (
-                                <span className="text-xs text-warning shrink-0">
-                                  {utxo.ineligibleReason}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Refresh + Continue */}
-              <div className="flex gap-3">
-                <Button variant="outline" size="icon" onClick={fetchUtxos} title="Refresh UTXOs">
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-                {eligible.length > 0 && (
-                  <Button
-                    variant="crystalline"
-                    className="flex-1 text-foreground"
-                    disabled={!selected || !walletLoaded}
-                    onClick={() => setStep("confirm")}
-                  >
-                    Continue
-                  </Button>
-                )}
+            {mode === "amount" ? <>
+              <label className="block text-sm">Amount to receive in VM (XTAL)<Input inputMode="decimal" value={amount} placeholder="0.00" disabled={busy} onChange={e => { if (isValidXtalInput(e.target.value)) setAmount(e.target.value); }} className="mt-1" /></label>
+              <label className="block text-sm">Destination account<Input list="deposit-wallet-accounts" value={destination} onChange={e => setDestination(e.target.value)} disabled={busy} className="mt-1 font-mono text-xs" placeholder="A VM account or receive address in this wallet" /></label>
+              <datalist id="deposit-wallet-accounts">{addresses.map(a => <option key={a.address} value={a.address}>{a.label || "Wallet VM account"}</option>)}</datalist>
+              <label className="block text-sm">Preparation fee rate (shards/byte)<Input inputMode="numeric" value={feeRate} onChange={e => setFeeRate(e.target.value)} disabled={busy} className="mt-1" /></label>
+              <p className="text-xs text-foreground-muted">Coins are selected automatically. Any remainder returns to your wallet as change. An existing exact-size output at this account skips preparation.</p>
+            </> : <>
+              <div className="space-y-2 max-h-52 overflow-y-auto" role="radiogroup" aria-label="UTXO to deposit">
+                {utxos.length === 0 && <p className="text-sm text-foreground-muted">No unspent outputs in this wallet.</p>}
+                {utxos.map(u => { const id = `${u.txid}:${u.vout}`; return <button key={id} type="button" role="radio" aria-checked={selected === id} disabled={!u.isEligible || busy} onClick={() => setSelected(id)} className={cn("w-full p-3 text-left border chamfered-sm", selected === id ? "border-primary bg-primary/10" : "border-border", !u.isEligible && "opacity-50")}>
+                  <span className="font-mono text-sm">{formatXtalExact(u.amount)} XTAL</span>
+                  <span className="block text-xs font-mono break-all mt-1">{u.txid}:{u.vout}</span>
+                  <span className="block text-xs text-foreground-muted mt-1">{u.isEligible ? u.address : u.ineligibleReason}</span>
+                </button>; })}
               </div>
-            </>
-          )}
-
-          {/* Confirm */}
-          {step === "confirm" && selected && (
-            <>
-              <div className="space-y-3 p-4 chamfered bg-muted/30">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground-muted font-heading">AMOUNT</span>
-                  <AmountDisplay amount={selected.amount} size="sm" showSymbol />
-                </div>
-                <div className="h-px bg-border" />
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground-muted font-heading">UTXO</span>
-                  <span className="text-xs font-mono text-right break-all max-w-[60%]">
-                    {selected.txid.slice(0, 16)}...:{selected.vout}
-                  </span>
-                </div>
-                <div className="h-px bg-border" />
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-foreground-muted font-heading">SOURCE</span>
-                  <span className="text-xs font-mono text-right break-all max-w-[60%]">
-                    {selected.address}
-                  </span>
-                </div>
-              </div>
-
-              {/* Sponsored info banner */}
-              <div className="flex items-start gap-2 p-3 chamfered-sm bg-info/10 text-info">
-                <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />
-                <p className="text-xs">
-                  CAGE deposits are gas-sponsored. No fee will be charged.
-                </p>
-              </div>
-
-              {/* Password */}
-              <div className="space-y-2">
-                <label className="text-sm font-heading tracking-wide text-foreground-secondary flex items-center gap-2">
-                  <Lock className="h-3.5 w-3.5" />
-                  WALLET PASSWORD
-                </label>
-                <div className="relative">
-                  <Input
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Enter password to sign deposit"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && password && handleDeposit()}
-                    autoComplete="current-password"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-2 top-1/2 -translate-y-1/2"
-                    onClick={() => setShowPassword(!showPassword)}
-                    tabIndex={-1}
-                  >
-                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </Button>
-                </div>
-              </div>
-
-              {error && (
-                <div className="flex items-center gap-2 text-destructive text-sm">
-                  <AlertCircle className="h-4 w-4" />
-                  {error}
-                </div>
-              )}
-
-              <div className="flex gap-3">
-                <Button variant="outline" className="flex-1" onClick={() => { setStep("select"); setPassword(""); setError(null); }}>
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Back
-                </Button>
-                <Button
-                  variant="crystalline"
-                  className="flex-1 text-foreground"
-                  onClick={handleDeposit}
-                  disabled={!password}
-                >
-                  <ArrowUpFromLine className="h-4 w-4 mr-2" />
-                  Deposit
-                </Button>
-              </div>
-            </>
-          )}
-
-          {/* Sending state */}
-          {step === "sending" && (
-            <div className="py-8 text-center">
-              <div
-                className="icon-hex mx-auto mb-4 bg-accent/20 animate-pulse"
-                style={{ width: "4rem", height: "4rem" }}
-              >
-                <Loader2 className="h-8 w-8 text-accent animate-spin" />
-              </div>
-              <p className="text-foreground-secondary font-heading">Signing and broadcasting...</p>
-            </div>
-          )}
-
-          {/* Success state */}
-          {step === "success" && result && (
-            <div className="py-4 text-center space-y-4">
-              <div
-                className="icon-hex mx-auto mb-4 bg-success/20"
-                style={{ width: "4rem", height: "4rem" }}
-              >
-                <CheckCircle className="h-8 w-8 text-success" />
-              </div>
-              <div>
-                <p className="text-foreground-secondary text-sm mb-1">Deposited</p>
-                <AmountDisplay amount={result.amount} size="lg" showSymbol />
-              </div>
-              <div>
-                <p className="text-foreground-secondary text-sm mb-2">Transaction ID</p>
-                <p
-                  className="font-mono text-xs bg-muted/50 p-2 chamfered-sm break-all cursor-pointer hover:bg-muted/70 transition-colors"
-                  onClick={handleCopyTxid}
-                  title="Click to copy"
-                >
-                  {result.txid}
-                </p>
-              </div>
-              <Button variant="crystalline" className="w-full text-foreground" onClick={handleClose}>
-                Done
-              </Button>
-            </div>
-          )}
-
-          {/* Error state */}
-          {step === "error" && (
-            <div className="py-4 text-center space-y-4">
-              <div
-                className="icon-hex mx-auto mb-4 bg-destructive/20"
-                style={{ width: "4rem", height: "4rem" }}
-              >
-                <AlertCircle className="h-8 w-8 text-destructive" />
-              </div>
-              <div>
-                <p className="text-destructive font-medium mb-2">Deposit Failed</p>
-                <p className="text-sm text-foreground-muted">{error}</p>
-              </div>
-              <div className="flex gap-3">
-                <Button variant="outline" className="flex-1" onClick={handleClose}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="crystalline"
-                  className="flex-1 text-foreground"
-                  onClick={() => { setError(null); fetchUtxos(); }}
-                >
-                  Retry
-                </Button>
-              </div>
-            </div>
-          )}
-        </CardContent>
+              <p className="text-xs text-foreground-muted">The whole output is deposited to its owner’s VM account, less the bridge fee. Use Enter amount to prepare funds from spendable mining rewards or withdrawal outputs.</p>
+            </>}
+            <Button className="w-full" disabled={busy || (mode === "utxo" && !selected) || (mode === "amount" && !amount)} onClick={() => void run(prepareReview)}>{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Review deposit"}</Button>
+          </div>
+        )}
+        {shown.length > 0 && <div className="border-t border-border pt-4 space-y-3">
+          <h3 className="font-heading text-sm">DEPOSIT PROGRESS</h3>
+          {shown.map(op => <div key={op.operation_id} className="p-3 bg-muted/40 chamfered-sm space-y-2 text-sm">
+            <div className="flex gap-2 items-center">{op.status === "confirmed" ? <CheckCircle className="h-4 w-4 text-success" /> : op.status === "needs_unlock" ? <Lock className="h-4 w-4" /> : !finished(op) && op.status !== "needs_attention" ? <Loader2 className="h-4 w-4 animate-spin" /> : null}<span>{statusText[op.status]}</span></div>
+            <p className="font-mono">{formatXtalExact(op.received_amount ?? op.quote.receive_amount)} XTAL</p>
+            <p className="text-xs break-all text-foreground-muted">To {op.quote.destination}</p>
+            {op.preparation_txid && <p className="text-xs break-all">Preparation: <span className="font-mono select-all">{op.preparation_txid}</span></p>}
+            {op.deposit_txid && <p className="text-xs break-all">Deposit: <span className="font-mono select-all">{op.deposit_txid}</span></p>}
+            {op.error && <p role="alert" className="text-destructive text-xs break-words">{op.error}</p>}
+            {op.status === "needs_unlock" && !review && <div className="flex gap-2"><Input type="password" autoComplete="current-password" aria-label="Wallet password to resume deposit" placeholder="Wallet password" value={password} onChange={e => setPassword(e.target.value)} disabled={busy} /><Button disabled={busy || !password} onClick={() => void run(async () => { await tauriCommand("unlock_for_deposit", { operationId: op.operation_id, password }); })}>Unlock</Button></div>}
+            {op.can_cancel && <Button size="sm" variant="outline" disabled={busy} onClick={() => void run(async () => {
+              const updated = await invoke<DepositOperation>("cancel_deposit_operation", { operationId: op.operation_id });
+              setOperations(ops => ops.map(o => o.operation_id === updated.operation_id ? updated : o)); triggerRefresh();
+            })}>Cancel remaining deposit</Button>}
+            {op.status === "cancelled" && op.preparation_txid && <p className="text-xs text-foreground-muted">Any preparation transaction already broadcast remains valid. Its outputs stay in your wallet.</p>}
+          </div>)}
+          <p className="text-xs text-foreground-muted">Progress is saved when you close this dialog or restart. Operations continue while this wallet is loaded and the node is running.</p>
+        </div>}
+      </CardContent>
     </ModalShell>
   );
 }

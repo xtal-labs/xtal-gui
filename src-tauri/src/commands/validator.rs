@@ -150,9 +150,8 @@ pub async fn start_validator(
     // Determine which fruits are currently eligible without auto-starting them.
     let eligible_fruits = get_fruits_by_stake_requirement()
         .into_iter()
-        .filter_map(|(fruit_type, spec)| {
-            (status.stake >= spec.min_stake_threshold).then(|| format!("{:?}", fruit_type))
-        })
+        .filter(|(_, spec)| status.stake >= spec.min_stake_threshold)
+        .map(|(fruit_type, _)| format!("{:?}", fruit_type))
         .collect::<Vec<_>>();
 
     // Add to services

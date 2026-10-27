@@ -39,6 +39,16 @@ pub fn vm_transaction_fee(tx: &Transaction) -> Option<u64> {
     gas_limit.checked_mul(gas_price.unwrap_or(MIN_GAS_PRICE))
 }
 
+/// A transaction's type, value flow and fee, as read from its body.
+pub struct TransactionDetails {
+    pub tx_type: String,
+    pub inputs: Vec<TransactionInput>,
+    pub outputs: Vec<TransactionOutput>,
+    pub total_input: u64,
+    pub total_output: u64,
+    pub fee: Option<u64>,
+}
+
 /// Extract details from a Transaction enum
 pub fn extract_transaction_details(
     tx: &Transaction,
@@ -47,17 +57,7 @@ pub fn extract_transaction_details(
     pending_fee: u64,
     stored_input_details: Option<String>,
     raw_receipt: Option<&TransactionReceipt>,
-) -> Result<
-    (
-        String,
-        Vec<TransactionInput>,
-        Vec<TransactionOutput>,
-        u64,
-        u64,
-        Option<u64>,
-    ),
-    String,
-> {
+) -> Result<TransactionDetails, String> {
     // Helper to get inputs - uses stored details if available, falls back to blockchain lookup
     let get_inputs = |tx_inputs: &[TxIn]| -> Result<Vec<TransactionInput>, String> {
         // Try to use stored input details first (self-contained wallet)
@@ -109,14 +109,14 @@ pub fn extract_transaction_details(
             } else {
                 None
             };
-            Ok((
-                "standard".to_string(),
+            Ok(TransactionDetails {
+                tx_type: "standard".to_string(),
                 inputs,
                 outputs,
                 total_input,
                 total_output,
                 fee,
-            ))
+            })
         }
         Transaction::Coinbase(cb_tx) => {
             // Coinbase has no real inputs
@@ -125,7 +125,7 @@ pub fn extract_transaction_details(
                 index: 0,
                 amount: cb_tx.output().amount.into(),
                 currency: "XTAL".to_string(),
-                address: extract_address_from_txout(&cb_tx.output()),
+                address: extract_address_from_txout(cb_tx.output()),
                 script_type: "coinbase".to_string(),
                 is_mine: false,
                 sponsored_contract: None,
@@ -156,14 +156,14 @@ pub fn extract_transaction_details(
                 });
             }
             let total_output: u64 = outputs.iter().map(|o| o.amount.get()).sum();
-            Ok((
-                "coinbase".to_string(),
+            Ok(TransactionDetails {
+                tx_type: "coinbase".to_string(),
                 inputs,
                 outputs,
-                0,
+                total_input: 0,
                 total_output,
-                None,
-            ))
+                fee: None,
+            })
         }
         Transaction::Stake(stake_tx) => {
             let inputs = get_inputs(&stake_tx.inputs)?;
@@ -179,14 +179,14 @@ pub fn extract_transaction_details(
             } else {
                 None
             };
-            Ok((
-                "stake".to_string(),
+            Ok(TransactionDetails {
+                tx_type: "stake".to_string(),
                 inputs,
                 outputs,
                 total_input,
                 total_output,
                 fee,
-            ))
+            })
         }
         Transaction::Unstake(unstake_tx) => {
             let inputs = get_inputs(&unstake_tx.inputs)?;
@@ -202,14 +202,14 @@ pub fn extract_transaction_details(
             } else {
                 None
             };
-            Ok((
-                "unstake".to_string(),
+            Ok(TransactionDetails {
+                tx_type: "unstake".to_string(),
                 inputs,
                 outputs,
                 total_input,
                 total_output,
                 fee,
-            ))
+            })
         }
         Transaction::ContractCall(cc_tx) => {
             // Check if this is a CAGE deposit (consume_utxo method)
@@ -223,7 +223,14 @@ pub fn extract_transaction_details(
                 // deletes the underlying UTXO row from RocksDB.
                 if let Some((input, total)) = raw_receipt.and_then(vm_deposit_input_from_receipt) {
                     let fee = vm_transaction_fee(tx);
-                    return Ok(("vm_deposit".to_string(), vec![input], vec![], total, 0, fee));
+                    return Ok(TransactionDetails {
+                        tx_type: "vm_deposit".to_string(),
+                        inputs: vec![input],
+                        outputs: vec![],
+                        total_input: total,
+                        total_output: 0,
+                        fee,
+                    });
                 }
 
                 // Fallback path: pre-confirmation (no receipt yet) — parse the consumed
@@ -247,14 +254,14 @@ pub fn extract_transaction_details(
                     }];
 
                     let fee = vm_transaction_fee(tx);
-                    return Ok((
-                        "vm_deposit".to_string(),
+                    return Ok(TransactionDetails {
+                        tx_type: "vm_deposit".to_string(),
                         inputs,
-                        vec![],
-                        amount.unwrap_or(0),
-                        0,
+                        outputs: vec![],
+                        total_input: amount.unwrap_or(0),
+                        total_output: 0,
                         fee,
-                    ));
+                    });
                 }
             }
 
@@ -262,13 +269,27 @@ pub fn extract_transaction_details(
             let inputs = vec![];
             let outputs = vec![];
             let fee = vm_transaction_fee(tx);
-            Ok(("contract_call".to_string(), inputs, outputs, 0, 0, fee))
+            Ok(TransactionDetails {
+                tx_type: "contract_call".to_string(),
+                inputs,
+                outputs,
+                total_input: 0,
+                total_output: 0,
+                fee,
+            })
         }
         Transaction::ContractDeploy(_cd_tx) => {
             let inputs = vec![];
             let outputs = vec![];
             let fee = vm_transaction_fee(tx);
-            Ok(("contract_deploy".to_string(), inputs, outputs, 0, 0, fee))
+            Ok(TransactionDetails {
+                tx_type: "contract_deploy".to_string(),
+                inputs,
+                outputs,
+                total_input: 0,
+                total_output: 0,
+                fee,
+            })
         }
         Transaction::AccountTransfer(at_tx) => {
             let inputs = vec![];
@@ -282,14 +303,14 @@ pub fn extract_transaction_details(
                 sponsored_contract: None,
             }];
             let fee = vm_transaction_fee(tx);
-            Ok((
-                "account_transfer".to_string(),
+            Ok(TransactionDetails {
+                tx_type: "account_transfer".to_string(),
                 inputs,
                 outputs,
-                0,
-                at_tx.amount,
+                total_input: 0,
+                total_output: at_tx.amount,
                 fee,
-            ))
+            })
         }
         Transaction::VmWithdrawal(vw_tx) => {
             let inputs = vec![];
@@ -302,14 +323,14 @@ pub fn extract_transaction_details(
                 is_mine: false,
                 sponsored_contract: None,
             }];
-            Ok((
-                "vm_withdrawal".to_string(),
+            Ok(TransactionDetails {
+                tx_type: "vm_withdrawal".to_string(),
                 inputs,
                 outputs,
-                0,
-                vw_tx.output.amount,
-                None,
-            ))
+                total_input: 0,
+                total_output: vw_tx.output.amount,
+                fee: None,
+            })
         }
     }
 }

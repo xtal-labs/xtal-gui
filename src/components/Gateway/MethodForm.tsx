@@ -170,13 +170,15 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
       const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
 
       const result = await tauriCommand<SendResult>("call_contract", {
-        contractAddress,
-        method: method.name,
-        data,
-        value: payableValueXtal,
-        gasLimit: effectiveGasLimit,
-        gasPrice: effectiveGasPrice,
-        password,
+        request: {
+          contractAddress,
+          method: method.name,
+          data,
+          value: payableValueXtal,
+          gasLimit: effectiveGasLimit,
+          gasPrice: effectiveGasPrice,
+          password,
+        },
       });
 
       setTxResult(result);

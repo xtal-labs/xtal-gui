@@ -1,4 +1,5 @@
-import { Rocket, Check, Folder, Globe, Wallet, Loader2, Server, HardDrive, Search, RefreshCw } from 'lucide-react';
+import { Rocket, Check, Folder, Globe, Wallet, Loader2, Server, HardDrive, Search, RefreshCw, Compass } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
 import { FRUIT_COLORS } from '@/lib/fruitColors';
 import type { NetworkInfo, SyncModeOption } from '../useSetupWizard';
 
@@ -13,6 +14,8 @@ interface CompleteStepProps {
   walletName: string | null;
   walletAddress: string;
   dataDir: string;
+  showWalkthrough: boolean;
+  onShowWalkthroughChange: (show: boolean) => void;
   onLaunch: () => void;
   isProcessing: boolean;
 }
@@ -33,6 +36,8 @@ export function CompleteStep({
   walletName,
   walletAddress,
   dataDir,
+  showWalkthrough,
+  onShowWalkthroughChange,
   onLaunch,
   isProcessing,
 }: CompleteStepProps) {
@@ -156,6 +161,27 @@ export function CompleteStep({
           </div>
         </div>
       </div>
+      </div>
+
+      {/* Walkthrough opt-in */}
+      <div className="chamfered-border-wrap mb-5 sm:mb-8 max-h-[560px]:mb-3">
+        <label className="chamfered bg-card p-3 sm:p-4 max-h-[560px]:p-2.5 flex items-center gap-3 sm:gap-4 cursor-pointer">
+          <div className="w-9 h-9 sm:w-10 sm:h-10 chamfered-sm bg-accent/10 flex items-center justify-center shrink-0">
+            <Compass className="w-5 h-5 text-accent" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-medium">Show me around after launch</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              A short tour of your wallet, mining, validating and contracts. You can replay it from the Help menu.
+            </p>
+          </div>
+          <Switch
+            checked={showWalkthrough}
+            onCheckedChange={onShowWalkthroughChange}
+            disabled={isProcessing}
+            aria-label="Show me around after launch"
+          />
+        </label>
       </div>
 
       {/* Launch button */}

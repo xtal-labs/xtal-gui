@@ -36,6 +36,21 @@ interface NodeConfig {
   syncMode: string;
   stemRetentionEpochs: number;
   subscribedFruits: string[];
+  maxLogSizeMb: number;
+}
+
+const logSizeOptions = [
+  { mb: 50, label: "50 MB" },
+  { mb: 100, label: "100 MB" },
+  { mb: 250, label: "250 MB" },
+  { mb: 500, label: "500 MB" },
+  { mb: 1024, label: "1 GB" },
+  { mb: 0, label: "Unlimited" },
+];
+
+function formatLogSize(mb: number | undefined) {
+  if (mb === undefined) return "—";
+  return logSizeOptions.find((option) => option.mb === mb)?.label ?? `${mb} MB`;
 }
 
 const networkOptions = [
@@ -126,6 +141,16 @@ export default function Settings() {
     ...(hasPendingTxIndexChange ? ["transaction index"] : []),
     ...(hasPendingArchivalChange ? ["archival mode"] : []),
   ]);
+
+  // Applies to the running logger immediately; no restart.
+  const handleLogSizeChange = async (value: string) => {
+    try {
+      await tauriCommand("set_max_log_size", { maxLogSizeMb: Number(value) });
+      getNodeConfig();
+    } catch (e) {
+      console.error("Failed to set log file limit:", e);
+    }
+  };
 
   const resetPendingNodeChanges = () => {
     setPendingNetwork(null);
@@ -437,6 +462,34 @@ export default function Settings() {
               <span className="text-sm font-mono">
                 {formatRetention(nodeConfig)}
               </span>
+            </div>
+            <div className="flex items-center justify-between py-2 px-3 chamfered-sm bg-muted/50 gap-4">
+              <div>
+                <span className="text-sm font-heading text-foreground-secondary">LOG FILE LIMIT</span>
+                <p className="text-xs text-foreground-muted mt-0.5">
+                  Disk space for <span className="font-mono">crystal.log</span> and its one archive. Applies immediately.
+                </p>
+              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild disabled={!nodeConfig}>
+                  <Button variant="ghost" size="sm" className="font-mono">
+                    <span>{formatLogSize(nodeConfig?.maxLogSizeMb)}</span>
+                    <ChevronDown className="h-3.5 w-3.5 text-foreground-muted" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuRadioGroup
+                    value={String(nodeConfig?.maxLogSizeMb ?? "")}
+                    onValueChange={handleLogSizeChange}
+                  >
+                    {logSizeOptions.map((option) => (
+                      <DropdownMenuRadioItem key={option.mb} value={String(option.mb)}>
+                        <span className="font-heading">{option.label}</span>
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
             <div className="py-3 px-3 chamfered-sm bg-muted/50">
               <div className="flex items-start justify-between gap-3">

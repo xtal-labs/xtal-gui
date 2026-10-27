@@ -51,6 +51,8 @@ export interface WizardState {
   archival: boolean;
   txIndex: boolean;
   syncMode: SyncModeOption;
+  // Start the guided walkthrough once the app has restarted into the node.
+  showWalkthrough: boolean;
   // True until the initial active-network pointer check resolves. Prevents a
   // flash of the welcome step when a network is already pending (switch flow).
   initializing: boolean;
@@ -93,6 +95,7 @@ const initialState: WizardState = {
   archival: true,
   txIndex: false,
   syncMode: 'full',
+  showWalkthrough: true,
   initializing: true,
 };
 
@@ -288,8 +291,20 @@ export function useSetupWizard() {
     setState(s => ({ ...s, step: 'complete' }));
   }, []);
 
+  const setShowWalkthrough = useCallback((showWalkthrough: boolean) => {
+    setState(s => ({ ...s, showWalkthrough }));
+  }, []);
+
   const completeSetup = useCallback(async () => {
     setState(s => ({ ...s, isProcessing: true, error: null }));
+
+    // Completing setup restarts the app, so the walkthrough can only be queued
+    // here. Failing to queue it must not stop the node from launching.
+    try {
+      await invoke('set_gui_tutorial_pending', { pending: state.showWalkthrough });
+    } catch (e) {
+      console.error('Failed to queue the walkthrough:', e);
+    }
 
     try {
       await invoke('complete_setup');
@@ -297,7 +312,7 @@ export function useSetupWizard() {
     } catch (e) {
       setError(String(e));
     }
-  }, [setError]);
+  }, [setError, state.showWalkthrough]);
 
   const getStepNumber = useCallback(() => {
     const stepOrder = state.walletChoice === 'import' ? IMPORT_STEP_ORDER : CREATE_STEP_ORDER;
@@ -327,6 +342,19 @@ export function useSetupWizard() {
     if (didBootstrap.current) return;
     didBootstrap.current = true;
 
+    // The wizard also runs when switching to a network that was never set up.
+    // Someone who has already been through the walkthrough is not offered it
+    // again by default.
+    invoke<{ tutorial: { completed: string[] } }>('get_gui_config')
+      .then(config => {
+        if (config.tutorial.completed.length > 0) {
+          setState(s => ({ ...s, showWalkthrough: false }));
+        }
+      })
+      .catch(() => {
+        // Preferences unreadable: keep the first-run default.
+      });
+
     (async () => {
       try {
         const pending = await invoke<NetworkInfo | null>('get_active_network');
@@ -355,6 +383,7 @@ export function useSetupWizard() {
       setImportPassword,
       skipImportPassword,
       completeSetup,
+      setShowWalkthrough,
       setError,
       clearError,
     },

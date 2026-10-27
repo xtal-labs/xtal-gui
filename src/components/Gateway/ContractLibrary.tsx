@@ -3,6 +3,7 @@ import { Search, Plus, Download } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { TourButton } from "@/components/Tour";
 import { ContractCard } from "./ContractCard";
 import { useGatewayStore, useUiStore } from "@/stores";
 import { tauriCommand } from "@/hooks/useTauriCommand";
@@ -102,7 +103,8 @@ export function ContractLibrary() {
             Interact with deployed smart contracts
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div data-tour="gateway-actions" className="flex items-center gap-2">
+          <TourButton chapter="gateway" />
           <Button variant="outline" size="sm" onClick={() => openModal(MODAL_IMPORT)}>
             <Download className="h-3.5 w-3.5" />
             Import ABI
@@ -124,7 +126,7 @@ export function ContractLibrary() {
             icon={<Search className="h-4 w-4" />}
           />
         </div>
-        <div className="flex gap-2">
+        <div data-tour="gateway-load" className="flex gap-2">
           <Input
             placeholder="Load by address (0x...)"
             value={loadAddress}
@@ -146,38 +148,40 @@ export function ContractLibrary() {
       <div className="divider-angular" />
 
       {/* Contract grid */}
-      {filtered.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          {filtered.map((contract) => (
-            <ContractCard
-              key={contract.address}
-              contract={contract}
-              onOpen={handleOpen}
-            />
-          ))}
-        </div>
-      ) : cachedContracts.length === 0 ? (
-        <div className="text-center py-12">
-          <div
-            className="icon-hex mx-auto mb-4 bg-muted/50"
-            style={{ width: "4rem", height: "4rem" }}
-          >
-            <Download className="h-6 w-6 text-foreground-muted" />
+      <div data-tour="gateway-library">
+        {filtered.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {filtered.map((contract) => (
+              <ContractCard
+                key={contract.address}
+                contract={contract}
+                onOpen={handleOpen}
+              />
+            ))}
           </div>
-          <p className="text-foreground-muted font-heading tracking-wide">
-            No contracts yet
-          </p>
-          <p className="text-sm text-foreground-muted mt-1">
-            Deploy a new contract or import an ABI for an existing one
-          </p>
-        </div>
-      ) : (
-        <div className="text-center py-8">
-          <p className="text-foreground-muted text-sm">
-            No contracts match "{searchQuery}"
-          </p>
-        </div>
-      )}
+        ) : cachedContracts.length === 0 ? (
+          <div className="text-center py-12">
+            <div
+              className="icon-hex mx-auto mb-4 bg-muted/50"
+              style={{ width: "4rem", height: "4rem" }}
+            >
+              <Download className="h-6 w-6 text-foreground-muted" />
+            </div>
+            <p className="text-foreground-muted font-heading tracking-wide">
+              No contracts yet
+            </p>
+            <p className="text-sm text-foreground-muted mt-1">
+              Deploy a new contract or import an ABI for an existing one
+            </p>
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <p className="text-foreground-muted text-sm">
+              No contracts match "{searchQuery}"
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

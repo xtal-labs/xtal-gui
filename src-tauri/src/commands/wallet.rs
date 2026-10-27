@@ -11,6 +11,7 @@ use xtal::shards::{Shards, SignedShards};
 
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -54,7 +55,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::commands::tx_detail_utils::{
     extract_inputs, extract_output_from_transaction, extract_transaction_details,
-    vm_transaction_fee,
+    vm_transaction_fee, TransactionDetails,
 };
 use crate::events::{emit_wallet_loaded, emit_wallet_unloaded, get_wallet_pkh_set};
 use crate::state::AppState;
@@ -309,7 +310,7 @@ fn next_epoch_refresh_remaining(eligible_height: u64, current_leaf_height: u64) 
         return 0;
     }
 
-    let refresh_height = if eligible_height % leaves_per_epoch == 0 {
+    let refresh_height = if eligible_height.is_multiple_of(leaves_per_epoch) {
         eligible_height
     } else {
         ((eligible_height / leaves_per_epoch) + 1) * leaves_per_epoch
@@ -674,12 +675,12 @@ fn merge_vm_address_catalog(
     addresses
 }
 
-pub(crate) fn select_vm_sender_entry<'a>(
-    account_entries: &'a [WalletAccountStateEntry],
+pub(crate) fn select_vm_sender_entry(
+    account_entries: &[WalletAccountStateEntry],
     amount: u64,
     gas_limit: u64,
     gas_price: u64,
-) -> Option<&'a WalletAccountStateEntry> {
+) -> Option<&WalletAccountStateEntry> {
     let required_balance = gas_limit.checked_mul(gas_price)?.checked_add(amount)?;
 
     account_entries
@@ -1870,6 +1871,12 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
         .get_utxos_for_addresses(&pkhs)
         .map_err(|e| format!("Failed to get wallet UTXOs: {}", e))?;
 
+    let mut unavailable = state.services.mempool().spent_outpoints();
+    unavailable.extend(
+        wallet
+            .deposit_reserved_outpoints()
+            .map_err(|e| e.to_string())?,
+    );
     let mut utxos = Vec::new();
 
     for (pkh, owned) in &utxos_by_pkh {
@@ -1879,7 +1886,14 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
             let confirmations = current_leaf_height.saturating_sub(utxo.creation_height);
 
             // Determine eligibility for CAGE deposit
-            let (is_eligible, ineligible_reason) = if utxo.is_staking {
+            let (mut is_eligible, mut ineligible_reason) = if unavailable.contains(&utxo.outpoint) {
+                (
+                    false,
+                    Some("reserved by a pending transaction or deposit".to_string()),
+                )
+            } else if utxo.output.currency != xtal::transaction::CurrencyType::XTAL {
+                (false, Some("not XTAL".to_string()))
+            } else if utxo.is_staking {
                 (false, Some("staking".to_string()))
             } else if utxo.is_coinbase {
                 if confirmations < COINBASE_MATURITY {
@@ -1910,6 +1924,20 @@ pub async fn list_unspent_outputs(state: State<'_, AppState>) -> Result<Vec<Wall
                 // Standard P2PKH UTXO
                 (true, None)
             };
+
+            if is_eligible && utxo.output.script_pubkey != xtal::script::p2pkh_script_pubkey(pkh) {
+                is_eligible = false;
+                ineligible_reason =
+                    Some("requires a standard P2PKH output; use Enter amount".into());
+            }
+            if is_eligible
+                && blockchain
+                    .is_utxo_consumed_in_active_stems(&utxo.outpoint.0, utxo.outpoint.1)
+                    .map_err(|e| e.to_string())?
+            {
+                is_eligible = false;
+                ineligible_reason = Some("deposit awaiting confirmation".into());
+            }
 
             utxos.push(WalletUtxo {
                 txid: hex::encode(utxo.outpoint.0),
@@ -2666,7 +2694,7 @@ pub async fn get_transaction_history(
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
                             let block_ts =
-                                get_block_timestamp(&blockchain, &ptx.txid, None, fallback_ts);
+                                get_block_timestamp(blockchain, &ptx.txid, None, fallback_ts);
                             let confirmation = Some((block_ts as i64, leaf_height));
                             let _ = queries.set_transaction_confirmed(&ptx.txid, confirmation);
 
@@ -2714,7 +2742,7 @@ pub async fn get_transaction_history(
                     let (confirmed_at, height) = ctx.confirmation.unwrap_or((ctx.created_at, 0));
                     let confirmations = current_leaf_height.saturating_sub(height) as u32 + 1;
                     let timestamp =
-                        get_block_timestamp(&blockchain, &ctx.txid, None, confirmed_at as u64);
+                        get_block_timestamp(blockchain, &ctx.txid, None, confirmed_at as u64);
 
                     transactions.push(TransactionSummary {
                         txid: hex::encode(ctx.txid),
@@ -2749,7 +2777,7 @@ pub async fn get_transaction_history(
                         .get_leaf_height_for_hash(&idx.block_hash)
                         .unwrap_or(idx.block_height);
                     let timestamp = get_block_timestamp(
-                        &blockchain,
+                        blockchain,
                         &rec.txid,
                         Some(height),
                         rec.created_at as u64,
@@ -2824,7 +2852,7 @@ pub async fn get_transaction_history(
 
                     let confirmations = current_leaf_height.saturating_sub(height) as u32 + 1;
                     let timestamp = get_block_timestamp(
-                        &blockchain,
+                        blockchain,
                         &ctx.txid,
                         Some(height),
                         confirmed_at as u64,
@@ -2975,7 +3003,7 @@ pub async fn get_transaction_history(
         if incoming_amount > 0 {
             let fee = tx
                 .utxo_inputs()
-                .and_then(|inputs| extract_inputs(inputs, &blockchain).ok())
+                .and_then(|inputs| extract_inputs(inputs, blockchain).ok())
                 .map(|parsed| {
                     let total_in: u64 = parsed
                         .iter()
@@ -3135,7 +3163,7 @@ pub async fn get_transaction_history(
         };
 
         // Get block timestamp from the transaction index
-        let timestamp = get_block_timestamp(&blockchain, tx_id, Some(info.creation_height), 0);
+        let timestamp = get_block_timestamp(blockchain, tx_id, Some(info.creation_height), 0);
 
         // Look up the full transaction from the block (needed for raw_tx in DB + fee for standard txs)
         let found_tx_data = blockchain
@@ -3157,23 +3185,20 @@ pub async fn get_transaction_history(
 
                         let parsed_inputs = found_tx
                             .utxo_inputs()
-                            .and_then(|inputs| extract_inputs(inputs, &blockchain).ok());
+                            .and_then(|inputs| extract_inputs(inputs, blockchain).ok());
 
-                        let input_details = parsed_inputs
-                            .as_ref()
-                            .map(|parsed| {
-                                let details: Vec<InputDetail> = parsed
-                                    .iter()
-                                    .map(|i| InputDetail {
-                                        txid: i.txid.clone(),
-                                        index: i.output_index,
-                                        amount: i.amount.map(Shards::get).unwrap_or(0),
-                                        address: i.address.clone(),
-                                    })
-                                    .collect();
-                                InputDetail::serialize_list(&details)
-                            })
-                            .flatten();
+                        let input_details = parsed_inputs.as_ref().and_then(|parsed| {
+                            let details: Vec<InputDetail> = parsed
+                                .iter()
+                                .map(|i| InputDetail {
+                                    txid: i.txid.clone(),
+                                    index: i.output_index,
+                                    amount: i.amount.map(Shards::get).unwrap_or(0),
+                                    address: i.address.clone(),
+                                })
+                                .collect();
+                            InputDetail::serialize_list(&details)
+                        });
 
                         let fee = parsed_inputs
                             .as_ref()
@@ -3197,9 +3222,8 @@ pub async fn get_transaction_history(
                     })
             });
 
-        let (raw_tx, input_details, tx_fee) = found_tx_data
-            .map(|(raw, details, fee)| (raw, details, fee))
-            .unwrap_or_else(|| (Vec::new(), None, 0));
+        let (raw_tx, input_details, tx_fee) =
+            found_tx_data.unwrap_or_else(|| (Vec::new(), None, 0));
 
         // Store in wallet DB if not already present (captures input_details while resolvable)
         if let (Some(ref db), Some(ref wid)) = (&wallet_db_ref, &query_wallet_id) {
@@ -3294,7 +3318,7 @@ pub async fn get_transaction_history(
     }
 
     // Sort by timestamp (newest first)
-    transactions.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    transactions.sort_by_key(|tx| Reverse(tx.timestamp));
 
     // Apply pagination
     let total_count = transactions.len();
@@ -3411,9 +3435,9 @@ pub async fn get_transaction_detail(
     let is_pending = resolved_pending;
 
     // Extract transaction details based on type
-    let (tx_type, inputs, outputs, total_input, total_output, fee) = extract_transaction_details(
+    let details = extract_transaction_details(
         &tx,
-        &blockchain,
+        blockchain,
         is_pending,
         pending_fee,
         stored_input_details,
@@ -3438,37 +3462,29 @@ pub async fn get_transaction_detail(
         current_leaf_height,
         Some(&wallet_pkhs_for_maturity),
     )
-    .or_else(|| {
-        if tx_type_has_maturity(&tx_type) && block_height.is_some() {
-            let creation_height = block_height.unwrap();
+    .or_else(|| match block_height {
+        Some(creation_height) if tx_type_has_maturity(&details.tx_type) => {
             let age = current_leaf_height.saturating_sub(creation_height);
             let remaining = xtal::consensus::validation::COINBASE_MATURITY.saturating_sub(age);
-            Some(maturity_status(&tx_type, "locked", remaining))
-        } else {
-            None
+            Some(maturity_status(&details.tx_type, "locked", remaining))
         }
+        _ => None,
     });
 
-    Ok(build_transaction_detail_response(
+    Ok(build_transaction_detail_response(TransactionDetailParts {
         txid,
-        &tx,
-        tx_type,
-        inputs,
-        outputs,
-        total_input,
-        total_output,
-        fee,
+        tx: &tx,
+        details,
         confirmations,
         timestamp,
         block_hash,
         block_height,
-        &wallet_addresses,
+        wallet_addresses: &wallet_addresses,
         execution_status,
-        raw_receipt.as_ref(),
+        raw_receipt: raw_receipt.as_ref(),
         receipt,
-        None,
         maturity_status,
-    ))
+    }))
 }
 
 /// Look up the timestamp of a leaf block at the given height.
@@ -3773,26 +3789,49 @@ fn extract_produced_withdrawal(
     })
 }
 
+/// Everything the wallet and explorer detail views assemble into a
+/// [`TransactionDetail`].
+pub(crate) struct TransactionDetailParts<'a> {
+    pub txid: String,
+    pub tx: &'a Transaction,
+    pub details: TransactionDetails,
+    pub confirmations: u32,
+    pub timestamp: u64,
+    pub block_hash: Option<String>,
+    pub block_height: Option<u64>,
+    pub wallet_addresses: &'a HashSet<String>,
+    pub execution_status: Option<String>,
+    pub raw_receipt: Option<&'a TransactionReceipt>,
+    pub receipt: Option<TransactionReceiptDetail>,
+    pub maturity_status: Option<MaturityStatus>,
+}
+
 pub(crate) fn build_transaction_detail_response(
-    txid: String,
-    tx: &Transaction,
-    tx_type: String,
-    mut inputs: Vec<TransactionInput>,
-    mut outputs: Vec<TransactionOutput>,
-    total_input: u64,
-    total_output: u64,
-    fee: Option<u64>,
-    confirmations: u32,
-    timestamp: u64,
-    block_hash: Option<String>,
-    block_height: Option<u64>,
-    wallet_addresses: &HashSet<String>,
-    execution_status: Option<String>,
-    raw_receipt: Option<&TransactionReceipt>,
-    receipt: Option<TransactionReceiptDetail>,
-    memo: Option<String>,
-    maturity_status: Option<MaturityStatus>,
+    parts: TransactionDetailParts<'_>,
 ) -> TransactionDetail {
+    let TransactionDetailParts {
+        txid,
+        tx,
+        details:
+            TransactionDetails {
+                tx_type,
+                mut inputs,
+                mut outputs,
+                total_input,
+                total_output,
+                fee,
+            },
+        confirmations,
+        timestamp,
+        block_hash,
+        block_height,
+        wallet_addresses,
+        execution_status,
+        raw_receipt,
+        receipt,
+        maturity_status,
+    } = parts;
+
     annotate_transaction_io_ownership(&mut inputs, &mut outputs, wallet_addresses);
     let net_amount = calculate_net_amount(&inputs, &outputs, wallet_addresses);
     let tx_type = match tx {
@@ -3836,7 +3875,7 @@ pub(crate) fn build_transaction_detail_response(
         block_height,
         execution_status,
         receipt,
-        memo,
+        memo: None,
     }
 }
 

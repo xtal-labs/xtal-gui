@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { StatusBadge } from "@/components/common";
+import { TourButton } from "@/components/Tour";
 import { useMiningStore, useUiStore, useWalletStore } from "@/stores";
 import { tauriCommand, tauriCommandSafe } from "@/hooks";
 import { formatHashRateMH, formatDuration, formatTimeAgo, cn } from "@/lib/utils";
@@ -317,7 +318,10 @@ export default function Mining() {
             Control your mining operations
           </p>
         </div>
-        <StatusBadge status={isActive ? "mining" : "idle"} />
+        <div className="flex items-center gap-2">
+          <TourButton chapter="mining" />
+          <StatusBadge status={isActive ? "mining" : "idle"} />
+        </div>
       </div>
 
       {/* Main Controls */}
@@ -330,6 +334,7 @@ export default function Mining() {
           <CardContent className="space-y-6">
             {/* Start/Stop Button */}
             <Button
+              data-tour="mining-toggle"
               size="xl"
               variant={isActive ? "destructive" : "success"}
               className="w-full"
@@ -357,7 +362,7 @@ export default function Mining() {
             )}
 
             {/* Thread Selection */}
-            <div className="space-y-3">
+            <div data-tour="mining-threads" className="space-y-3">
               <div className="flex items-center justify-between">
                 <label className="text-sm font-medium">Mining Threads</label>
                 <span className="text-sm font-bold tabular-nums text-primary">
@@ -396,7 +401,7 @@ export default function Mining() {
             </div>
 
             {/* Wallet Selection */}
-            <div className="space-y-2 pt-4 border-t border-border">
+            <div data-tour="mining-wallet" className="space-y-2 pt-4 border-t border-border">
               <label className="text-sm font-medium">Mining Wallet</label>
               {isActive && miningWalletName ? (
                 // When mining is active, show the locked-in wallet (read-only)
@@ -569,7 +574,7 @@ export default function Mining() {
       </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
+      <div data-tour="mining-found" className="grid grid-cols-2 lg:grid-cols-4 gap-4 stagger-children">
         <Card variant="crystalline">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm font-heading font-medium tracking-wide text-foreground-secondary">
@@ -654,7 +659,7 @@ export default function Mining() {
       )}
 
       {/* Mined Blocks History */}
-      <Card variant="crystalline">
+      <Card data-tour="mining-blocks" variant="crystalline">
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-heading tracking-wide flex items-center gap-2">
             <div className="icon-hex icon-hex-sm bg-success/20">

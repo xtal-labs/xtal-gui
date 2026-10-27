@@ -39,7 +39,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { AmountDisplay, HashDisplay, StatusBadge, TransactionList } from "@/components/common";
-import { useWalletStore, useUiStore } from "@/stores";
+import { TourButton } from "@/components/Tour";
+import { walletChapter } from "@/components/Tour/chapters/wallet";
+import { useWalletStore, useUiStore, useTourStore } from "@/stores";
 import { tauriCommand } from "@/hooks";
 
 import { cn, toShards, addShards } from "@/lib/utils";
@@ -181,6 +183,19 @@ export default function Wallet() {
   const [error, setError] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<WalletSubTab>("utxo");
+
+  // Show the view each walkthrough step describes without performing any action.
+  const isWalletTourActive = useTourStore((state) => state.run[state.chapterIndex] === "wallet");
+  const walletTourStepIndex = useTourStore((state) => state.stepIndex);
+  const walletTourView = useTourStore((state) => {
+    const chapter = state.run[state.chapterIndex];
+    return chapter === "wallet"
+      ? walletChapter.steps[state.stepIndex]?.walletView ?? "utxo"
+      : null;
+  });
+  useEffect(() => {
+    if (isWalletTourActive && walletTourView) setActiveSubTab(walletTourView);
+  }, [isWalletTourActive, walletTourView, walletTourStepIndex]);
   const [utxoTransactionFilter, setUtxoTransactionFilter] =
     useState<UtxoTransactionFilter>("all");
 
@@ -933,7 +948,7 @@ export default function Wallet() {
   const renderUtxoContent = () => (
     <>
       {/* Balance Card */}
-      <Card variant="crystalline" className="bg-linear-to-br from-primary/10 to-accent/10 border-primary/20">
+      <Card data-tour="wallet-balance" variant="crystalline" className="bg-linear-to-br from-primary/10 to-accent/10 border-primary/20">
         <CardContent className="pt-6">
           <div className="text-center">
             <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2">
@@ -961,7 +976,7 @@ export default function Wallet() {
       </Card>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-3 gap-3">
+      <div data-tour="wallet-actions" className="grid grid-cols-3 gap-3">
         <Button
           variant="crystalline"
           size="lg"
@@ -1050,23 +1065,25 @@ export default function Wallet() {
       </Card>
 
       {/* Transaction History */}
-      <TransactionList
-        transactions={transactions}
-        surface="utxo"
-        title="TRANSACTIONS"
-        headerAction={renderUtxoTransactionFilter()}
-        currentPage={transactionPagination.currentPage}
-        totalPages={Math.ceil(transactionPagination.totalCount / transactionPagination.pageSize)}
-        isLoading={transactionPagination.isLoading}
-        onPageChange={fetchTransactionPage}
-      />
+      <div data-tour="wallet-transactions">
+        <TransactionList
+          transactions={transactions}
+          surface="utxo"
+          title="TRANSACTIONS"
+          headerAction={renderUtxoTransactionFilter()}
+          currentPage={transactionPagination.currentPage}
+          totalPages={Math.ceil(transactionPagination.totalCount / transactionPagination.pageSize)}
+          isLoading={transactionPagination.isLoading}
+          onPageChange={fetchTransactionPage}
+        />
+      </div>
     </>
   );
 
   const renderVmContent = () => (
     <>
       {/* VM Balance Card */}
-      <Card variant="crystalline" className="bg-linear-to-br from-accent/10 to-primary/10 border-accent/20">
+      <Card data-tour="wallet-vm-balance" variant="crystalline" className="bg-linear-to-br from-accent/10 to-primary/10 border-accent/20">
         <CardContent className="pt-6">
           <div className="text-center">
             <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2">
@@ -1092,7 +1109,7 @@ export default function Wallet() {
       </Card>
 
       {/* Quick Actions */}
-      <div className="grid grid-cols-3 gap-3">
+      <div data-tour="wallet-vm-actions" className="grid grid-cols-3 gap-3">
         <Button
           variant="crystalline"
           size="lg"
@@ -1166,15 +1183,17 @@ export default function Wallet() {
       </Card>
 
       {/* VM Transaction History */}
-      <TransactionList
-        transactions={vmTransactions}
-        surface="vm"
-        title="VM TRANSACTIONS"
-        currentPage={vmTransactionPagination.currentPage}
-        totalPages={Math.ceil(vmTransactionPagination.totalCount / vmTransactionPagination.pageSize) || 1}
-        isLoading={vmTransactionPagination.isLoading}
-        onPageChange={fetchVmTransactionPage}
-      />
+      <div data-tour="wallet-vm-transactions">
+        <TransactionList
+          transactions={vmTransactions}
+          surface="vm"
+          title="VM TRANSACTIONS"
+          currentPage={vmTransactionPagination.currentPage}
+          totalPages={Math.ceil(vmTransactionPagination.totalCount / vmTransactionPagination.pageSize) || 1}
+          isLoading={vmTransactionPagination.isLoading}
+          onPageChange={fetchVmTransactionPage}
+        />
+      </div>
     </>
   );
 
@@ -1184,14 +1203,17 @@ export default function Wallet() {
     if (!isLoaded) {
       return (
         <div className="space-y-6 animate-fade-in-up">
-          <div>
-            <h1 className="text-2xl font-heading font-bold tracking-wide text-foreground">WALLET</h1>
-            <p className="text-foreground-secondary text-sm mt-1 font-heading tracking-wide">
-              Manage your XTAL balance
-            </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-heading font-bold tracking-wide text-foreground">WALLET</h1>
+              <p className="text-foreground-secondary text-sm mt-1 font-heading tracking-wide">
+                Manage your XTAL balance
+              </p>
+            </div>
+            <TourButton chapter="wallet" />
           </div>
 
-          <Card variant="crystalline" className="max-w-md mx-auto">
+          <Card data-tour="wallet-empty" variant="crystalline" className="max-w-md mx-auto">
             <CardHeader className="text-center">
               <div className="icon-hex mx-auto mb-4 bg-primary/20" style={{ width: '4rem', height: '4rem' }}>
                 <WalletIcon className="h-8 w-8 text-primary" />
@@ -1308,6 +1330,7 @@ export default function Wallet() {
               showSymbol 
             />
           </div>
+          <TourButton chapter="wallet" />
           <Button
             variant="ghost"
             size="icon"
@@ -1328,7 +1351,7 @@ export default function Wallet() {
       )}
 
       {/* Sub-tab Navigation */}
-      <div className="flex gap-1 p-1 bg-muted/50 chamfered-sm">
+      <div data-tour="wallet-subtabs" className="flex gap-1 p-1 bg-muted/50 chamfered-sm">
         <button
           onClick={() => setActiveSubTab("utxo")}
           className={cn(

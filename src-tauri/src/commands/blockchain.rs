@@ -9,10 +9,16 @@ use std::collections::{HashMap, HashSet};
 use serde::Serialize;
 use tauri::State;
 use xtal::address::encode_pkh;
+use xtal::blockchain::constants::{
+    LEAVES_PER_EPOCH, MIN_STAKE_LOCK_LEAVES, TARGET_SPACING, UNSTAKE_LOCK_LEAVES,
+};
 use xtal::blockchain::epoch_manager::EpochManager;
+use xtal::blockchain::subsidy::RewardSplit;
 use xtal::blockchain::{Block, BlockType, Blockchain};
+use xtal::config::XTAL_MIN_STAKE_OUTPUT;
 use xtal::consensus::validation::COINBASE_MATURITY;
 use xtal::crypto::hash_public_key;
+use xtal::difficulty::DEFAULT_STEM_DIFFICULTY_RATIO;
 use xtal::fruit::core::FruitTx;
 use xtal::fruit::FruitHeaderWithSig;
 use xtal::interfaces::ChainDataProvider;
@@ -26,7 +32,8 @@ use xtal::transaction::Transaction;
 use crate::commands::tx_detail_utils::extract_transaction_details;
 use crate::commands::wallet::{
     build_transaction_detail_response, find_transaction_in_block_or_fruits,
-    resolve_transaction_context, MaturityStatus, TransactionDetail, TransactionReceiptDetail,
+    resolve_transaction_context, MaturityStatus, TransactionDetail, TransactionDetailParts,
+    TransactionReceiptDetail,
 };
 use crate::state::AppState;
 
@@ -331,6 +338,56 @@ fn parse_hash(hash: &str) -> Result<[u8; 32], String> {
     Ok(arr)
 }
 
+/// Consensus parameters the walkthrough quotes in its explanations, read from
+/// the node so the copy can never drift from what the chain enforces.
+#[derive(Debug, Clone, Serialize)]
+pub struct ConsensusParams {
+    /// Target seconds between leaves.
+    pub leaf_interval_secs: u64,
+    /// Stems mined per leaf at target difficulty.
+    pub stems_per_leaf: u16,
+    pub leaves_per_epoch: u64,
+    /// Leaves before a coinbase or VM-withdrawal output is spendable.
+    pub coinbase_maturity_leaves: u64,
+    /// Leaves a new stake stays locked before it counts and can be unstaked.
+    pub min_stake_lock_leaves: u64,
+    /// Leaves an unstaked output stays locked before it is spendable.
+    pub unstake_lock_leaves: u64,
+    /// Smallest stake output a user may create.
+    pub min_stake_output: Shards,
+    /// Share of the leaf subsidy paid to the leaf miner (0-100).
+    pub leaf_miner_pct: u8,
+    /// Share of the leaf subsidy pooled for credited stems (0-100).
+    pub stem_pool_pct: u8,
+    /// Share of the stem pool carved out for fruit producers (0-100).
+    pub fruit_from_stem_pct: u8,
+    /// Share of pooled VM fees paid to credited stems; the rest goes to fruit producers (0-100).
+    pub miner_fee_pct: u8,
+}
+
+fn consensus_params() -> ConsensusParams {
+    let split = RewardSplit::default();
+    ConsensusParams {
+        leaf_interval_secs: TARGET_SPACING,
+        stems_per_leaf: DEFAULT_STEM_DIFFICULTY_RATIO,
+        leaves_per_epoch: LEAVES_PER_EPOCH,
+        coinbase_maturity_leaves: COINBASE_MATURITY,
+        min_stake_lock_leaves: MIN_STAKE_LOCK_LEAVES,
+        unstake_lock_leaves: UNSTAKE_LOCK_LEAVES,
+        min_stake_output: XTAL_MIN_STAKE_OUTPUT.into(),
+        leaf_miner_pct: split.leaf_miner_pct,
+        stem_pool_pct: split.stem_pool_pct,
+        fruit_from_stem_pct: split.fruit_from_stem_pct,
+        miner_fee_pct: split.miner_fee_pct,
+    }
+}
+
+/// Get the consensus parameters quoted by the walkthrough.
+#[tauri::command]
+pub async fn get_consensus_params() -> Result<ConsensusParams, String> {
+    Ok(consensus_params())
+}
+
 /// Get current blockchain information
 #[tauri::command]
 pub async fn get_blockchain_info(state: State<'_, AppState>) -> Result<BlockchainInfo, String> {
@@ -419,6 +476,28 @@ pub async fn get_sync_state(state: State<'_, AppState>) -> Result<SyncState, Str
 mod tests {
     use super::*;
 
+    /// Amounts cross IPC as decimal strings; a JSON number would round in JS.
+    #[test]
+    fn consensus_params_serialize_stake_floor_as_shard_string() {
+        let json = serde_json::to_value(consensus_params()).unwrap();
+        assert_eq!(
+            json["min_stake_output"],
+            serde_json::Value::String(XTAL_MIN_STAKE_OUTPUT.to_string())
+        );
+    }
+
+    /// The walkthrough describes the subsidy as "leaf share + stem pool"; the
+    /// two must cover it exactly or the copy misstates the split.
+    #[test]
+    fn consensus_params_subsidy_shares_cover_the_whole_subsidy() {
+        let params = consensus_params();
+        assert_eq!(
+            u16::from(params.leaf_miner_pct) + u16::from(params.stem_pool_pct),
+            100
+        );
+        assert!(params.stems_per_leaf > 0);
+    }
+
     /// The case this exists for: a caught-up node restarting with nothing to
     /// fetch never leaves Idle, and must read synced from the health verdict.
     #[test]
@@ -470,7 +549,7 @@ pub async fn get_recent_blocks(
     }
 
     let blockchain = state.services.blockchain();
-    let leaf_index = build_leaf_index(&blockchain);
+    let leaf_index = build_leaf_index(blockchain);
     let tip_height = blockchain.get_current_height();
     let mut results = Vec::with_capacity(limit);
 
@@ -479,7 +558,7 @@ pub async fn get_recent_blocks(
     loop {
         match blockchain.get_block_by_height(current) {
             Ok(Some(block)) => {
-                results.push(summarize_block(&blockchain, &block, current, &leaf_index));
+                results.push(summarize_block(blockchain, &block, current, &leaf_index));
                 if results.len() >= limit {
                     break;
                 }
@@ -506,11 +585,11 @@ pub async fn get_block_by_height(
     height: u64,
 ) -> Result<Option<BlockSummary>, String> {
     let blockchain = state.services.blockchain();
-    let leaf_index = build_leaf_index(&blockchain);
+    let leaf_index = build_leaf_index(blockchain);
 
     match blockchain.get_block_by_height(height) {
         Ok(Some(block)) => Ok(Some(summarize_block(
-            &blockchain,
+            blockchain,
             &block,
             height,
             &leaf_index,
@@ -527,7 +606,7 @@ pub async fn get_block(
     hash: String,
 ) -> Result<Option<BlockSummary>, String> {
     let blockchain = state.services.blockchain();
-    let leaf_index = build_leaf_index(&blockchain);
+    let leaf_index = build_leaf_index(blockchain);
     let cleaned = hash.trim_start_matches("0x").to_string();
     let hash_bytes = parse_hash(&cleaned)?;
 
@@ -537,7 +616,7 @@ pub async fn get_block(
                 .get_block_height_by_hash(&hash_bytes)
                 .map_err(|e| format!("Failed to get block height: {}", e))?;
             Ok(Some(summarize_block(
-                &blockchain,
+                blockchain,
                 &block,
                 height,
                 &leaf_index,
@@ -555,7 +634,7 @@ pub async fn get_block_detail(
     hash: String,
 ) -> Result<Option<BlockDetail>, String> {
     let blockchain = state.services.blockchain();
-    let leaf_index = build_leaf_index(&blockchain);
+    let leaf_index = build_leaf_index(blockchain);
     let cleaned = hash.trim_start_matches("0x").to_string();
     let hash_bytes = parse_hash(&cleaned)?;
 
@@ -569,7 +648,7 @@ pub async fn get_block_detail(
         .get_block_height_by_hash(&hash_bytes)
         .map_err(|e| format!("Failed to get block height: {}", e))?;
 
-    let leaf_height = resolve_leaf_height(&blockchain, &block, &leaf_index).unwrap_or(0);
+    let leaf_height = resolve_leaf_height(blockchain, &block, &leaf_index).unwrap_or(0);
     let size = calculate_block_size(&block).ok();
     let previous_hash = Some(hex::encode(block.header.previous_block_hash));
 
@@ -626,7 +705,7 @@ pub async fn get_transaction_detail_explorer(
     block_hash: Option<String>,
 ) -> Result<Option<TransactionDetail>, String> {
     let blockchain = state.services.blockchain();
-    let leaf_index = build_leaf_index(&blockchain);
+    let leaf_index = build_leaf_index(blockchain);
     let txid_bytes = parse_hash(&txid)?;
     let txid_hex = hex::encode(txid_bytes);
     let current_leaf_height = blockchain.get_current_leaf_height();
@@ -646,8 +725,8 @@ pub async fn get_transaction_detail_explorer(
                 Ok(None) => return Ok(None),
                 Err(e) => return Err(format!("Failed to get block: {}", e)),
             };
-            let leaf_height = resolve_leaf_height(&blockchain, &block, &leaf_index);
-            let Some(tx) = find_transaction_in_block_or_fruits(&blockchain, &block, &txid_bytes)
+            let leaf_height = resolve_leaf_height(blockchain, &block, &leaf_index);
+            let Some(tx) = find_transaction_in_block_or_fruits(blockchain, &block, &txid_bytes)
             else {
                 return Ok(None);
             };
@@ -669,7 +748,7 @@ pub async fn get_transaction_detail_explorer(
                 .get_transaction_by_hash(&txid_bytes)
                 .map(|tx| tx.as_ref().clone());
             let resolved = match resolve_transaction_context(
-                &blockchain,
+                blockchain,
                 &txid_bytes,
                 current_leaf_height,
                 None,
@@ -696,48 +775,44 @@ pub async fn get_transaction_detail_explorer(
     let raw_receipt = stored_receipt
         .as_ref()
         .map(|stored| stored.receipt.clone())
-        .or_else(|| lookup_live_stem_receipt(&blockchain, &txid_bytes));
+        .or_else(|| lookup_live_stem_receipt(blockchain, &txid_bytes));
     let receipt = stored_receipt
         .map(TransactionReceiptDetail::from)
         .or_else(|| raw_receipt.clone().map(TransactionReceiptDetail::from));
     let execution_status = receipt.as_ref().map(|detail| detail.status.clone());
 
-    let (tx_type, inputs, outputs, total_input, total_output, fee) =
-        extract_transaction_details(&tx, &blockchain, is_pending, 0, None, raw_receipt.as_ref())?;
+    let details =
+        extract_transaction_details(&tx, blockchain, is_pending, 0, None, raw_receipt.as_ref())?;
 
-    let maturity_status = if tx_type_has_maturity(&tx_type) && leaf_height_opt.is_some() {
-        let creation_height = leaf_height_opt.unwrap();
-        let age = current_leaf_height.saturating_sub(creation_height);
-        let blocks_remaining = COINBASE_MATURITY.saturating_sub(age);
-        Some(MaturityStatus {
-            is_immature: blocks_remaining > 0,
-            blocks_until_mature: blocks_remaining,
-            kind: Some(tx_type.clone()),
-            phase: Some("locked".to_string()),
-        })
-    } else {
-        None
+    let maturity_status = match leaf_height_opt {
+        Some(creation_height) if tx_type_has_maturity(&details.tx_type) => {
+            let age = current_leaf_height.saturating_sub(creation_height);
+            let blocks_remaining = COINBASE_MATURITY.saturating_sub(age);
+            Some(MaturityStatus {
+                is_immature: blocks_remaining > 0,
+                blocks_until_mature: blocks_remaining,
+                kind: Some(details.tx_type.clone()),
+                phase: Some("locked".to_string()),
+            })
+        }
+        _ => None,
     };
 
     Ok(Some(build_transaction_detail_response(
-        txid_hex,
-        &tx,
-        tx_type,
-        inputs,
-        outputs,
-        total_input,
-        total_output,
-        fee,
-        confirmations,
-        timestamp,
-        block_hash_hex,
-        leaf_height_opt,
-        &HashSet::new(),
-        execution_status,
-        raw_receipt.as_ref(),
-        receipt,
-        None,
-        maturity_status,
+        TransactionDetailParts {
+            txid: txid_hex,
+            tx: &tx,
+            details,
+            confirmations,
+            timestamp,
+            block_hash: block_hash_hex,
+            block_height: leaf_height_opt,
+            wallet_addresses: &HashSet::new(),
+            execution_status,
+            raw_receipt: raw_receipt.as_ref(),
+            receipt,
+            maturity_status,
+        },
     )))
 }
 
@@ -827,7 +902,7 @@ pub async fn get_fruit_detail(
     block_hash: String,
 ) -> Result<Option<FruitDetail>, String> {
     let blockchain = state.services.blockchain();
-    let leaf_index = build_leaf_index(&blockchain);
+    let leaf_index = build_leaf_index(blockchain);
     let hash_bytes = parse_hash(&hash)?;
 
     let cleaned_block = block_hash.trim_start_matches("0x").to_string();
@@ -836,7 +911,7 @@ pub async fn get_fruit_detail(
         Ok(None) => return Ok(None),
         Err(e) => return Err(format!("Failed to get block: {}", e)),
     };
-    let leaf_height = resolve_leaf_height(&blockchain, &block, &leaf_index).unwrap_or(0);
+    let leaf_height = resolve_leaf_height(blockchain, &block, &leaf_index).unwrap_or(0);
 
     // Try full fruit first (has tx_count), using archival-capable lookup.
     if let Some(fruit) = blockchain.get_fruit_by_hash(&hash_bytes, None) {

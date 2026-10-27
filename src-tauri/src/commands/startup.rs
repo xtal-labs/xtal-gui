@@ -7,11 +7,12 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use xtal::fruit::FruitType;
+use xtal::logging::set_max_log_size_mb;
 use xtal::utils::NetworkType;
 
 use crate::config::{
     load_node_config, node_config_path, set_active_network, set_node_storage_preferences,
-    update_gui_config, DashboardLayoutConfig, GuiConfig,
+    update_gui_config, update_node_config, DashboardLayoutConfig, GuiConfig, TutorialConfig,
 };
 use crate::state::{SharedStartupStatus, StartupStatusInner};
 
@@ -48,6 +49,7 @@ pub struct GuiConfigInfo {
     pub toasts_enabled: bool,
     pub advanced_mode: bool,
     pub dashboard: Option<DashboardLayoutConfig>,
+    pub tutorial: TutorialConfig,
 }
 
 /// Get the persisted GUI configuration for frontend-owned settings.
@@ -60,6 +62,7 @@ pub async fn get_gui_config() -> Result<GuiConfigInfo, String> {
         toasts_enabled: config.toasts_enabled,
         advanced_mode: config.advanced_mode,
         dashboard: config.dashboard,
+        tutorial: config.tutorial,
     })
 }
 
@@ -87,6 +90,22 @@ pub async fn set_gui_dashboard_layout(layout: DashboardLayoutConfig) -> Result<(
     Ok(())
 }
 
+/// Persist whether the walkthrough should start on the next normal-mode launch.
+#[tauri::command]
+pub async fn set_gui_tutorial_pending(pending: bool) -> Result<(), String> {
+    update_gui_config(|config| config.tutorial.pending = pending)
+        .map_err(|e| format!("Failed to save GUI config: {}", e))?;
+    Ok(())
+}
+
+/// Persist the walkthrough chapters the user has finished.
+#[tauri::command]
+pub async fn set_gui_tutorial_completed(completed: Vec<String>) -> Result<(), String> {
+    update_gui_config(|config| config.tutorial.completed = completed)
+        .map_err(|e| format!("Failed to save GUI config: {}", e))?;
+    Ok(())
+}
+
 /// Persisted node configuration exposed to the Settings page.
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeConfigInfo {
@@ -95,6 +114,8 @@ pub struct NodeConfigInfo {
     pub sync_mode: String,
     pub stem_retention_epochs: u32,
     pub subscribed_fruits: Vec<String>,
+    /// Log file disk budget in MB (0 = unlimited).
+    pub max_log_size_mb: u64,
 }
 
 /// Get the persisted node configuration for Settings.
@@ -117,6 +138,7 @@ pub async fn get_node_config() -> Result<NodeConfigInfo, String> {
         sync_mode: config.sync_mode.to_string(),
         stem_retention_epochs: config.pruning.stem_epochs_to_keep,
         subscribed_fruits,
+        max_log_size_mb: config.logging.max_log_size_mb,
     })
 }
 
@@ -130,6 +152,22 @@ pub async fn set_node_storage_flags(archival: bool, tx_index: bool) -> Result<()
         "Updated node storage flags in config (restart required): archival={}, tx_index={}",
         config.storage.archival,
         config.storage.enable_tx_index,
+    );
+
+    Ok(())
+}
+
+/// Persist the log file disk budget and apply it to the running logger, so
+/// no restart is needed.
+#[tauri::command]
+pub async fn set_max_log_size(max_log_size_mb: u64) -> Result<(), String> {
+    update_node_config(|config| config.logging.max_log_size_mb = max_log_size_mb)
+        .map_err(|e| format!("Failed to save config: {}", e))?;
+    set_max_log_size_mb(max_log_size_mb);
+
+    log::info!(
+        "Log file limit set to {} MB (0 = unlimited)",
+        max_log_size_mb
     );
 
     Ok(())

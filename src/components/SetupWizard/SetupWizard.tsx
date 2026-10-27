@@ -152,6 +152,9 @@ export function SetupWizard() {
         if (target.closest('form') || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
           return; // Let form-based steps handle Enter themselves
         }
+        if (target.closest('button')) {
+          return; // A focused control (e.g. the walkthrough switch) acts on Enter itself
+        }
 
         switch (state.step) {
           case 'welcome':
@@ -253,6 +256,8 @@ export function SetupWizard() {
             walletName={state.walletChoice === 'create' || state.walletChoice === 'import' ? state.walletName : null}
             walletAddress={state.walletAddress}
             dataDir={state.dataDir}
+            showWalkthrough={state.showWalkthrough}
+            onShowWalkthroughChange={actions.setShowWalkthrough}
             onLaunch={actions.completeSetup}
             isProcessing={state.isProcessing}
           />

@@ -16,7 +16,7 @@ mod ipfs;
 mod platform;
 mod state;
 
-use std::sync::mpsc::TryRecvError;
+use std::sync::mpsc::{Receiver, TryRecvError};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -27,7 +27,7 @@ use tauri::{AppHandle, LogicalSize, Manager};
 use tokio::runtime::Runtime;
 
 use xtal::blockchain::{BootstrapPhase, BootstrapProgress};
-use xtal::config::{CliConfig, Config as NodeConfig};
+use xtal::config::{CliConfig, Config as NodeConfig, LoggingConfig};
 use xtal::node::builder::NodeBuilder;
 use xtal::node::services::Services;
 use xtal::utils::{DirectoryConfig, NetworkType};
@@ -236,12 +236,20 @@ fn sync_wallet_menu(app: AppHandle, wallet_loaded: bool, available_wallets: Vec<
 // =============================================================================
 
 fn main() {
-    // Determine network for log path: peek at config if it exists, fall back to Mainnet for setup
-    let log_network = load_node_config()
-        .map(|c| c.network_type)
-        .unwrap_or(NetworkType::Mainnet);
+    // Determine network and log budget: peek at config if it exists, fall back to
+    // Mainnet and the default budget for setup
+    let (log_network, max_log_size_mb) = load_node_config()
+        .map(|c| (c.network_type, c.logging.max_log_size_mb))
+        .unwrap_or_else(|_| {
+            (
+                NetworkType::Mainnet,
+                LoggingConfig::default().max_log_size_mb,
+            )
+        });
     let log_path = xtal::logging::default_log_path(log_network);
-    if let Err(e) = xtal::logging::init_with_file(&log_path, log::LevelFilter::Info) {
+    if let Err(e) =
+        xtal::logging::init_with_file(&log_path, log::LevelFilter::Info, max_log_size_mb)
+    {
         eprintln!(
             "Failed to init file logging: {}, falling back to console",
             e
@@ -373,6 +381,7 @@ fn run_setup_mode(context: tauri::Context) {
             commands::get_gui_config,
             commands::set_gui_toasts_enabled,
             commands::set_gui_advanced_mode,
+            commands::set_gui_tutorial_pending,
         ])
         .run(context)
         .expect("Failed to run Crystal GUI setup");
@@ -522,6 +531,11 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                 .build()?;
 
             let help_menu = SubmenuBuilder::new(app, "Help")
+                .item(
+                    &MenuItemBuilder::with_id("start_walkthrough", "Start Walkthrough")
+                        .build(app)?,
+                )
+                .separator()
                 .item(&MenuItemBuilder::with_id("open_logs", "Open Logs Folder").build(app)?)
                 .item(&MenuItemBuilder::with_id("open_config", "Open Config File").build(app)?)
                 .separator()
@@ -606,6 +620,11 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                             error!("Failed to eval openWalletImportFile: {}", e);
                         }
                     }
+                    "start_walkthrough" => {
+                        if let Err(e) = window.eval("window.startWalkthrough?.()") {
+                            error!("Failed to eval startWalkthrough: {}", e);
+                        }
+                    }
                     "reload_interface" => {
                         if let Err(e) = window.reload() {
                             error!("Failed to reload interface: {}", e);
@@ -649,8 +668,12 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
                 let handle_store: tauri::State<'_, NodeHandleStore> = app_handle.state();
 
                 // Spawn node thread — returns channels + handle immediately
-                let (services_rx, error_rx, progress_rx, node_handle) =
-                    spawn_node_thread(&node_config_for_startup);
+                let NodeThread {
+                    services_rx,
+                    error_rx,
+                    progress_rx,
+                    handle: node_handle,
+                } = spawn_node_thread(&node_config_for_startup);
 
                 // Store the handle for cleanup
                 if let Ok(mut guard) = handle_store.0.lock() {
@@ -779,11 +802,15 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::set_gui_toasts_enabled,
             commands::set_gui_advanced_mode,
             commands::set_gui_dashboard_layout,
+            commands::set_gui_tutorial_pending,
+            commands::set_gui_tutorial_completed,
             commands::get_node_config,
             commands::set_node_storage_flags,
+            commands::set_max_log_size,
             commands::switch_network,
             // Blockchain commands
             commands::get_blockchain_info,
+            commands::get_consensus_params,
             commands::get_best_leaf_info,
             commands::get_sync_state,
             commands::get_chain_health,
@@ -880,6 +907,11 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
             commands::call_contract,
             commands::query_contract,
             commands::deposit_utxo,
+            commands::estimate_deposit,
+            commands::start_deposit,
+            commands::list_deposit_operations,
+            commands::cancel_deposit_operation,
+            commands::unlock_for_deposit,
             commands::plan_withdrawal,
             commands::withdraw_to_utxo,
             commands::max_cage_withdrawable,
@@ -993,16 +1025,19 @@ fn gui_startup_cli_config(network: NetworkType) -> CliConfig {
     }
 }
 
+/// Channels from a node startup thread, plus its handle.
+struct NodeThread {
+    /// Services and API port, sent once the node is ready.
+    services_rx: Receiver<(Arc<Services>, u16)>,
+    /// Startup failure message.
+    error_rx: Receiver<String>,
+    progress_rx: Receiver<StartupUpdate>,
+    handle: thread::JoinHandle<()>,
+}
+
 /// Spawn the node in a dedicated thread. Returns channels for communication
 /// and the thread handle immediately — does NOT block.
-fn spawn_node_thread(
-    node_config: &NodeConfig,
-) -> (
-    std::sync::mpsc::Receiver<(Arc<Services>, u16)>,
-    std::sync::mpsc::Receiver<String>,
-    std::sync::mpsc::Receiver<StartupUpdate>,
-    thread::JoinHandle<()>,
-) {
+fn spawn_node_thread(node_config: &NodeConfig) -> NodeThread {
     let network = node_config.network_type;
     let txindex = node_config.storage.enable_tx_index;
 
@@ -1150,7 +1185,12 @@ fn spawn_node_thread(
         })
         .expect("Failed to spawn node thread");
 
-    (services_rx, error_rx, progress_rx, node_handle)
+    NodeThread {
+        services_rx,
+        error_rx,
+        progress_rx,
+        handle: node_handle,
+    }
 }
 
 #[cfg(test)]

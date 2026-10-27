@@ -307,7 +307,7 @@ pub async fn get_mempool_transaction_detail(
     match tx.as_ref() {
         Transaction::Standard(std_tx) => {
             let blockchain = state.services.blockchain();
-            let inputs = extract_inputs(&std_tx.inputs, &blockchain).unwrap_or_default();
+            let inputs = extract_inputs(&std_tx.inputs, blockchain).unwrap_or_default();
             let outputs = extract_outputs(&std_tx.outputs, "p2pkh");
             let total_input = inputs
                 .iter()
@@ -325,7 +325,7 @@ pub async fn get_mempool_transaction_detail(
         }
         Transaction::Stake(stake_tx) => {
             let blockchain = state.services.blockchain();
-            let inputs = extract_inputs(&stake_tx.inputs, &blockchain).unwrap_or_default();
+            let inputs = extract_inputs(&stake_tx.inputs, blockchain).unwrap_or_default();
             let outputs = extract_outputs(&stake_tx.outputs, "stake");
             let total_input = inputs
                 .iter()
@@ -343,7 +343,7 @@ pub async fn get_mempool_transaction_detail(
         }
         Transaction::Unstake(unstake_tx) => {
             let blockchain = state.services.blockchain();
-            let inputs = extract_inputs(&unstake_tx.inputs, &blockchain).unwrap_or_default();
+            let inputs = extract_inputs(&unstake_tx.inputs, blockchain).unwrap_or_default();
             let outputs = extract_outputs(&unstake_tx.outputs, "unstake");
             let total_input = inputs
                 .iter()

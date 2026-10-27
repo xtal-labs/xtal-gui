@@ -8,8 +8,9 @@ use xtal::shards::Shards;
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::State;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use ed25519_dalek::Signer;
 
@@ -450,13 +451,13 @@ pub async fn deploy_contract(
     })
 }
 
-/// Call a contract method (write transaction)
+/// A contract method call (write transaction) from the method form.
 ///
 /// `value` is provided as a string to avoid JavaScript precision loss for
 /// large shard amounts (e.g. xtal_amount which is scaled by 10^9).
-#[tauri::command]
-pub async fn call_contract(
-    state: State<'_, AppState>,
+#[derive(Deserialize, Zeroize, ZeroizeOnDrop)]
+#[serde(rename_all = "camelCase")]
+pub struct CallContractRequest {
     contract_address: String,
     method: String,
     data: Option<String>,
@@ -464,7 +465,24 @@ pub async fn call_contract(
     gas_limit: u64,
     gas_price: Option<u64>,
     password: String,
+}
+
+/// Call a contract method (write transaction)
+#[tauri::command]
+pub async fn call_contract(
+    state: State<'_, AppState>,
+    request: CallContractRequest,
 ) -> Result<SendResult, String> {
+    let CallContractRequest {
+        contract_address,
+        method,
+        data,
+        value,
+        gas_limit,
+        gas_price,
+        password,
+    } = &request;
+    let gas_limit = *gas_limit;
     let gas_price = gas_price.unwrap_or(MIN_GAS_PRICE);
     if gas_limit < MIN_CALL_GAS {
         return Err(format!("Gas limit must be at least {}", MIN_CALL_GAS));
@@ -473,12 +491,12 @@ pub async fn call_contract(
         return Err(format!("Gas limit cannot exceed {}", MAX_GAS_LIMIT));
     }
 
-    let contract_addr = decode_hex_address(&contract_address)?;
-    let call_data = match &data {
+    let contract_addr = decode_hex_address(contract_address)?;
+    let call_data = match data {
         Some(d) => hex::decode(d).map_err(|_| "Invalid data hex".to_string())?,
         None => vec![],
     };
-    let send_value = match &value {
+    let send_value = match value {
         Some(v) => parse_xtal_to_shards(v)?,
         None => 0,
     };
@@ -493,7 +511,7 @@ pub async fn call_contract(
         return Err("No wallet loaded".to_string());
     }
     wallet
-        .unlock_wallet(&password, Some(Duration::from_secs(30)))
+        .unlock_wallet(password, Some(Duration::from_secs(30)))
         .map_err(|e| format!("Invalid password: {}", e))?;
 
     // Select the best-funded wallet-owned VM account that can afford this call.
@@ -1399,7 +1417,7 @@ fn parse_string_to_abi_value(param_type: &ParamType, value: &str) -> Result<AbiV
         ParamType::String => Ok(AbiValue::String(value.to_string())),
         ParamType::Bytes => {
             let hex = value.strip_prefix("0x").unwrap_or(value);
-            if hex.len() % 2 != 0 {
+            if !hex.len().is_multiple_of(2) {
                 return Err("bytes hex must have even length".into());
             }
             Ok(AbiValue::Bytes(
@@ -1678,4 +1696,78 @@ pub async fn get_ipfs_status(state: State<'_, AppState>) -> Result<serde_json::V
             "pinningConfigured": false,
         })),
     }
+}
+
+// Durable deposits share the library implementation with JSON-RPC.
+#[tauri::command]
+pub async fn estimate_deposit(
+    state: State<'_, AppState>,
+    request: xtal::wallet::deposit::DepositRequest,
+) -> Result<xtal::wallet::deposit::DepositQuote, String> {
+    loaded_wallet(&state)?
+        .quote_deposit(
+            &request,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn start_deposit(
+    state: State<'_, AppState>,
+    request: xtal::wallet::deposit::StartDepositRequest,
+    password: String,
+) -> Result<xtal::wallet::deposit::DepositOperation, String> {
+    if state.services.is_syncing() {
+        return Err("Wait for node synchronization before depositing".into());
+    }
+    let wallet = loaded_wallet(&state)?;
+    wallet
+        .unlock_wallet(&password, Some(Duration::from_secs(30)))
+        .map_err(|e| e.to_string())?;
+    wallet
+        .start_deposit(
+            request,
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn list_deposit_operations(
+    state: State<'_, AppState>,
+) -> Result<Vec<xtal::wallet::deposit::DepositOperation>, String> {
+    loaded_wallet(&state)?
+        .list_deposit_operations()
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_deposit_operation(
+    state: State<'_, AppState>,
+    operation_id: String,
+) -> Result<xtal::wallet::deposit::DepositOperation, String> {
+    loaded_wallet(&state)?
+        .cancel_deposit(&operation_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn unlock_for_deposit(
+    state: State<'_, AppState>,
+    operation_id: String,
+    password: String,
+) -> Result<(), String> {
+    let wallet = loaded_wallet(&state)?;
+    let operation = wallet
+        .get_deposit_operation(&operation_id)
+        .map_err(|e| e.to_string())?;
+    if operation.status != xtal::wallet::deposit::DepositStatus::NeedsUnlock {
+        return Err("Deposit is not waiting for an unlock".into());
+    }
+    wallet
+        .unlock_wallet(&password, Some(Duration::from_secs(30)))
+        .map_err(|e| e.to_string())
 }

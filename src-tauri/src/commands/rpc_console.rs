@@ -106,7 +106,7 @@ fn convert_positional_to_named(method_name: &str, params: &JsonValue) -> JsonVal
     let mut obj = serde_json::Map::new();
     for (i, param_meta) in method_meta.params.iter().enumerate() {
         if let Some(value) = array.get(i) {
-            let parsed = parse_param_value(value, &param_meta.param_type);
+            let parsed = parse_param_value(value, param_meta.param_type);
             obj.insert(param_meta.name.to_string(), parsed);
         }
     }
