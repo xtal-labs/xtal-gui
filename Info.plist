@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Merged by Tauri into the bundle's Info.plist (it picks up an Info.plist next to tauri.conf.json). -->
+<plist version="1.0">
+<dict>
+	<!--
+	Since macOS 27, a minimized or occluded app is clamped to utility QoS and its
+	mining threads are confined to the efficiency cores, roughly halving hashrate.
+	The NSActivityUserInitiated activity taken while mining (src-tauri/src/platform.rs)
+	no longer exempts the app; opting out of App Nap does.
+	-->
+	<key>LSAppNapIsDisabled</key>
+	<true/>
+</dict>
+</plist>

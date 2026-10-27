@@ -19,8 +19,11 @@ mod macos {
 
     /// Begin App Nap prevention for mining.
     ///
-    /// UserInitiatedAllowingIdleSystemSleep (0x00FFFFFF) prevents App Nap throttling
-    /// (keeps mining perf when window is minimized) but allows system sleep on lid close.
+    /// UserInitiated prevents idle system sleep (keeps mining on the lock screen).
+    /// Lid close still sleeps the Mac. Not UserInitiatedAllowingIdleSystemSleep: that
+    /// variant lets an idle, locked Mac sleep, which stops mining outright. Since
+    /// macOS 27 the activity no longer exempts a minimized app from App Nap; the
+    /// bundle opts out with `LSAppNapIsDisabled` in Info.plist instead.
     pub fn begin_mining_activity() {
         let mut guard = MINING_ACTIVITY.lock().unwrap();
 
@@ -32,10 +35,8 @@ mod macos {
         let process_info = NSProcessInfo::processInfo();
         let reason = NSString::from_str("Mining cryptocurrency");
 
-        let activity = process_info.beginActivityWithOptions_reason(
-            NSActivityOptions::UserInitiatedAllowingIdleSystemSleep,
-            &reason,
-        );
+        let activity =
+            process_info.beginActivityWithOptions_reason(NSActivityOptions::UserInitiated, &reason);
 
         *guard = Some(ActivityToken(activity));
         log::info!("macOS App Nap prevention enabled for mining");
