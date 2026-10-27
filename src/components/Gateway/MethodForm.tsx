@@ -14,6 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { GasSettings, type GasConfig } from "@/components/common/GasSettings";
+import { SendFromRow } from "@/components/common/SendFromRow";
 import { ParamInput } from "./ParamInput";
 import { ResultDisplay } from "./ResultDisplay";
 import { cn, getXtalInputError, isValidXtalInput, parseXtalToShards } from "@/lib/utils";
@@ -36,7 +37,7 @@ interface SendResult {
 export function MethodForm({ method, contractAddress }: MethodFormProps) {
   const { addToast } = useUiStore();
   const { queryResult, setQueryResult } = useGatewayStore();
-  const { isLoaded: walletLoaded, triggerRefresh } = useWalletStore();
+  const { isLoaded: walletLoaded, triggerRefresh, selectedVmAccount } = useWalletStore();
 
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [valueAmount, setValueAmount] = useState("");
@@ -123,6 +124,8 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
       }
 
       const result = await tauriCommand<QueryResult>("query_contract", {
+        // Simulate as the account a call would come from, when one is chosen.
+        caller: selectedVmAccount ?? undefined,
         contractAddress,
         method: method.name,
         data,
@@ -177,6 +180,7 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
           value: payableValueXtal,
           gasLimit: effectiveGasLimit,
           gasPrice: effectiveGasPrice,
+          sender: selectedVmAccount,
           password,
         },
       });
@@ -338,6 +342,11 @@ export function MethodForm({ method, contractAddress }: MethodFormProps) {
       {/* Confirm step */}
       {callStep === "confirm" && (
         <>
+          <SendFromRow
+            address={selectedVmAccount}
+            automaticLabel="Deployer, else best-funded account"
+          />
+
           <div className="space-y-3 p-4 chamfered bg-muted/30">
             <div className="flex items-center justify-between">
               <span className="text-sm text-foreground-muted font-heading">METHOD</span>

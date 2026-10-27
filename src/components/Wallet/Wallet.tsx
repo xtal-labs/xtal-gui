@@ -60,6 +60,7 @@ import { SendModal } from "./SendModal";
 import { ReceiveModal } from "./ReceiveModal";
 import { VmSendModal } from "./VmSendModal";
 import { VmReceiveModal } from "./VmReceiveModal";
+import { VmAccountList, type BalanceSortOrder } from "./VmAccountList";
 import { DepositModal } from "./DepositModal";
 import { WithdrawModal } from "./WithdrawModal";
 import { MultisigModal } from "./MultisigModal";
@@ -144,6 +145,7 @@ export default function Wallet() {
     transactionPagination,
     vmBalance,
     vmAddresses,
+    selectedVmAccount,
     vmTransactions,
     vmTransactionPagination,
     availableWallets,
@@ -154,6 +156,7 @@ export default function Wallet() {
     setVmBalance,
     setVmAddresses,
     addVmAddress,
+    setSelectedVmAccount,
     setVmTransactionPage,
     setVmPageLoading,
     setAvailableWallets,
@@ -161,6 +164,12 @@ export default function Wallet() {
     refreshTrigger,
   } = useWalletStore();
   const { addToast, activeModal, modalData, openModal, closeModal } = useUiStore();
+  const [vmSortOrder, setVmSortOrder] = useState<BalanceSortOrder>("desc");
+  const selectedVmAddress =
+    vmAddresses.find((addr) => addr.address === selectedVmAccount) ?? null;
+  // What VM sends and withdrawals can draw from: the selected account, or
+  // every account when none is selected.
+  const vmSourceBalance = selectedVmAddress?.balance ?? vmBalance?.balance ?? "0";
 
   // Derive modal visibility from store
   const showLoadModal = activeModal === MODAL_WALLET_LOAD;
@@ -1087,21 +1096,36 @@ export default function Wallet() {
         <CardContent className="pt-6">
           <div className="text-center">
             <p className="text-sm font-heading tracking-wide text-foreground-secondary mb-2">
-              VM ACCOUNT BALANCE
+              {selectedVmAddress ? "SELECTED ACCOUNT BALANCE" : "VM ACCOUNT BALANCE"}
             </p>
-            <AmountDisplay
-              amount={vmBalance?.balance ?? 0}
-              size="xl"
-              showSymbol
-            />
-            {vmBalance && vmBalance.nonce > 0 && (
+            <AmountDisplay amount={vmSourceBalance} size="xl" showSymbol />
+            {selectedVmAddress && (
+              <p className="font-mono text-xs text-foreground-muted mt-2 truncate">
+                {selectedVmAddress.address}
+              </p>
+            )}
+            {(selectedVmAddress?.nonce ?? vmBalance?.nonce ?? 0) > 0 && (
               <div className="flex items-center justify-center gap-4 mt-4 text-sm">
                 <div>
                   <p className="text-foreground-muted font-heading text-xs">NONCE</p>
                   <p className="font-mono text-sm tabular-nums text-foreground">
-                    {vmBalance.nonce}
+                    {selectedVmAddress?.nonce ?? vmBalance?.nonce}
                   </p>
                 </div>
+              </div>
+            )}
+            {selectedVmAddress && (
+              <div className="flex items-center justify-center gap-2 mt-4 text-xs text-foreground-muted">
+                <span>Wallet total</span>
+                <AmountDisplay amount={vmBalance?.balance ?? 0} size="sm" showSymbol />
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-accent"
+                  onClick={() => setSelectedVmAccount(null)}
+                >
+                  Use all accounts
+                </Button>
               </div>
             )}
           </div>
@@ -1141,46 +1165,16 @@ export default function Wallet() {
         </Button>
       </div>
 
-      {/* VM Addresses */}
-      <Card variant="crystalline">
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base font-heading tracking-wide">VM ADDRESSES</CardTitle>
-            <Button variant="ghost" size="sm" onClick={handleGenerateVmAddress}>
-              <Plus className="h-4 w-4 mr-1" />
-              New Address
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent>
-          {vmAddresses.length === 0 ? (
-            <p className="text-center text-foreground-muted py-4 font-heading">
-              No VM addresses yet
-            </p>
-          ) : (
-            <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-              {vmAddresses.map((addr) => (
-                <div
-                  key={addr.address}
-                  className="flex items-center justify-between py-2 px-3 chamfered-sm bg-muted/50"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <HashDisplay hash={addr.address} truncate={false} showTooltip={false} />
-                    {addr.label && (
-                      <Badge variant="outline" shape="chamfered" className="text-xs shrink-0">
-                        {addr.label}
-                      </Badge>
-                    )}
-                  </div>
-                  <Badge variant="info" shape="chamfered" diamond className="shrink-0">
-                    Account
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      {/* VM Accounts: selecting one makes it the source of every VM write */}
+      <VmAccountList
+        addresses={vmAddresses}
+        totalBalance={vmBalance?.balance ?? 0}
+        selected={selectedVmAccount}
+        onSelect={setSelectedVmAccount}
+        sortOrder={vmSortOrder}
+        onSortOrderChange={setVmSortOrder}
+        onGenerateAddress={handleGenerateVmAddress}
+      />
 
       {/* VM Transaction History */}
       <div data-tour="wallet-vm-transactions">
@@ -2191,7 +2185,8 @@ export default function Wallet() {
       <VmSendModal
         isOpen={showVmSendModal}
         onClose={closeModal}
-        maxBalance={vmBalance?.balance ?? 0}
+        maxBalance={vmSourceBalance}
+        fromAddress={selectedVmAccount}
       />
 
       {/* VM Receive Modal */}
@@ -2212,7 +2207,8 @@ export default function Wallet() {
       <WithdrawModal
         isOpen={showWithdrawModal}
         onClose={closeModal}
-        maxBalance={vmBalance?.balance ?? 0}
+        maxBalance={vmSourceBalance}
+        fromAddress={selectedVmAccount}
         defaultRecipient={addresses.length > 0 ? addresses[0].address : undefined}
       />
     </>

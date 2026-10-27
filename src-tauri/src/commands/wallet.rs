@@ -31,7 +31,6 @@ use xtal::script::{
     parse_stake_or_unstake_script, TimeLock, MAX_MULTISIG_KEYS,
 };
 use xtal::storage::types::UtxoEntry;
-use xtal::storage::UnifiedMPT;
 use xtal::transaction::builders::MIN_CALL_GAS;
 use xtal::transaction::receipt::{BlockReceipts, StoredReceipt, TransactionReceipt};
 use xtal::transaction::{
@@ -47,12 +46,13 @@ use xtal::wallet::database::queries::WalletQueries;
 use xtal::wallet::transfer::{TransferRecipient, TransferRequest};
 use xtal::wallet::vm_sweep::{
     SubmittedSweepLeg as LibSubmittedSweepLeg, SweepGas, SweepLegQuote, SweepPlanError,
-    VmSweepError,
+    VmAccountState, VmSweepError,
 };
 use xtal::wallet::vm_transfer::{VmTransferQuote, VmTransferRequest};
 use xtal::wallet::{FeeStrategy, WalletError, WalletManager};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
+use crate::commands::contract::decode_hex_address;
 use crate::commands::tx_detail_utils::{
     extract_inputs, extract_output_from_transaction, extract_transaction_details,
     vm_transaction_fee, TransactionDetails,
@@ -77,27 +77,13 @@ pub struct WalletBalance {
 /// VM account balance information (from UnifiedMPT state, not UTXOs)
 #[derive(Debug, Clone, Serialize)]
 pub struct VmAccountBalance {
-    /// Total VM account balance in shards
+    /// Total across the wallet's VM accounts, net of what pending
+    /// transactions have reserved
     pub balance: Shards,
-    /// Highest observed nonce across wallet-owned account-state entries
+    /// Highest next nonce across the wallet's accounts, counting pending
+    /// transactions
     pub nonce: u64,
     pub currency: String,
-    /// Per-account breakdown backing `balance`. One VM transaction can only
-    /// draw from a single caller account, so amount validation must use
-    /// these entries, never the summed `balance`.
-    pub accounts: Vec<VmAccountEntry>,
-}
-
-/// One wallet-owned VM account surfaced from account state
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct VmAccountEntry {
-    /// Account address ("0x" + 40 hex chars)
-    pub address: String,
-    /// Account balance in shards
-    pub balance: Shards,
-    /// Account nonce
-    pub nonce: u64,
 }
 
 /// Wallet status information
@@ -170,6 +156,11 @@ pub struct VmAddressInfo {
     pub kind: String,
     pub order: u32,
     pub label: Option<String>,
+    /// What the account can still commit: pending transactions' value and
+    /// gas are already subtracted. Zero for an account with no state yet.
+    pub balance: Shards,
+    /// Next nonce, counting pending transactions.
+    pub nonce: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -526,16 +517,6 @@ pub(crate) struct WalletOwnedPkh {
     pub(crate) key_index: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct WalletAccountStateEntry {
-    pub(crate) pkh: [u8; 20],
-    pub(crate) hex_address: String,
-    pub(crate) balance: u64,
-    pub(crate) nonce: u64,
-    pub(crate) key_type: KeyType,
-    pub(crate) key_index: u32,
-}
-
 pub(crate) fn wallet_owned_pkhs_from_queries(
     queries: &WalletQueries,
     wallet_id: &str,
@@ -583,58 +564,21 @@ pub(crate) fn wallet_owned_pkhs_from_queries(
     Ok(owned)
 }
 
-pub(crate) fn surfaced_wallet_account_entries(
-    owned_pkhs: &[WalletOwnedPkh],
-    mpt: &UnifiedMPT,
-) -> Result<Vec<WalletAccountStateEntry>, String> {
-    let mut entries = Vec::new();
-
-    for owned in owned_pkhs {
-        let account = mpt
-            .get_account_info(&owned.pkh)
-            .map_err(|e| format!("Failed to get account info: {}", e))?;
-
-        let Some((account, _is_contract)) = account else {
-            continue;
-        };
-
-        entries.push(WalletAccountStateEntry {
-            pkh: owned.pkh,
-            hex_address: owned.hex_address.clone(),
-            balance: account.get_balance(CurrencyType::XTAL),
-            nonce: account.nonce,
-            key_type: owned.key_type,
-            key_index: owned.key_index,
-        });
-    }
-
-    entries.sort_by(|a, b| {
-        b.balance
-            .cmp(&a.balance)
-            .then_with(|| {
-                (b.key_type == KeyType::VmAccount).cmp(&(a.key_type == KeyType::VmAccount))
-            })
-            .then_with(|| a.hex_address.cmp(&b.hex_address))
-    });
-
-    Ok(entries)
-}
-
 fn merge_vm_address_catalog(
     owned_pkhs: &[WalletOwnedPkh],
-    account_entries: &[WalletAccountStateEntry],
+    accounts: &[VmAccountState],
     next_vm_account_index: u32,
 ) -> Vec<VmAddressInfo> {
     let mut addresses = Vec::new();
     let mut seen = HashSet::new();
 
-    let mut extra_entries = account_entries
+    let mut extra_accounts = accounts
         .iter()
-        .filter(|entry| {
-            !(entry.key_type == KeyType::VmAccount && entry.key_index < next_vm_account_index)
+        .filter(|account| {
+            !(account.key_type == KeyType::VmAccount && account.key_index < next_vm_account_index)
         })
         .collect::<Vec<_>>();
-    extra_entries.sort_by(|a, b| {
+    extra_accounts.sort_by(|a, b| {
         a.key_type
             .path_index()
             .cmp(&b.key_type.path_index())
@@ -642,14 +586,16 @@ fn merge_vm_address_catalog(
             .then_with(|| a.hex_address.cmp(&b.hex_address))
     });
 
-    for entry in extra_entries {
-        if seen.insert(entry.pkh) {
+    for account in extra_accounts {
+        if seen.insert(account.pkh) {
             addresses.push(VmAddressInfo {
-                address: entry.hex_address.clone(),
-                index: entry.key_index,
+                address: account.hex_address.clone(),
+                index: account.key_index,
                 kind: "account_state".to_string(),
                 order: addresses.len() as u32,
                 label: None,
+                balance: Shards::from(account.balance),
+                nonce: account.nonce,
             });
         }
     }
@@ -658,6 +604,7 @@ fn merge_vm_address_catalog(
         owned.key_type == KeyType::VmAccount && owned.key_index < next_vm_account_index
     }) {
         if seen.insert(owned.pkh) {
+            let account = accounts.iter().find(|account| account.pkh == owned.pkh);
             addresses.push(VmAddressInfo {
                 address: owned.hex_address.clone(),
                 index: owned.key_index,
@@ -668,6 +615,8 @@ fn merge_vm_address_catalog(
                 } else {
                     None
                 },
+                balance: account.map_or(Shards::ZERO, |account| Shards::from(account.balance)),
+                nonce: account.map_or(0, |account| account.nonce),
             });
         }
     }
@@ -675,62 +624,9 @@ fn merge_vm_address_catalog(
     addresses
 }
 
-pub(crate) fn select_vm_sender_entry(
-    account_entries: &[WalletAccountStateEntry],
-    amount: u64,
-    gas_limit: u64,
-    gas_price: u64,
-) -> Option<&WalletAccountStateEntry> {
-    let required_balance = gas_limit.checked_mul(gas_price)?.checked_add(amount)?;
-
-    account_entries
-        .iter()
-        .filter(|entry| entry.balance >= required_balance)
-        .max_by(|a, b| {
-            a.balance
-                .cmp(&b.balance)
-                .then_with(|| {
-                    (a.key_type == KeyType::VmAccount).cmp(&(b.key_type == KeyType::VmAccount))
-                })
-                .then_with(|| b.hex_address.cmp(&a.hex_address))
-        })
-}
-
-/// Error message for the single-sender paths (contract calls and deploys)
-/// when no single wallet account covers `value + max gas`.
-///
-/// Reports the largest individual account balance — never the aggregate,
-/// which a single caller account cannot spend.
-pub(crate) fn no_single_sender_message(
-    account_entries: &[WalletAccountStateEntry],
-    value: u64,
-    gas_limit: u64,
-    gas_price: u64,
-) -> String {
-    let largest = account_entries
-        .iter()
-        .map(|entry| entry.balance)
-        .max()
-        .unwrap_or(0);
-    let max_fee = gas_limit.saturating_mul(gas_price);
-    if value == 0 {
-        format!(
-            "Insufficient balance: no single wallet account covers the {} shard \
-             gas reservation; largest account has {}. \
-             Consolidate balances into one account first.",
-            max_fee, largest
-        )
-    } else {
-        format!(
-            "Insufficient balance: no single wallet account covers {} shards \
-             (value: {} + max gas: {}); largest account has {}. \
-             Consolidate balances into one account first.",
-            value.saturating_add(max_fee),
-            value,
-            max_fee,
-            largest
-        )
-    }
+/// The VM account the user selected to send from ("0x"-hex), if any.
+pub(crate) fn parse_vm_source(from_address: Option<&str>) -> Result<Option<[u8; 20]>, String> {
+    from_address.map(decode_hex_address).transpose()
 }
 
 /// User-facing wording for a sweep planning failure, in withdrawal terms.
@@ -4980,55 +4876,25 @@ pub async fn export_wallet(
 pub async fn get_vm_account_balance(
     state: State<'_, AppState>,
 ) -> Result<VmAccountBalance, String> {
-    let wallet = state
-        .services
-        .wallet
-        .as_ref()
-        .ok_or("Wallet not available")?;
-
-    if !wallet.is_loaded() {
-        return Err("No wallet loaded".to_string());
-    }
-
-    let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
-
-    let db = wallet.database().ok_or("Wallet database not available")?;
-    let queries = WalletQueries::new(db.connection());
-
-    let mpt = if let Some((stem_state, _state_root)) = state.services.blockchain().stem_state() {
-        stem_state
-    } else {
-        state
-            .services
-            .blockchain()
-            .get_current_state_mpt()
-            .map_err(|e| format!("Failed to load current state: {}", e))?
-    };
-
-    let owned_pkhs = wallet_owned_pkhs_from_queries(&queries, &wallet_id)?;
-    let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
-    let total_vm_balance = account_entries
-        .iter()
-        .fold(0u64, |sum, entry| sum.saturating_add(entry.balance));
-    let primary_nonce = account_entries
-        .iter()
-        .map(|entry| entry.nonce)
-        .max()
-        .unwrap_or(0);
-    let accounts = account_entries
-        .iter()
-        .map(|entry| VmAccountEntry {
-            address: entry.hex_address.clone(),
-            balance: entry.balance.into(),
-            nonce: entry.nonce,
-        })
-        .collect();
+    let wallet = loaded_wallet(&state)?;
+    let accounts = wallet
+        .vm_accounts(
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map_err(|e| e.to_string())?;
 
     Ok(VmAccountBalance {
-        balance: total_vm_balance.into(),
-        nonce: primary_nonce,
+        balance: accounts
+            .iter()
+            .fold(0u64, |sum, account| sum.saturating_add(account.balance))
+            .into(),
+        nonce: accounts
+            .iter()
+            .map(|account| account.nonce)
+            .max()
+            .unwrap_or(0),
         currency: "XTAL".to_string(),
-        accounts,
     })
 }
 
@@ -5149,47 +5015,35 @@ pub async fn generate_vm_address(state: State<'_, AppState>) -> Result<String, S
         .map_err(|e| format!("Failed to generate VM address: {}", e))
 }
 
-/// Get list of VM wallet addresses (0x-prefixed hex format).
+/// Get list of VM wallet addresses (0x-prefixed hex format) with balances.
 ///
 /// Returns the union of persisted VM derivation-path addresses and any
 /// wallet-owned PKH that currently has account-state in the MPT.
 #[tauri::command]
 pub async fn get_vm_addresses(state: State<'_, AppState>) -> Result<Vec<VmAddressInfo>, String> {
-    let wallet = state
-        .services
-        .wallet
-        .as_ref()
-        .ok_or("Wallet not available")?;
-
-    if !wallet.is_loaded() {
-        return Err("No wallet loaded".to_string());
-    }
-
+    let wallet = loaded_wallet(&state)?;
     let wallet_id = wallet.current_wallet_id().ok_or("No wallet ID available")?;
-
     let db = wallet.database().ok_or("Wallet database not available")?;
     let queries = WalletQueries::new(db.connection());
 
-    let mpt = if let Some((stem_state, _state_root)) = state.services.blockchain().stem_state() {
-        stem_state
-    } else {
-        state
-            .services
-            .blockchain()
-            .get_current_state_mpt()
-            .map_err(|e| format!("Failed to load current state: {}", e))?
-    };
-
     let owned_pkhs = wallet_owned_pkhs_from_queries(&queries, &wallet_id)?;
-    let account_entries = surfaced_wallet_account_entries(&owned_pkhs, &mpt)?;
+    let accounts = wallet
+        .vm_accounts(
+            state.services.blockchain().as_ref(),
+            state.services.mempool(),
+        )
+        .map_err(|e| e.to_string())?;
     let next_vm_account_index = queries
         .get_key_indices(&wallet_id)
         .map_err(|e| format!("Failed to get wallet key indices: {}", e))?
         .map(|indices| indices.next_vm_account_index)
         .unwrap_or(0);
-    let addresses = merge_vm_address_catalog(&owned_pkhs, &account_entries, next_vm_account_index);
 
-    Ok(addresses)
+    Ok(merge_vm_address_catalog(
+        &owned_pkhs,
+        &accounts,
+        next_vm_account_index,
+    ))
 }
 
 /// A prepared VM transfer sweep: validated inputs plus the per-account legs.
@@ -5202,6 +5056,7 @@ fn vm_transfer_request(
     amount: &str,
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
+    from_address: Option<&str>,
 ) -> Result<VmTransferRequest, String> {
     // Amount arrives as a shard string to avoid JS precision loss — parse it
     // as an integer, never through floats.
@@ -5210,13 +5065,16 @@ fn vm_transfer_request(
         .parse()
         .map_err(|_| "Invalid amount: must be a whole number of shards".to_string())?;
 
-    let request =
-        VmTransferRequest::from_address(to_address, total_amount).map_err(|e| e.to_string())?;
-
-    Ok(request.with_gas(SweepGas {
-        gas_limit: gas_limit.unwrap_or(TX_BASE_GAS),
-        gas_price: gas_price.unwrap_or(MIN_GAS_PRICE),
-    }))
+    let mut request = VmTransferRequest::from_address(to_address, total_amount)
+        .map_err(|e| e.to_string())?
+        .with_gas(SweepGas {
+            gas_limit: gas_limit.unwrap_or(TX_BASE_GAS),
+            gas_price: gas_price.unwrap_or(MIN_GAS_PRICE),
+        });
+    if let Some(source) = parse_vm_source(from_address)? {
+        request = request.with_source(source);
+    }
+    Ok(request)
 }
 
 pub(crate) fn loaded_wallet<'a>(
@@ -5272,7 +5130,8 @@ impl From<VmTransferQuote> for PlanVmTransferResponse {
 ///
 /// Read-only: the library splits `amount` into one account-transfer leg per
 /// funded wallet account (a single transfer transaction can only draw from
-/// its one sender account) and quotes what the sweep costs.
+/// its one sender account), or draws it all from `from_address` when the
+/// user selected one, and quotes what the transfer costs.
 #[tauri::command]
 pub async fn plan_vm_transfer(
     state: State<'_, AppState>,
@@ -5280,9 +5139,16 @@ pub async fn plan_vm_transfer(
     amount: String,
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
+    from_address: Option<String>,
 ) -> Result<PlanVmTransferResponse, String> {
     let wallet = loaded_wallet(&state)?;
-    let request = vm_transfer_request(&to_address, &amount, gas_limit, gas_price)?;
+    let request = vm_transfer_request(
+        &to_address,
+        &amount,
+        gas_limit,
+        gas_price,
+        from_address.as_deref(),
+    )?;
 
     wallet
         .quote_vm_transfer(
@@ -5303,6 +5169,7 @@ pub async fn max_vm_sendable(
     state: State<'_, AppState>,
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
+    from_address: Option<String>,
 ) -> Result<Shards, String> {
     let wallet = loaded_wallet(&state)?;
     let gas = SweepGas {
@@ -5313,6 +5180,7 @@ pub async fn max_vm_sendable(
     wallet
         .max_vm_sendable(
             gas,
+            parse_vm_source(from_address.as_deref())?,
             state.services.blockchain().as_ref(),
             state.services.mempool(),
         )
@@ -5376,6 +5244,7 @@ pub async fn send_vm_transfer(
     password: String,
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
+    from_address: Option<String>,
 ) -> Result<VmTransferSweepResponse, String> {
     send_vm_transfer_inner(
         &state,
@@ -5384,6 +5253,7 @@ pub async fn send_vm_transfer(
         &password,
         gas_limit,
         gas_price,
+        from_address.as_deref(),
     )
     .map_err(|failure| match failure {
         SweepFailure::Total(message) => shorten_txid_like_tokens(&message),
@@ -5398,9 +5268,10 @@ fn send_vm_transfer_inner(
     password: &str,
     gas_limit: Option<u64>,
     gas_price: Option<u64>,
+    from_address: Option<&str>,
 ) -> Result<VmTransferSweepResponse, SweepFailure> {
     let wallet = loaded_wallet(state)?;
-    let request = vm_transfer_request(to_address, amount, gas_limit, gas_price)?;
+    let request = vm_transfer_request(to_address, amount, gas_limit, gas_price, from_address)?;
     let recipient_display = format_contract_address(&request.recipient);
 
     // Unlock wallet temporarily for signing
@@ -5435,12 +5306,11 @@ fn send_vm_transfer_inner(
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
-    use std::fs;
     use xtal::blockchain::processing::utxo_verifier::ConsumedUtxo;
     use xtal::config::SHARDS_PER_XTAL;
     use xtal::fruit::core::FruitType;
     use xtal::script::{create_stake_script, create_unstake_script, p2pkh_script_pubkey, Script};
-    use xtal::storage::{trie::RocksDBBackend as XtalRocksDbBackend, Storage, UtxoPosition};
+    use xtal::storage::UtxoPosition;
     use xtal::transaction::receipt::{BlockReceipts, TransactionReceipt, TxStatus};
     use xtal::transaction::{
         AccountTransferTransaction, ContractCallTransaction, StandardTransaction,
@@ -6072,7 +5942,7 @@ mod tests {
             },
         ];
         let account_entries = vec![
-            WalletAccountStateEntry {
+            VmAccountState {
                 pkh: funded_receiving,
                 hex_address: format_contract_address(&funded_receiving),
                 balance: 75,
@@ -6080,7 +5950,7 @@ mod tests {
                 key_type: KeyType::Receiving,
                 key_index: 4,
             },
-            WalletAccountStateEntry {
+            VmAccountState {
                 pkh: vm_secondary,
                 hex_address: format_contract_address(&vm_secondary),
                 balance: 10,
@@ -6100,6 +5970,8 @@ mod tests {
                     kind: "account_state".to_string(),
                     order: 0,
                     label: None,
+                    balance: Shards::from(75),
+                    nonce: 2,
                 },
                 VmAddressInfo {
                     address: format_contract_address(&vm_primary),
@@ -6107,6 +5979,8 @@ mod tests {
                     kind: "vm_account".to_string(),
                     order: 1,
                     label: Some("Primary".to_string()),
+                    balance: Shards::from(0),
+                    nonce: 0,
                 },
                 VmAddressInfo {
                     address: format_contract_address(&vm_secondary),
@@ -6114,6 +5988,8 @@ mod tests {
                     kind: "vm_account".to_string(),
                     order: 2,
                     label: None,
+                    balance: Shards::from(10),
+                    nonce: 1,
                 },
             ]
         );
@@ -6145,7 +6021,7 @@ mod tests {
                 key_index: 2,
             },
         ];
-        let account_entries = vec![WalletAccountStateEntry {
+        let account_entries = vec![VmAccountState {
             pkh: funded_gap,
             hex_address: format_contract_address(&funded_gap),
             balance: 25,
@@ -6164,6 +6040,8 @@ mod tests {
                     kind: "account_state".to_string(),
                     order: 0,
                     label: None,
+                    balance: Shards::from(25),
+                    nonce: 1,
                 },
                 VmAddressInfo {
                     address: format_contract_address(&vm_primary),
@@ -6171,45 +6049,11 @@ mod tests {
                     kind: "vm_account".to_string(),
                     order: 1,
                     label: Some("Primary".to_string()),
+                    balance: Shards::from(0),
+                    nonce: 0,
                 },
             ]
         );
-    }
-
-    #[test]
-    fn select_vm_sender_entry_prefers_highest_balance_then_vm_path_on_tie() {
-        let vm_primary = WalletAccountStateEntry {
-            pkh: [1u8; 20],
-            hex_address: format_contract_address(&[1u8; 20]),
-            balance: 80,
-            nonce: 1,
-            key_type: KeyType::VmAccount,
-            key_index: 0,
-        };
-        let funded_receiving = WalletAccountStateEntry {
-            pkh: [2u8; 20],
-            hex_address: format_contract_address(&[2u8; 20]),
-            balance: 150,
-            nonce: 4,
-            key_type: KeyType::Receiving,
-            key_index: 0,
-        };
-        let vm_secondary = WalletAccountStateEntry {
-            pkh: [3u8; 20],
-            hex_address: format_contract_address(&[3u8; 20]),
-            balance: 150,
-            nonce: 2,
-            key_type: KeyType::VmAccount,
-            key_index: 1,
-        };
-        let entries = vec![
-            vm_primary.clone(),
-            funded_receiving.clone(),
-            vm_secondary.clone(),
-        ];
-
-        let selected = select_vm_sender_entry(&entries, 25, 10, 1).expect("sender");
-        assert_eq!(selected.hex_address, vm_secondary.hex_address);
     }
 
     #[test]
@@ -6227,56 +6071,6 @@ mod tests {
         let message = "Insufficient balance for 0x0101010101010101010101010101010101010101: \
              have 99999950000 shards";
         assert_eq!(shorten_txid_like_tokens(message), message);
-    }
-
-    /// A wallet-owned VM account with `balance` shards, for the
-    /// single-sender selection tests.
-    fn wallet_account(tag: u8, balance: u64) -> WalletAccountStateEntry {
-        WalletAccountStateEntry {
-            pkh: [tag; 20],
-            hex_address: format_contract_address(&[tag; 20]),
-            balance,
-            nonce: tag as u64,
-            key_type: KeyType::VmAccount,
-            key_index: tag as u32,
-        }
-    }
-
-    #[test]
-    fn select_vm_sender_entry_returns_none_when_no_single_account_affords() {
-        // Aggregate 130 covers 100 + 10 gas, but no single account does.
-        let entries = vec![wallet_account(1, 70), wallet_account(2, 60)];
-
-        assert!(select_vm_sender_entry(&entries, 100, 10, 1).is_none());
-    }
-
-    #[test]
-    fn select_vm_sender_entry_rejects_overflowing_required_balance() {
-        let entries = vec![wallet_account(1, u64::MAX)];
-
-        assert!(select_vm_sender_entry(&entries, 0, u64::MAX, 2).is_none());
-        assert!(select_vm_sender_entry(&entries, u64::MAX, 1, 1).is_none());
-    }
-
-    #[test]
-    fn no_single_sender_message_reports_largest_account_not_aggregate() {
-        let entries = vec![wallet_account(1, 70), wallet_account(2, 60)];
-
-        assert_eq!(
-            no_single_sender_message(&entries, 100, 10, 1),
-            "Insufficient balance: no single wallet account covers 110 shards \
-             (value: 100 + max gas: 10); largest account has 70. \
-             Consolidate balances into one account first."
-        );
-
-        assert_eq!(
-            no_single_sender_message(&entries, 0, 10, 1),
-            "Insufficient balance: no single wallet account covers the 10 shard \
-             gas reservation; largest account has 70. \
-             Consolidate balances into one account first."
-        );
-
-        assert!(no_single_sender_message(&[], 5, 10, 1).contains("largest account has 0"));
     }
 
     #[test]
@@ -6389,62 +6183,6 @@ mod tests {
             }
             SweepFailure::Total(_) => panic!("expected a partial failure"),
         }
-    }
-
-    #[test]
-    fn surfaced_wallet_account_entries_only_include_existing_account_state() {
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("time")
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!("crystal-gui-wallet-test-{}", unique));
-        fs::create_dir_all(&path).expect("create temp dir");
-
-        let storage = Storage::new(&path, 1_000_000).expect("storage");
-        let backend = Box::new(XtalRocksDbBackend::new(
-            storage.db.clone(),
-            "unified_state".to_string(),
-        ));
-        let mpt = UnifiedMPT::new(backend).expect("mpt");
-
-        let visible = [1u8; 20];
-        let nonce_only = [2u8; 20];
-        let absent = [3u8; 20];
-
-        mpt.set_global_balance(&visible, CurrencyType::XTAL, 50)
-            .expect("fund visible");
-        mpt.increment_global_nonce(&nonce_only)
-            .expect("create nonce-bearing account");
-
-        let owned = vec![
-            WalletOwnedPkh {
-                pkh: visible,
-                hex_address: format_contract_address(&visible),
-                key_type: KeyType::VmAccount,
-                key_index: 0,
-            },
-            WalletOwnedPkh {
-                pkh: nonce_only,
-                hex_address: format_contract_address(&nonce_only),
-                key_type: KeyType::Receiving,
-                key_index: 1,
-            },
-            WalletOwnedPkh {
-                pkh: absent,
-                hex_address: format_contract_address(&absent),
-                key_type: KeyType::Change,
-                key_index: 2,
-            },
-        ];
-
-        let surfaced = surfaced_wallet_account_entries(&owned, &mpt).expect("surface accounts");
-        assert_eq!(surfaced.len(), 2);
-        assert_eq!(surfaced[0].pkh, visible);
-        assert_eq!(surfaced[0].balance, 50);
-        assert!(surfaced.iter().any(|entry| entry.pkh == nonce_only));
-        assert!(!surfaced.iter().any(|entry| entry.pkh == absent));
-
-        let _ = fs::remove_dir_all(&path);
     }
 
     #[test]

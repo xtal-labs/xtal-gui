@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ModalShell } from "@/components/ui/modal-shell";
 import { GasSettings, type GasConfig } from "@/components/common/GasSettings";
+import { SendFromRow } from "@/components/common/SendFromRow";
 import { cn } from "@/lib/utils";
 import { tauriCommand } from "@/hooks/useTauriCommand";
 import { useUiStore, useGatewayStore, useWalletStore } from "@/stores";
@@ -46,6 +47,7 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
   const { addToast } = useUiStore();
   const { loadLibrary } = useGatewayStore();
   const triggerRefresh = useWalletStore((state) => state.triggerRefresh);
+  const selectedVmAccount = useWalletStore((state) => state.selectedVmAccount);
 
   const [step, setStep] = useState<DeployStep>("upload");
   const [wasmHex, setWasmHex] = useState("");
@@ -135,12 +137,15 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
       const effectiveGasPrice = parseInt(gasPrice) || gasConfig?.defaultGasPrice || 1;
 
       const result = await tauriCommand<DeployResult>("deploy_contract", {
-        wasmHex,
-        abiJson: abiJson || undefined,
-        gasLimit: effectiveGasLimit,
-        gasPrice: effectiveGasPrice,
-        fruitType,
-        password,
+        request: {
+          wasmHex,
+          abiJson: abiJson || undefined,
+          gasLimit: effectiveGasLimit,
+          gasPrice: effectiveGasPrice,
+          fruitType,
+          sender: selectedVmAccount,
+          password,
+        },
       });
 
       setDeployResult(result);
@@ -332,6 +337,11 @@ export function DeployContractModal({ isOpen, onClose }: DeployContractModalProp
           {/* Confirm step */}
           {step === "confirm" && (
             <>
+              <SendFromRow
+                address={selectedVmAccount}
+                automaticLabel="Primary account (VM account 0)"
+              />
+
               <div className="space-y-3 p-4 chamfered bg-muted/30">
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-foreground-muted font-heading">BYTECODE</span>

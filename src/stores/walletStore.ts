@@ -35,6 +35,9 @@ interface WalletState {
   // VM account state
   vmBalance: VmAccountBalance | null;
   vmAddresses: VmAddress[];
+  // The VM account sends, withdrawals and contract writes draw from; null
+  // lets the wallet choose across every account.
+  selectedVmAccount: string | null;
   vmTransactions: Transaction[];
   vmTransactionPagination: TransactionPagination;
 
@@ -56,6 +59,7 @@ interface WalletState {
   setVmBalance: (balance: VmAccountBalance) => void;
   setVmAddresses: (addresses: VmAddress[]) => void;
   addVmAddress: (address: string) => void;
+  setSelectedVmAccount: (address: string | null) => void;
   setVmTransactionPage: (page: number, transactions: Transaction[], totalCount: number) => void;
   setVmPageLoading: (loading: boolean) => void;
   setAvailableWallets: (wallets: string[]) => void;
@@ -87,6 +91,7 @@ const initialState = {
   transactionPagination: initialPagination,
   vmBalance: null as VmAccountBalance | null,
   vmAddresses: [] as VmAddress[],
+  selectedVmAccount: null as string | null,
   vmTransactions: [] as Transaction[],
   vmTransactionPagination: initialVmPagination,
   availableWallets: [],
@@ -153,7 +158,14 @@ export const useWalletStore = create<WalletState>((set) => ({
 
   setVmBalance: (vmBalance) => set({ vmBalance }),
 
-  setVmAddresses: (vmAddresses) => set({ vmAddresses }),
+  setVmAddresses: (vmAddresses) =>
+    set((state) => ({
+      vmAddresses,
+      // A selection the wallet no longer lists (another wallet loaded) is void.
+      selectedVmAccount: vmAddresses.some((addr) => addr.address === state.selectedVmAccount)
+        ? state.selectedVmAccount
+        : null,
+    })),
 
   addVmAddress: (address) =>
     set((state) => ({
@@ -170,9 +182,13 @@ export const useWalletStore = create<WalletState>((set) => ({
                 state.vmAddresses.filter((addr) => addr.kind !== "account_state").length === 0
                   ? "Primary"
                   : undefined,
+              balance: "0",
+              nonce: 0,
             },
           ],
     })),
+
+  setSelectedVmAccount: (selectedVmAccount) => set({ selectedVmAccount }),
 
   setVmTransactionPage: (page, transactions, totalCount) =>
     set((state) => ({
@@ -211,6 +227,7 @@ export const useWalletStore = create<WalletState>((set) => ({
             transactionPagination: initialPagination,
             vmBalance: null,
             vmAddresses: [],
+            selectedVmAccount: null,
             vmTransactions: [],
             vmTransactionPagination: initialVmPagination,
             refreshTrigger: 0,

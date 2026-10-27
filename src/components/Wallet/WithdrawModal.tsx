@@ -17,7 +17,7 @@ import { CardContent, CardHeader, CardTitle, CardDescription } from "@/component
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ModalShell } from "@/components/ui/modal-shell";
-import { AmountDisplay, GasSettings, type GasConfig } from "@/components/common";
+import { AmountDisplay, GasSettings, SendFromRow, type GasConfig } from "@/components/common";
 import {
   cn,
   getXtalInputError,
@@ -38,12 +38,20 @@ interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
   maxBalance: ShardAmount;
+  /** The account selected in the VM tab; null sweeps every account. */
+  fromAddress: string | null;
   defaultRecipient?: string; // Base58Check UTXO address
 }
 
 type WithdrawStep = "form" | "confirm" | "sending" | "success" | "error";
 
-export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }: WithdrawModalProps) {
+export function WithdrawModal({
+  isOpen,
+  onClose,
+  maxBalance,
+  fromAddress,
+  defaultRecipient,
+}: WithdrawModalProps) {
   const { addToast } = useUiStore();
   const { triggerRefresh } = useWalletStore();
 
@@ -193,7 +201,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
     let cancelled = false;
     const gasArgs = { gasLimit: effectiveGasLimit, gasPrice: effectiveGasPrice };
 
-    tauriCommand<ShardAmount>("max_cage_withdrawable", gasArgs)
+    tauriCommand<ShardAmount>("max_cage_withdrawable", { ...gasArgs, fromAddress })
       .then((value) => {
         if (!cancelled) setMaxWithdrawable(value);
       })
@@ -212,7 +220,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
     return () => {
       cancelled = true;
     };
-  }, [isOpen, effectiveGasLimit, effectiveGasPrice]);
+  }, [isOpen, effectiveGasLimit, effectiveGasPrice, fromAddress]);
 
   // Withdrawals only support UTXO/Base58 recipients.
   const parsedAddress = parseAddressInput(recipient);
@@ -258,6 +266,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
         amount: String(parsedAmountShards),
         gasLimit: effectiveGasLimit,
         gasPrice: effectiveGasPrice,
+        fromAddress,
       });
 
       setPlan(result);
@@ -305,6 +314,7 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
         gasLimit: effectiveGasLimit,
         gasPrice: effectiveGasPrice,
         password,
+        fromAddress,
       });
 
       setSweepResult(result);
@@ -467,6 +477,8 @@ export function WithdrawModal({ isOpen, onClose, maxBalance, defaultRecipient }:
           {/* Step 1: Form */}
           {step === "form" && (
             <>
+              <SendFromRow address={fromAddress} automaticLabel="All accounts (automatic)" />
+
               {/* Recipient Address */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">

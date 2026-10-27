@@ -16,7 +16,7 @@ import { CardContent, CardHeader, CardTitle, CardDescription } from "@/component
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ModalShell } from "@/components/ui/modal-shell";
-import { AmountDisplay, GasSettings, type GasConfig } from "@/components/common";
+import { AmountDisplay, GasSettings, SendFromRow, type GasConfig } from "@/components/common";
 import {
   cn,
   getXtalInputError,
@@ -36,11 +36,13 @@ interface VmSendModalProps {
   isOpen: boolean;
   onClose: () => void;
   maxBalance: ShardAmount;
+  /** The account selected in the VM tab; null sweeps every account. */
+  fromAddress: string | null;
 }
 
 type SendStep = "form" | "confirm" | "sending" | "success" | "error";
 
-export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
+export function VmSendModal({ isOpen, onClose, maxBalance, fromAddress }: VmSendModalProps) {
   const { addToast } = useUiStore();
   const { triggerRefresh } = useWalletStore();
 
@@ -120,7 +122,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
     let cancelled = false;
     const gasArgs = { gasLimit: effectiveGasLimit, gasPrice: effectiveGasPrice };
 
-    tauriCommand<ShardAmount>("max_vm_sendable", gasArgs)
+    tauriCommand<ShardAmount>("max_vm_sendable", { ...gasArgs, fromAddress })
       .then((value) => {
         if (!cancelled) setMaxSendable(value);
       })
@@ -139,7 +141,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
     return () => {
       cancelled = true;
     };
-  }, [isOpen, effectiveGasLimit, effectiveGasPrice]);
+  }, [isOpen, effectiveGasLimit, effectiveGasPrice, fromAddress]);
 
   // Reset form when modal opens/closes
   useEffect(() => {
@@ -205,6 +207,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
         amount: String(parsedAmountShards),
         gasLimit: effectiveGasLimit,
         gasPrice: effectiveGasPrice,
+        fromAddress,
       });
 
       setPlan(result);
@@ -248,6 +251,7 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
         password: password,
         gasLimit: effectiveGasLimit,
         gasPrice: effectiveGasPrice,
+        fromAddress,
       });
 
       setSweepResult(result);
@@ -404,6 +408,8 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
           {/* Step 1: Form */}
           {step === "form" && (
             <>
+              <SendFromRow address={fromAddress} automaticLabel="All accounts (automatic)" />
+
               {/* Recipient Address */}
               <div className="space-y-2">
                 <label className="text-sm font-heading tracking-wide text-foreground-secondary">
@@ -473,7 +479,13 @@ export function VmSendModal({ isOpen, onClose, maxBalance }: VmSendModalProps) {
                   </p>
                 )}
                 <div className="flex items-center justify-between text-xs text-foreground-muted">
-                  <span>{sendableNow !== null ? "Sendable now:" : "VM Balance:"}</span>
+                  <span>
+                    {sendableNow !== null
+                      ? "Sendable now:"
+                      : fromAddress
+                        ? "Account balance:"
+                        : "VM Balance:"}
+                  </span>
                   <AmountDisplay amount={sendableNow ?? maxBalance} size="sm" showSymbol />
                 </div>
               </div>

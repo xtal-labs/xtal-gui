@@ -17,4 +17,5 @@ export { BlockDetailPanel } from "./BlockDetailPanel";
 export { TransactionList } from "./TransactionList";
 export { Pagination } from "./Pagination";
 export { GasSettings, type GasConfig } from "./GasSettings";
+export { SendFromRow } from "./SendFromRow";
 export { WalletRecoveryModal } from "./WalletRecoveryModal";

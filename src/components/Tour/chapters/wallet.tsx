@@ -181,6 +181,11 @@ export const walletChapter: TourChapter = {
             VM Send transfers account funds; contract calls use account funds for gas. These do
             not create spendable UTXOs. Use <strong>Withdraw</strong> to move value back to the UTXO side.
           </p>
+          <p>
+            The VM accounts list shows each account’s balance. Select one to send, withdraw
+            and call contracts from it alone; <strong>All accounts</strong> lets the wallet draw
+            on every account.
+          </p>
         </>
       ),
     },
@@ -220,8 +225,8 @@ export const walletChapter: TourChapter = {
             maximum gas cost. The withdrawal needs VM funds for gas; unused gas is refunded.
           </p>
           <p>
-            If funds span several VM accounts, the review can show several transactions. Each
-            reserves its own gas. Check the combined cost before entering your wallet password
+            If funds span several VM accounts and none is selected, the review can show several
+            transactions. Each reserves its own gas. Check the combined cost before entering your wallet password
             and choosing <strong>Withdraw</strong> to sign and submit.
           </p>
           <p>

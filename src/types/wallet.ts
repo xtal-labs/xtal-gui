@@ -32,6 +32,10 @@ export interface VmAddress {
   kind?: "vm_account" | "account_state";
   order?: number;
   label?: string;
+  /** What the account can still commit, in shards: pending transactions' value and gas are already subtracted */
+  balance: string;
+  /** Next nonce, counting pending transactions */
+  nonce: number;
 }
 
 export interface MultisigAddressResult {
@@ -260,29 +264,16 @@ export interface TransactionHistoryResponse {
 }
 
 /**
- * A single wallet-owned VM account within VmAccountBalance
- */
-export interface VmAccountEntry {
-  /** VM address ("0x" + 40 hex chars) */
-  address: string;
-  /** Account balance in shards */
-  balance: string;
-  /** Account nonce */
-  nonce: number;
-}
-
-/**
- * VM account balance from UnifiedMPT state (separate from UTXO balance)
+ * VM account balance from UnifiedMPT state (separate from UTXO balance).
+ * Per-account balances live on `VmAddress`.
  */
 export interface VmAccountBalance {
-  /** VM account balance in shards (sum across wallet-owned accounts) */
+  /** Total across wallet-owned accounts in shards, net of pending reservations */
   balance: string;
-  /** Nonce of the primary address */
+  /** Highest next nonce across the wallet's accounts */
   nonce: number;
   /** Currency type */
   currency: string;
-  /** Per-account breakdown of wallet-owned VM accounts */
-  accounts: VmAccountEntry[];
 }
 
 /**
