@@ -157,7 +157,7 @@ pub async fn create_setup_wallet(
     })?;
 
     // Create WalletManager for this network
-    let wallet_manager = WalletManager::new(network_type)
+    let wallet_manager = WalletManager::platform_default(network_type)
         .map_err(|e| format!("Failed to create wallet manager: {}", e))?;
 
     // Use the shared helper from wallet.rs
@@ -188,7 +188,7 @@ pub async fn import_setup_wallet(
         )
     })?;
 
-    let wallet_manager = WalletManager::new(network_type)
+    let wallet_manager = WalletManager::platform_default(network_type)
         .map_err(|e| format!("Failed to create wallet manager: {}", e))?;
 
     wallet_from_mnemonic_impl(
@@ -221,7 +221,7 @@ pub async fn change_wallet_password(
         )
     })?;
 
-    let wallet_manager = WalletManager::new(network_type)
+    let wallet_manager = WalletManager::platform_default(network_type)
         .map_err(|e| format!("Failed to create wallet manager: {}", e))?;
 
     wallet_manager

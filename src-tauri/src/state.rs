@@ -5,7 +5,6 @@
 //! - `AppState`: Full state during normal operation (node running)
 //! - `SharedStartupStatus`: Mutable startup status with progress tracking
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -16,7 +15,7 @@ use xtal::blockchain::{BootstrapPhase, BootstrapProgress};
 use xtal::node::services::Services;
 use xtal::node::sync::SyncState;
 use xtal::utils::NetworkType;
-use xtal::wallet::sync::WalletSyncHandle;
+use xtal::wallet::sync::WalletSyncFollower;
 
 use crate::abi_cache::AbiCache;
 use crate::ipfs::{IpfsClient, IpfsConfig};
@@ -77,13 +76,11 @@ pub struct AppState {
     /// IPFS client for ABI distribution (None if disabled or init failed)
     pub ipfs_client: Option<IpfsClient>,
 
-    /// Running wallet sync loops, keyed by wallet id.
-    ///
-    /// The handles own the loops — the node keeps no sync registry. Removing
-    /// (or replacing) an entry stops that wallet's loop and frees its slot in
-    /// the wallet manager's occupancy guard. Arc'd so command handlers can
-    /// move a clone into the async task that starts the loop.
-    pub wallet_sync: Arc<Mutex<HashMap<String, WalletSyncHandle>>>,
+    /// Sync for the main wallet manager: one loop on whichever wallet is
+    /// loaded, moved on every load and switch, gone on unload. The follower
+    /// owns it — the node keeps no sync registry, and no command starts or
+    /// stops anything. A validator's wallet is synced by the validator itself.
+    pub wallet_sync: Option<WalletSyncFollower>,
 }
 
 impl AppState {
@@ -129,6 +126,11 @@ impl AppState {
             None
         };
 
+        let wallet_sync = services
+            .wallet
+            .clone()
+            .map(|wallet| services.follow_wallet_sync(wallet));
+
         Self {
             services,
             sync_state_rx,
@@ -137,7 +139,7 @@ impl AppState {
             data_dir,
             abi_cache: Mutex::new(abi_cache),
             ipfs_client,
-            wallet_sync: Arc::new(Mutex::new(HashMap::new())),
+            wallet_sync,
         }
     }
 

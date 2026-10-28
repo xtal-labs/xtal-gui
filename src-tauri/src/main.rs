@@ -949,7 +949,7 @@ fn run_normal_mode(node_config: NodeConfig, gui_config: GuiConfig, context: taur
 fn load_wallet_manager(network: NetworkType) -> Result<Arc<WalletManager>, String> {
     info!("Creating wallet manager for network: {:?}", network);
 
-    let manager = WalletManager::new(network)
+    let manager = WalletManager::platform_default(network)
         .map_err(|e| format!("Failed to create wallet manager: {}", e))?;
 
     info!("Wallet manager created successfully");

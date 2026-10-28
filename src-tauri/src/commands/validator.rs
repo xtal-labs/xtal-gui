@@ -29,9 +29,7 @@ use xtal::wallet::database::models::WalletType;
 use xtal::wallet::WalletManager;
 
 use crate::commands::contract::decode_hex_address;
-use crate::commands::wallet::{
-    start_wallet_sync, stop_wallet_sync, wallet_from_mnemonic_impl, FeeEstimate,
-};
+use crate::commands::wallet::{wallet_from_mnemonic_impl, FeeEstimate};
 use crate::state::AppState;
 
 /// Per-fruit production statistics
@@ -113,7 +111,7 @@ pub async fn start_validator(
 
     // Create a wallet manager for loading
     let wallet_manager = Arc::new(
-        WalletManager::new(network_type)
+        WalletManager::platform_default(network_type)
             .map_err(|e| format!("Failed to create wallet manager: {}", e))?,
     );
 
@@ -154,13 +152,8 @@ pub async fn start_validator(
         .map(|(fruit_type, _)| format!("{:?}", fruit_type))
         .collect::<Vec<_>>();
 
-    // Add to services
-    match wallet_manager.current_wallet_id() {
-        Some(validator_wallet_id) => {
-            start_wallet_sync(&state, wallet_manager.clone(), validator_wallet_id)
-        }
-        None => log::warn!("Validator wallet has no id; sync not started"),
-    }
+    // Add to services. The validator syncs its own wallet for as long as
+    // it lives there.
     state
         .services
         .add_validator(address.clone(), Arc::new(service));
@@ -185,11 +178,7 @@ pub async fn stop_validator(state: State<'_, AppState>, address: String) -> Resu
         .stop_all()
         .map_err(|e| format!("Failed to stop validator: {}", e))?;
 
-    if let Some(wallet_id) = service.wallet_id() {
-        stop_wallet_sync(&state, &wallet_id);
-    }
-
-    // Remove from services
+    // Remove from services; dropping the validator ends its wallet sync
     state.services.validators.remove(&address);
 
     Ok(())
@@ -886,7 +875,7 @@ pub async fn create_validator_wallet(
     let network_type = state.services.network_type();
 
     // Create a wallet manager for this operation
-    let wallet_manager = WalletManager::new(network_type)
+    let wallet_manager = WalletManager::platform_default(network_type)
         .map_err(|e| format!("Failed to create wallet manager: {}", e))?;
 
     // Create a validator wallet (not a normal wallet)
@@ -926,7 +915,7 @@ pub async fn import_validator_wallet(
 
     let network_type = state.services.network_type();
 
-    let wallet_manager = WalletManager::new(network_type)
+    let wallet_manager = WalletManager::platform_default(network_type)
         .map_err(|e| format!("Failed to create wallet manager: {}", e))?;
 
     let result = wallet_from_mnemonic_impl(
@@ -958,7 +947,7 @@ pub async fn list_validator_wallets(
     let network_type = state.services.network_type();
 
     // Create a wallet manager for this operation
-    let wallet_manager = WalletManager::new(network_type)
+    let wallet_manager = WalletManager::platform_default(network_type)
         .map_err(|e| format!("Failed to create wallet manager: {}", e))?;
 
     // List only validator wallets

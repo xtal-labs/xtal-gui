@@ -1342,18 +1342,11 @@ pub async fn load_wallet(
         .as_ref()
         .ok_or("Wallet manager not available")?;
 
-    let previous_wallet_id = wallet.current_wallet_id();
-
-    // Load wallet in view-only mode (uses pre-derived public keys from database)
+    // Load wallet in view-only mode (uses pre-derived public keys from database).
+    // The app's wallet-sync follower moves its loop onto it.
     let record = wallet
         .load_wallet(&wallet_name)
         .map_err(|e| format!("Failed to load wallet: {}", e))?;
-
-    if let Some(previous_wallet_id) = previous_wallet_id {
-        if wallet.current_wallet_id().as_deref() != Some(previous_wallet_id.as_str()) {
-            stop_wallet_sync(&state, &previous_wallet_id);
-        }
-    }
 
     // Get primary address from pre-derived keys (no password needed)
     let primary_address = wallet
@@ -1368,12 +1361,6 @@ pub async fn load_wallet(
 
     // Emit wallet loaded event for toast notification
     emit_wallet_loaded(&app, &record.name);
-
-    // Start wallet sync service to index incoming transactions (coinbase, receives)
-    match wallet.current_wallet_id() {
-        Some(loaded_id) => start_wallet_sync(&state, wallet.clone(), loaded_id),
-        None => log::warn!("Loaded wallet has no id; sync not started"),
-    }
 
     Ok(WalletLoadResult {
         wallet_name: record.name,
@@ -1393,15 +1380,9 @@ pub async fn unload_wallet(
         .as_ref()
         .ok_or("Wallet manager not available")?;
 
-    let wallet_id = wallet.current_wallet_id();
-
     let result = wallet
         .unload_wallet()
         .map_err(|e| format!("Failed to unload wallet: {}", e))?;
-
-    if let Some(wallet_id) = wallet_id {
-        stop_wallet_sync(&state, &wallet_id);
-    }
 
     // Emit wallet unloaded event for toast notification
     emit_wallet_unloaded(&app);
@@ -1494,10 +1475,9 @@ pub async fn get_wallet_sync_status(
         .ok_or("No wallet loaded")?;
     let service = state
         .wallet_sync
-        .lock()
-        .map_err(|_| "Wallet sync lock unavailable")?
-        .get(&wallet_id)
-        .map(|handle| handle.service())
+        .as_ref()
+        .and_then(|follower| follower.running().borrow().clone())
+        .filter(|service| service.wallet_id() == wallet_id)
         .ok_or("Wallet synchronization is starting")?;
     let status = service.get_status().await;
     Ok(WalletSyncStatus {
@@ -4920,49 +4900,6 @@ fn calculate_net_amount(
 
     // Net = received - spent (can be negative for outgoing)
     (received as i64).saturating_sub(spent as i64)
-}
-
-// =============================================================================
-// Wallet Sync
-// =============================================================================
-
-/// Stop the wallet sync loop for a specific wallet id.
-///
-/// The handle in app state owns the loop: removing it here releases the
-/// manager's occupancy slot, and the spawned shutdown lets the loop finish
-/// its handler in flight before the task is reaped.
-pub(crate) fn stop_wallet_sync(state: &AppState, wallet_id: &str) {
-    let handle = state
-        .wallet_sync
-        .lock()
-        .ok()
-        .and_then(|mut loops| loops.remove(wallet_id));
-    if let Some(handle) = handle {
-        tauri::async_runtime::spawn(async move { handle.shutdown().await });
-    }
-}
-
-/// Start the wallet sync loop that indexes `wallet_id`'s transactions.
-///
-/// The node only lends its observation surfaces; the loop itself is owned by
-/// the handle stored in app state. The wallet id is explicit because a normal
-/// and a validator wallet can run at once — "the current wallet" is the
-/// caller's decision, made where the wallet was just loaded. The manager
-/// enforces exactly one loop per wallet id, so a duplicate start is rejected
-/// rather than racing the first writer on the same rows.
-pub(crate) fn start_wallet_sync(state: &AppState, wallet: Arc<WalletManager>, wallet_id: String) {
-    let services = state.services.clone();
-    let loops = state.wallet_sync.clone();
-    tauri::async_runtime::spawn(async move {
-        match services.start_wallet_sync(&wallet, &wallet_id).await {
-            Ok(handle) => {
-                if let Ok(mut loops) = loops.lock() {
-                    loops.insert(wallet_id, handle);
-                }
-            }
-            Err(e) => log::warn!("Failed to start wallet sync service: {}", e),
-        }
-    });
 }
 
 // =============================================================================
